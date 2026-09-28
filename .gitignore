@@ -63,3 +63,8 @@ compile_commands.json
 
 # SPU job dumps and held-back images (captured from the game binary)
 analysis/spu/
+
+# Run output and side-by-side builds kept for comparison
+scratch/
+generated.*/
+build.*/

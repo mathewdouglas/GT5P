@@ -70,9 +70,14 @@ static DWORD WINAPI present_thread(LPVOID)
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "Gran Turismo 5 Prologue (ps3recomp)";
 
-    int rsx_ok = (rsx_d3d12_backend_init(1280, 720, title) == 0);
+    /* PS3_HEADLESS=1: no window (RDP / unattended runs), but the vblank and
+     * flip clock and the FIFO drain still run, so the guest sees the same
+     * timing it would with a display. */
+    const int headless = getenv("PS3_HEADLESS") != NULL;
+    int rsx_ok = !headless && (rsx_d3d12_backend_init(1280, 720, title) == 0);
     fprintf(stderr, "[rsx] backend init %s\n",
-            rsx_ok ? "OK -- window open" : "FAILED");
+            headless ? "skipped -- headless" : rsx_ok ? "OK -- window open" : "FAILED");
+    const int drain = rsx_ok || headless;
 
     ULONGLONG next_tick = GetTickCount64();
     for (;;) {
@@ -85,7 +90,7 @@ static DWORD WINAPI present_thread(LPVOID)
             cellGcmTickFlip();
             if (rsx_ok && cellGcm_take_flip_pending())
                 rsx_d3d12_backend_present();
-            if (rsx_ok)
+            if (drain)
                 cellGcm_rsx_process_fifo();
             next_tick += 16;          /* ~60 Hz */
             fired++;
@@ -98,10 +103,12 @@ static DWORD WINAPI present_thread(LPVOID)
         /* Drain again at the outer cadence: titles fence every render pass on
          * an RSX label the drain writes, and waiting a full 16 ms per fence
          * paces the guest to single-digit fps. */
-        if (rsx_ok) {
-            if (cellGcm_take_flip_pending())
+        if (drain) {
+            if (cellGcm_take_flip_pending() && rsx_ok)
                 rsx_d3d12_backend_present();
             cellGcm_rsx_process_fifo();
+        }
+        if (rsx_ok) {
             if (rsx_d3d12_backend_pump_messages() != 0)
                 rsx_ok = 0;           /* window closed */
         }
