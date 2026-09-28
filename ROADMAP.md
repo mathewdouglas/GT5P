@@ -2,17 +2,16 @@
 
 ## Next
 
-- **Characterise the new stop.** Main waits at the same place from ≤20 s on (last
-  guest frames `func_009386C4` ← `func_00954140` ← `func_00954200`), with all 116
-  assets loaded. Build the control-flow graph before naming it — see the working
+- **Characterise the new stop.** Main is in `sys_cond_wait` (syscall 107,
+  no timeout) from ≤20 s on, under `func_009386C4` ← `func_00954140` ←
+  `func_00954200`, with all 116 assets loaded. Find the cond and its signaller. Build the control-flow graph before naming it — see the working
   rules at the top of [docs/progress.md](docs/progress.md).
 - **Check headless against windowed.** Every number since 2026-09-28 is
   headless; August's were windowed. Soak once with a window (at the console,
   under offstage) to rule timing in or out.
-- **Try the open rendering PRs.** ps3recomp #185 (job-chain Join waits for the
-  walker; flips queued in the FIFO) and #189 (GCM ring recycle, raw-SPU fences)
-  fixed "prepares a flip, never draws" shapes in Simpsons, Crazy Taxi and
-  Tornado Outbreak.
+- **Retry ps3recomp #185 and #189 once there is a frame loop.** Tried
+  2026-09-28: no effect, because the boot stops before any per-frame work
+  (Join is never called). Branches `gt5p/pr185`, `gt5p/pr189` in the toolkit clone.
 
 ## Later
 

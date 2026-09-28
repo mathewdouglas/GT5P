@@ -57,6 +57,27 @@ The new build does log NULL traffic that August's could not see:
 `0x006A5548` sits near `func_006A4400`, which Phase 15 bracketed as the call
 that corrupted the free list. Proximity, not a link.
 
+### #185 and #189: no effect yet, because the boot stops first
+
+Both rendering PRs from the sibling ports were tried on top of `master`, one at
+a time (`gt5p/pr185` = Join + in-FIFO flip commits cherry-picked, its SECUREFILE
+commit already superseded on master; `gt5p/pr189` = the PR merged):
+
+```
+master + #185:  assets: 116 116 116 116 116 116    one SetPrepareFlip, main parked as before
+master + #189:  assets: 116 116 116 116 116 116    one SetPrepareFlip, main parked as before
+```
+
+For #185 that is expected rather than a verdict: `cellSpursJoinJobChain` logs
+its first eight calls unconditionally and **never appears** — GT5P imports it but
+has not reached per-frame work. Retry both once there is a frame loop. The port
+stays on plain `master`.
+
+Where main is parked, read from the lift: `func_009386C4` is a syscall wrapper,
+and the call it is in is `li r11, 0x6B` → **syscall 107, `sys_cond_wait`, timeout
+0** — waiting for a signal nobody sends. Which condition variable and who should
+signal it is **not yet established**.
+
 **Caveat:** every Phase 16 number is headless (`PS3_HEADLESS=1`, added this
 phase — no window, but the vblank/flip clock and FIFO drain still run). August's
 were windowed. A windowed soak has not been run yet.
