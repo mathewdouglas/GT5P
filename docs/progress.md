@@ -9,6 +9,67 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 20 — Frames stop at 20 s: the job manager was lifted at the wrong address (2026-10-12)
+
+Still BCUS98158. Phase 19's boots were 20 s long. A 90 s boot issues the same
+613 flips: the frames stop about 20 s in, just after the stat of
+`serverlist2_us.xml`.
+
+**Where it stops.** The render thread (`PDI:1:200c3b40`) is in func_00BA97B0
+under func_00BAA9E8, reading `0x0139A880` in a loop. That function waits for
+six per-SPU counters in a job-manager queue to reach a target. The queue
+belongs to a fifth `Wws_Job` workload, wid 4, data `0x0139C900`, which the title
+adds late and kicks with `cellSpursReadyCountStore(wid=4, 1)`. Nothing ever ran
+it.
+
+**Why nothing ran it.** Four findings, in the order they were met. Each was
+confirmed by the boot that followed its fix.
+
+| Finding | Evidence | After the fix |
+|---|---|---|
+| `scripts/lift_spu_jobs.py` lifted the policy module at base 0. The SPURS kernel loads it at local-store `0xA00`, and its scheduler keeps continuation addresses as absolute values. Every such branch landed 0xA00 bytes away | One `dispatch wid=0` in a whole run and no other. `[spu-spin] ... GETLLAR ea=0x016ECA00 x4M`. A trace of that line shows a `PUTLLC` with no `GETLLAR` before it, repeated for ever: the continuation `0x2CF0` had entered the middle of an atomic helper | wids 0 to 3 are dispatched and leave through exit-to-kernel. The kernel thread is no longer stuck in workload 0 |
+| The module's interrupt handler at `0xA2C` is reached only through a branch the module writes to LS 0, so the function finder never saw it | `[spu-int] TAKEN ... vector->0x00A2C`, then `[pm-end] ... pc=0x00A60`: the run ended at the handler | The handler runs and returns (`[irq] IRET`) |
+| The job that wid 4 runs is a 3,344-byte body at `0x011A4100` in the executable, streamed to LS `0x4000`. It had never been lifted | `[spu-ovl-dump] img=1 body ea=0x011A4100 size=3344`; `[spu-smc] microstep img=1 pc=0x04050 ... handing to the interpreter` | Lifted at `0x4000` and registered with `spu_overlay_register_region`. The trail shows its functions being dispatched |
+| The body is entered at the offset in its header (`+0x10`, here 0x30) and builds return addresses as `ila` + `a ..., r126`. Neither is visible to the function finder at a non-zero base | `[spu-smc] microstep img=1 pc=0x040DC` | Both are seeded; no microstep or interpreter message in a 60 s boot |
+
+The new values are in `config/targets.json` (`wws_job_pm_extra_funcs`,
+`wws_job_bodies`). The base is a constant in the script, because `0xA00` is
+where SPURS loads any policy module.
+
+**Not yet fixed.** With all four in place the body runs but the run does not
+finish within 25 s. `SPURS_PM_FLOW=1 SPURS_PM_FLOW_ALL=1` prints its trail: it
+enters at `0x4068`, calls back into the module several times, and then cycles
+through `0x41F0`–`0x4558` and `0x4960`–`0x4AA8`. The trail buffer holds 8,192
+transfers and is full, so whether this is a long loop or an endless one is not
+known. The render thread is still waiting. Hypotheses, none tested: a lifting
+fault in the body (the lifter split `0x45E4`–`0x4CF4` into one function per
+instruction, which suggests it could not find the structure); or a loop bound
+that depends on something the module should have set up.
+
+**Also changed, effect not shown.** The kernel-poll intercept in ps3recomp
+answered 0. The module compares the answer with its own workload id (LS
+`0x1DC`) and treats a difference as pre-emption, so 0 is right only for
+workload 0. It now answers the current id. The stall is the same with and
+without it, so this is correct by the module's code but is not what is holding
+wid 4.
+
+**Numbers.** `soak.py 6 30`: six usable boots, all 129 opens and 27 paths, about
+605 flips. One of them reached the same end state with 45 flips, which is the
+render thread meeting the wid 4 wait earlier. Two bad boots in eight, both the
+allocation retry of Phase 18. That is more than Phase 19's 1 in 29, on a sample
+too small to call a change.
+
+**Diagnostics.** The hang watchdog in `runtime/spu/spurs_policy.c` used to
+judge only the first traced run, which is an idle one at boot. It now keeps
+watching and reports the first run that is still going 5 s later.
+`SPU_DUMP_OVL=<dir>,0x4000` writes out each body the module streams; the
+directory must exist.
+
+**Next.** Find out whether the loop at `0x41F0` ends. Read the body at
+`0x011A4100` (it carries the marker `C0DEC0DE` at `+0x20`) and what its loop
+counts. Then look for further bodies: this is the first the title has asked
+for, and there will be more.
+
 ## Phase 19 — It was never parked: frames at one every two seconds (2026-10-12)
 
 Still BCUS98158. Phases 17 and 18 describe main "parked in `sys_cond_wait` at

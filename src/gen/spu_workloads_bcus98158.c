@@ -29,8 +29,9 @@
 
 extern unsigned char* vm_base;
 extern void spu_begin_image(int image_id);
+extern void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_id);
 
-extern void gt5p_wwsjob_spu_func_00000000(spu_context*);
+extern void gt5p_wwsjob_spu_func_00000A00(spu_context*);
 extern void gt5p_wwsjob_spu_recomp_register(void);
 
 extern void gt5p_j0AB3F1A7_spu_func_00000000(spu_context*);
@@ -57,6 +58,7 @@ extern void gt5p_jC4532DB9_spu_func_00000000(spu_context*);
 extern void gt5p_jC4532DB9_spu_recomp_register(void);
 extern void gt5p_jE65DBDFF_spu_func_00000000(spu_context*);
 extern void gt5p_jE65DBDFF_spu_recomp_register(void);
+extern void gt5p_b011A4100_spu_recomp_register(void);
 
 #define WWS_JOB_PM_EA   0x01238F00u
 #define WWS_JOB_PM_SIZE 11648u
@@ -69,7 +71,7 @@ void gt5p_spu_register_all(void)
 
     spu_begin_image(1);
     gt5p_wwsjob_spu_recomp_register();
-    spu_workload_register_img(fp, gt5p_wwsjob_spu_func_00000000, 1, "Wws_Job");
+    spu_workload_register_img(fp, gt5p_wwsjob_spu_func_00000A00, 1, "Wws_Job");
 
     /* spujob_0AB3F1A7A24BDD86_35248.bin */
     spu_begin_image(2);
@@ -142,6 +144,11 @@ void gt5p_spu_register_all(void)
     gt5p_jE65DBDFF_spu_recomp_register();
     spu_workload_register_img(0xE65DBDFF49367980ULL, gt5p_jE65DBDFF_spu_func_00000000, 13,
                               "jE65DBDFF");
+
+    /* job body at 0x011A4100, 3344 bytes, runs at LS 0x4000 */
+    spu_begin_image(14);
+    gt5p_b011A4100_spu_recomp_register();
+    spu_overlay_register_region(0x011A4100u, 3344u, 14);
 
     spu_begin_image(0);
 

@@ -19,6 +19,8 @@
     "setjmp": "0x00C109F0",
     "longjmp": "0x00C10B14",
     "wws_job_pm_ea": "0x01238F00",
+    "wws_job_pm_extra_funcs": "0xA2C",
+    "wws_job_bodies": [["0x011A4100", 3344, "0x4000"]],
     "wws_job_pm_size": 11648,
     "spu_registry": "src/gen/spu_workloads_bcus98158.c",
     "boot_from": "bdvd",

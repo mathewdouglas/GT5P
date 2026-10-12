@@ -36,6 +36,12 @@ WWS_JOB_PM_SIZE = target.addr("wws_job_pm_size")
 
 NAME_RE = re.compile(r"^spujob_([0-9A-Fa-f]{16})_(\d+)\.bin$")
 
+# The SPURS kernel loads a policy module at local-store 0xA00, and the module
+# is linked for that address: its scheduler keeps continuation addresses as
+# absolute values and branches to them. Lifted at base 0 every such branch
+# lands in unrelated code. Jobs are position independent and stay at 0.
+PM_LOAD_BASE = 0xA00
+
 
 def run(*args):
     r = subprocess.run([sys.executable, *map(str, args)],
@@ -46,14 +52,31 @@ def run(*args):
     return r.stdout
 
 
-def lift(blob, prefix, outdir):
+def lift(blob, prefix, outdir, base=0, extra=None):
     funcs = outdir.parent / f"{outdir.name}_funcs.json"
-    out = run(TOOLS / "find_spu_functions.py", "--raw", "--base", "0",
+    out = run(TOOLS / "find_spu_functions.py", "--raw", "--base", hex(base),
               "--out", funcs, blob)
     n_funcs = re.search(r"Detected ([\d,]+) function", out)
-    run(TOOLS / "spu_lifter.py", blob, "--base", "0", "--functions", funcs,
-        "--symbol-prefix", prefix, "--output", outdir, "--source-name", "spu_recomp.c")
+    run(TOOLS / "spu_lifter.py", blob, "--base", hex(base), "--functions", funcs,
+        "--symbol-prefix", prefix, "--output", outdir, "--source-name", "spu_recomp.c",
+        *(["--extra-funcs", extra] if extra else []))
     return int(n_funcs.group(1).replace(",", "")) if n_funcs else 0
+
+
+def pic_continuations(raw, lsa):
+    """Addresses a body builds as `ila rT, off` + `a rT, rT, r126` and later
+    branches to. r126 holds the load address, so the lifter, which sees only
+    the offset, does not take them for code."""
+    words = [int.from_bytes(raw[i:i + 4], "big") for i in range(0, len(raw) - 3, 4)]
+    found = set()
+    for w, nxt in zip(words, words[1:]):
+        if w >> 25 != 0x21 or nxt >> 21 != 0x0C0:         # ila, a
+            continue
+        rt, off = w & 0x7F, (w >> 7) & 0x3FFFF
+        rb, ra, rt2 = (nxt >> 14) & 0x7F, (nxt >> 7) & 0x7F, nxt & 0x7F
+        if rt2 == rt and {ra, rb} == {rt, 126} and off < len(raw) and off % 4 == 0:
+            found.add(lsa + off)
+    return found
 
 
 def main():
@@ -67,7 +90,11 @@ def main():
     pm_blob.write_bytes(read(WWS_JOB_PM_EA, WWS_JOB_PM_SIZE))
     pm_dir = OUT / "wwsjob"
     pm_dir.mkdir(parents=True, exist_ok=True)
-    n = lift(pm_blob, "gt5p_wwsjob", pm_dir)
+    # Entry points nothing branches to directly. The interrupt handler is one:
+    # the module reaches it through a branch instruction it writes to LS 0 at
+    # run time, so the function finder cannot see it.
+    n = lift(pm_blob, "gt5p_wwsjob", pm_dir, base=PM_LOAD_BASE,
+             extra=target.TARGET.get("wws_job_pm_extra_funcs"))
     print(f"  policy module at 0x{WWS_JOB_PM_EA:08X}: {n} functions -> {pm_dir.relative_to(ROOT)}")
 
     # Jobs take 2..N.
@@ -93,9 +120,32 @@ def main():
         f"                              \"j{fp[:8]}\");"
         for fp, _sz, p, img, name in jobs)
 
+    # Job bodies the policy module streams into its own local store and then
+    # branches into. They sit at fixed addresses in the executable, so they are
+    # cut from it like the policy module, and lifted at the local-store address
+    # the module loads them to. Find new ones with SPU_DUMP_OVL=<dir>,<lsa>.
+    for k, (ea, size, lsa) in enumerate(target.TARGET.get("wws_job_bodies", [])):
+        ea, lsa, img = int(ea, 16), int(lsa, 16), 2 + len(jobs) + k
+        blob = ROOT / "analysis" / "spu" / f"body_{ea:08X}.bin"
+        blob.write_bytes(read(ea, size))
+        prefix, outdir = f"gt5p_b{ea:08X}", OUT / f"b{ea:08X}"
+        outdir.mkdir(parents=True, exist_ok=True)
+        # The module enters a body at the offset in its header, which nothing
+        # in the body branches to, so the function finder needs to be told.
+        raw = blob.read_bytes()
+        seeds = {lsa + int.from_bytes(raw[0x10:0x14], "big")} | pic_continuations(raw, lsa)
+        n = lift(blob, prefix, outdir, base=lsa, extra=",".join(map(hex, sorted(seeds))))
+        total += n
+        print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}")
+        externs += f"\nextern void {prefix}_spu_recomp_register(void);"
+        regs += (f"\n\n    /* job body at 0x{ea:08X}, {size} bytes, runs at LS 0x{lsa:X} */\n"
+                 f"    spu_begin_image({img});\n"
+                 f"    {prefix}_spu_recomp_register();\n"
+                 f"    spu_overlay_register_region(0x{ea:08X}u, {size}u, {img});")
+
     REG.write_text(TEMPLATE.format(externs=externs, regs=regs,
                                    pm_ea=f"0x{WWS_JOB_PM_EA:08X}",
-                                   pm_size=WWS_JOB_PM_SIZE,
+                                   pm_size=WWS_JOB_PM_SIZE, pm_base=PM_LOAD_BASE,
                                    n_jobs=len(jobs)), encoding="utf-8")
     print(f"\n{len(jobs)} job images, {total} SPU functions lifted")
     print(f"wrote {REG.relative_to(ROOT)}")
@@ -132,8 +182,9 @@ TEMPLATE = '''/* SPU workload registry for Gran Turismo 5 Prologue -- GENERATED 
 
 extern unsigned char* vm_base;
 extern void spu_begin_image(int image_id);
+extern void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_id);
 
-extern void gt5p_wwsjob_spu_func_00000000(spu_context*);
+extern void gt5p_wwsjob_spu_func_{pm_base:08X}(spu_context*);
 extern void gt5p_wwsjob_spu_recomp_register(void);
 
 {externs}
@@ -149,7 +200,7 @@ void gt5p_spu_register_all(void)
 
     spu_begin_image(1);
     gt5p_wwsjob_spu_recomp_register();
-    spu_workload_register_img(fp, gt5p_wwsjob_spu_func_00000000, 1, "Wws_Job");
+    spu_workload_register_img(fp, gt5p_wwsjob_spu_func_{pm_base:08X}, 1, "Wws_Job");
 
 {regs}
 
