@@ -361,6 +361,24 @@ static DWORD WINAPI main_stack_dump(LPVOID secs)
             }
         }
     }
+    /* GT5P_PEEK_R31=off[,off...]: 64 bytes at main's r31 + each (signed, hex)
+     * offset, as words and as text. For an object on the heap, whose address
+     * moves from run to run but which a parked main still points at. */
+    if (const char* pk = getenv("GT5P_PEEK_R31")) {
+        char buf[256];
+        strncpy(buf, pk, sizeof buf - 1); buf[sizeof buf - 1] = 0;
+        for (char* tok = strtok(buf, ","); tok; tok = strtok(nullptr, ",")) {
+            uint32_t a = (uint32_t)g_main_ctx.gpr[31] + (uint32_t)strtol(tok, nullptr, 16);
+            fprintf(stderr, "[peek31] %08X:", a);
+            for (int k = 0; k < 16; k++) fprintf(stderr, " %08X", vm_read32(a + (uint32_t)k * 4));
+            fprintf(stderr, "  \"");
+            for (int k = 0; k < 64; k++) {
+                unsigned char c = vm_base[a + (uint32_t)k];
+                fputc(c >= 32 && c < 127 ? c : '.', stderr);
+            }
+            fprintf(stderr, "\"\n");
+        }
+    }
     fprintf(stderr, "[hostchain]%s\n", hoststack);
     if (getenv("GT5P_THREADS")) dump_threads_and_mutexes();
 

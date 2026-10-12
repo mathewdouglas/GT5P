@@ -88,28 +88,30 @@ re-verified against the disc executable.
 
 ## Where the disc build stands
 
-As of 2026-10-12 the disc build lifts, compiles and boots. Details and evidence
-are in Phase 17 of [docs/progress.md](docs/progress.md).
+As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
+Details and evidence are in Phases 17 to 19 of
+[docs/progress.md](docs/progress.md); read Phase 19 first, it corrects the two
+before it.
 
-- In 12 of 14 runs it opens `GT.VOL` 127 times, touches the same 24 paths in
-  the same order as RPCS3's first 10 s, starts the network library, and then
-  main parks in `sys_cond_wait` at `lr=0x00B391F4`. That is the same kind of
-  stop upstream reports for v02.00. No frame is drawn.
-- About 1 run in 6 goes wrong earlier, during sound start-up. It is not a
-  deadlock: nobody holds the mutex. Phase 18 of the progress log has the
-  evidence. The commonest form is a sound bank whose load comes back with data
-  pointer `0x880`, after which `func_007CA908` overwrites memory; the others
-  are an allocation retried for ever, a sound job event that never arrives,
-  and a sleep loop. The cause under them is not found.
-- Ruled out by measurement: a held mutex, a spurious condition wake, stack
-  overflow, main's missing thread id, the cellFs descriptor table, the
-  lightweight mutex on the heap. Do not re-test these without a new reason.
-- Enforcing guest priorities lowers the rate but not to zero, on samples too
-  small to trust. `GT5P_PRIO_HANDOFF=1` and `PS3_PPU_PRIO_SCHED=1` are the two
-  experiments; both are off by default.
-- Then: find what main's `sys_cond_wait` is waiting for. Not started. RPCS3's
-  next step after this point is a stat of
-  `.../projects/gt5p/boot/US/BootRoot.gpb`.
+- 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
+  last three paths are `BootRoot.gpb` (RPCS3's next step), `AgreementRoot.gpb`
+  and `serverlist2_us.xml`.
+- Main sitting in `sys_cond_wait` at `lr=0x00B391F4` is normal. It has handed a
+  request to a script thread. It is not the stop, and was never a deadlock.
+- With a window the D3D12 backend starts and is given textured draws. Nobody
+  has yet looked at whether the picture is right.
+- Three cellGcm defects in ps3recomp were behind the old "stop": 16 IO mapping
+  slots, two handlers stored but never called, and user commands routed to a
+  path with no listener.
+- About 1 boot in 6 used to go wrong during sound start-up (Phase 18). After
+  the cellGcm fixes that is 1 in 29. Its cause is not found. `boot.py` and
+  `soak.py` recognise such a boot and run again
+  ([scripts/bootcheck.py](scripts/bootcheck.py)); `SOAK_KEEP_BAD=1` keeps them.
+- Ruled out for that fault, by measurement: a held mutex, a spurious condition
+  wake, stack overflow, main's missing thread id, the cellFs descriptor table,
+  the lightweight mutex on the heap. Do not re-test these without a new reason.
+- Next: check the window, then the `TV.DAT` install RPCS3 starts about 20 s
+  after `BootRoot.gpb`.
 
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
 mutex with each main-thread sample), `PS3_SYNCLOG=1` (failed locks, with the
@@ -121,9 +123,9 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in nine files under `libs/` and `runtime/`. The disc build does not
+changes in eleven files under `libs/` and `runtime/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
-and `runtime/syscalls/lv2_register.c`, and `src/main.cpp` no longer compiles
+`runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
 A copy is kept in `patches/ps3recomp-5244db9-local.patch`; refresh it after any
 further change there, and do not reset that checkout without it.

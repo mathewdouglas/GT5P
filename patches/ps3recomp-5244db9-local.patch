@@ -288,6 +288,79 @@ index 071b9ec..74fc692 100644
      return CELL_OK;
  }
  
+diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
+index cdb0464..e41b545 100644
+--- a/libs/video/cellGcmSys.c
++++ b/libs/video/cellGcmSys.c
+@@ -700,6 +700,15 @@ void ppu_gcm_pump(void)
+         g_ps3_guest_caller(s_vblank_handler_opd, (uint64_t)s_vblank_count,
+                            0, 0, 0, 0, 0, 0, 0);
+     }
++    /* The second vertical-sync handler: a second clock at the rate set by
++     * cellGcmSetSecondVFrequency (59.94 Hz or the scan-out rate; 3 disables
++     * it). It was stored and never called. Gran Turismo 5 Prologue runs one
++     * of its two timer queues off it, with a 10 s timeout as the only other
++     * way that queue advances, so every timed sleep on it ran about 600
++     * times too long. Delivered on the vblank beat. */
++    if ((p & 1) && s_second_v_handler_opd && g_ps3_guest_caller &&
++        s_second_v_frequency != 3u)   /* 3 = CELL_GCM_DISPLAY_FREQUENCY_DISABLE */
++        g_ps3_guest_caller(s_second_v_handler_opd, 1, 0, 0, 0, 0, 0, 0, 0);
+     if (p & 2) {
+         s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
+         if (s_flip_handler_opd && g_ps3_guest_caller) {
+@@ -1775,7 +1784,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+                               m, vm_read32(dea)); }
+                 if (subch == 7 && m == 0x0B00u) {
+                     extern void rsx_raise_user_cmd(u32 arg);
+-                    rsx_raise_user_cmd(vm_read32(dea));
++                    /* Two kinds of title reach here. One drives the RSX
++                     * through lv2 and waits on the RSX event queue, which
++                     * rsx_raise_user_cmd feeds. The other went through
++                     * cellGcmSetUserHandler, and its handler is delivered
++                     * by the pump. Sending the second kind down the first
++                     * path raised an interrupt nobody was listening for:
++                     * Gran Turismo 5 Prologue's render thread waits a
++                     * second for this handler twice a frame. */
++                    if (s_user_handler_opd)
++                        cellGcmQueueUserCommand(vm_read32(dea));
++                    else
++                        rsx_raise_user_cmd(vm_read32(dea));
+                     continue;
+                 }
+                 /* GCM_SUBCH1_3D=1: treat subchannel 1 as the 3D object too.
+@@ -2352,6 +2372,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+     if (s_flip_handler_opd && g_ps3_guest_caller && !gcm_flipcb_on_tick_only())
+         g_ps3_guest_caller(s_flip_handler_opd, 0, 0, 0, 0, 0, 0, 0, 0);
+ 
++    /* The queue handler: on hardware it runs when the RSX takes this flip
++     * request off the command stream, before the flip itself. It was stored
++     * and never called. A title that waits for it (Gran Turismo 5 Prologue's
++     * render thread does, with a one second timeout) then got one frame per
++     * timeout. The request is consumed here, so this is that moment. */
++    if (s_queue_handler && g_ps3_guest_caller)
++        g_ps3_guest_caller((u32)(size_t)s_queue_handler, 1, 0, 0, 0, 0, 0, 0, 0);
++
+     return CELL_OK;
+ }
+ 
+diff --git a/libs/video/cellGcmSys.h b/libs/video/cellGcmSys.h
+index 9684667..2284688 100644
+--- a/libs/video/cellGcmSys.h
++++ b/libs/video/cellGcmSys.h
+@@ -71,8 +71,11 @@ extern "C" {
+ #define CELL_GCM_LOCATION_LOCAL         0  /* video memory */
+ #define CELL_GCM_LOCATION_MAIN          1  /* main memory */
+ 
+-/* IO mapping limits */
+-#define CELL_GCM_MAX_IO_MAPPINGS        16
++/* IO mapping limits. The real bound is the IO address space in 1 MB pages,
++ * not a count of calls: Gran Turismo 5 Prologue maps its 174 MB heap one
++ * megabyte at a time, 174 calls. At 16 slots the other 159 were refused, its
++ * command buffer jumped into unmapped IO, and the FIFO walker stopped. */
++#define CELL_GCM_MAX_IO_MAPPINGS        512
+ 
+ /* Debug output levels */
+ #define CELL_GCM_DEBUG_LEVEL0           0
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
 index d857f30..c7583a1 100644
 --- a/runtime/ppu/ppu_sysprx.cpp

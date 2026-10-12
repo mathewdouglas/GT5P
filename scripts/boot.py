@@ -7,6 +7,10 @@ Extra NAME=VALUE arguments are set in the game's environment, e.g.
 `PS3_HLE_TRACE=200000 PS3_SCTRACE=1` to trace imports and syscalls, or
 `GT5P_MAINSTACK=10` to print where the main thread is.
 
+A boot that goes wrong during sound start-up (scripts/bootcheck.py) is not a
+result: it is reported in one line and the boot is run again, up to BOOT_TRIES
+times (default 4). GT5P_MAINSTACK defaults to 5 so there are samples to judge by.
+
 The full log goes to scratch/boot.err and scratch/boot.out. stdout is fully
 buffered by the port and lost when the process is killed, so expect little in
 boot.out; set PS3_VERBOSE=0 when a number matters (see README).
@@ -20,6 +24,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bootcheck
 NOISE = ("faulted in guest page", "timer_usleep", "[null-read]")
 
 
@@ -34,21 +40,30 @@ def main():
     args = sys.argv[1:]
     secs = int(args.pop(0)) if args and args[0].isdigit() else 20
     env = dict(os.environ, PS3_HEADLESS="1")
+    env.setdefault("GT5P_MAINSTACK", "5")
     for a in args:
         k, _, v = a.partition("=")
         env[k] = v
     scratch = ROOT / "scratch"
     scratch.mkdir(exist_ok=True)
     out, err = scratch / "boot.out", scratch / "boot.err"
-    with open(out, "wb") as fo, open(err, "wb") as fe:
-        p = subprocess.Popen([str(ROOT / "build" / "gt5p.exe")], cwd=ROOT, env=env, stdout=fo, stderr=fe)
-        try:
-            rc = p.wait(timeout=secs)
-            print("exited rc=%d (0x%X)" % (rc, rc & 0xFFFFFFFF))
-        except subprocess.TimeoutExpired:
-            p.kill()
-            p.wait()
-            print("still running after %ds, killed" % secs)
+    tries = int(env.get("BOOT_TRIES", "4"))
+    for attempt in range(1, tries + 1):
+        with open(out, "wb") as fo, open(err, "wb") as fe:
+            p = subprocess.Popen([str(ROOT / "build" / "gt5p.exe")], cwd=ROOT, env=env, stdout=fo, stderr=fe)
+            try:
+                rc = p.wait(timeout=secs)
+                status = "exited rc=%d (0x%X)" % (rc, rc & 0xFFFFFFFF)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+                status = "still running after %ds, killed" % secs
+        why = bootcheck.bad_reason(err.read_text(encoding="utf-8", errors="replace"))
+        if not why:
+            break
+        print("attempt %d: BAD BOOT, %s%s" % (attempt, why,
+              " -- booting again" if attempt < tries else " -- giving up, log below is a bad boot"))
+    print(status)
 
     names = nid_names()
     lines = err.read_text(encoding="utf-8", errors="replace").splitlines()

@@ -12,12 +12,21 @@ GT5P_MAINSTACK is set so the port flushes stdout while it runs; a boot that
 never exits is killed from outside, and anything still buffered is lost. The
 counts therefore describe the run up to its last sample, not to the kill.
 Logs land in scratch/soak/run<N>.{out,err}.
+
+A boot that goes wrong during sound start-up (scripts/bootcheck.py) is printed,
+marked BAD, and booted again: the soak keeps going until it has the asked-for
+number of usable runs, or has thrown away as many again. The last line says how
+many were thrown away, so the failure rate is still on the page. SOAK_KEEP_BAD=1
+turns the retry off, for measuring that rate itself.
 """
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bootcheck
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = 5          # seconds between main-thread samples (and stdout flushes)
@@ -33,7 +42,11 @@ def main():
         k, _, v = a.partition("=")
         env[k] = v
     totals = []
-    for i in range(1, runs + 1):
+    bad = {}
+    keep_bad = bool(os.environ.get("SOAK_KEEP_BAD"))
+    i = 0
+    while len(totals) < runs and i < runs * 2:
+        i += 1
         out, err = out_dir / f"run{i}.out", out_dir / f"run{i}.err"
         with open(out, "wb") as fo, open(err, "wb") as fe:
             p = subprocess.Popen([str(ROOT / "build" / "gt5p.exe")], cwd=ROOT, env=env,
@@ -48,13 +61,21 @@ def main():
         e = err.read_text(encoding="utf-8", errors="replace")
         pdipfs = len(set(re.findall(r"Open\(path='([^']*PDIPFS[^']*)'", o)))
         vol = len(re.findall(r"Open\(path='[^']*GT\.VOL'", o))
-        lrs = re.findall(r"\[mainstack\] in=\S+ sp=\S+ lr=(0x[0-9A-F]+)", e)
+        why = bootcheck.bad_reason(e)
         paths = len(set(re.findall(r"\[cellFs\] \w+\(path='([^']+)'", o)))
         print("run %d: %-8s pdipfs=%-3d gtvol_opens=%-4d paths=%-4d prepare_flip=%-3d pad_poll=%d np=%d crash=%d main_lr=%s" % (
             i, rc, pdipfs, vol, paths, o.count("SetPrepareFlip"), o.count("GetData polling"),
-            o.count("[sceNp]"), e.count("ACCESS VIOLATION"), lrs[-1] if lrs else "-"))
+            o.count("[sceNp]"), e.count("ACCESS VIOLATION"), bootcheck.last_lr(e))
+              + ("   BAD: " + why if why else ""))
+        if why:
+            bad[why] = bad.get(why, 0) + 1
+            if not keep_bad:
+                continue
         totals.append(pdipfs or vol)
     print("assets: " + " ".join(map(str, totals)))
+    print("bad boots: %d of %d" % (sum(bad.values()), i))
+    for w, n in bad.items():
+        print("   %d x %s" % (n, w))
 
 
 if __name__ == "__main__":

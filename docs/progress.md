@@ -9,6 +9,60 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 19 — It was never parked: frames at one every two seconds (2026-10-12)
+
+Still BCUS98158. Phases 17 and 18 describe main "parked in `sys_cond_wait` at
+`lr=0x00B391F4`" as the stop. That reading was wrong. Main waits there by
+design, on a request it has handed to a script thread; the title was running
+the whole time, at about half a frame per second.
+
+**How it was found.** RPCS3's log shows the title quiet for 8.5 s after network
+start-up and then stat-ing `BootRoot.gpb`. Counting graphics imports over a
+38 s boot of the port gave 20 `cellGcmSetPrepareFlip` and 18
+`cellGcmSetFlipImmediate`, the last of them at the very end of the run. The
+script thread was counting frames that took two seconds each.
+
+**Three defects in ps3recomp's cellGcm, each measured.**
+
+| Defect | Evidence | Effect of the fix alone |
+|---|---|---|
+| 16 IO mapping slots. The title maps its 174 MB heap with 174 calls to `cellGcmMapMainMemory` | 159 `no free IO mapping slots`; `FIFO JUMP to unmapped IO ... drain stops here` | Both messages gone. Frame rate unchanged |
+| The queue handler and the second vertical-sync handler were stored and never called | 1 signal to the second-V tick's condition in 45 s; the timer thread on it advanced only by its 10 s timeout | 2,000 signals in 22 s. Frame rate unchanged |
+| A `GCM_SET_USER_COMMAND` in the command stream went to the lv2 RSX event path, which has no listener in a title that used `cellGcmSetUserHandler` | `[usercmd] #n arg=0 handlers=0x0 qid=0`; the render thread timing out a 1 s wait on the user handler's object twice a frame, 10 of 10 frames | Frames arrive |
+
+The render thread is the one entered at `func_0079B180`. Phase 18 called it a
+sound thread; it is not. The five objects at `0x017213E0` are, by offset: `+0x08`
+user handler, `+0x30` flip, `+0x58` queue, `+0x80` second V, `+0xA0` vblank.
+
+**Result.** `SOAK_KEEP_BAD=1 python scripts/soak.py 20 20`:
+
+```
+20 x gtvol_opens=129 paths=27 prepare_flip~610 main_lr=0x00B391F4
+bad boots: 0 of 20
+```
+
+- 610 flips in about 20 s, against 19 in 40 s before.
+- Three paths further than before, and the first is RPCS3's next step:
+  `.../boot/US/BootRoot.gpb`, then `AgreementRoot.gpb`, then
+  `grim/file/contents/serverlist2_us.xml`.
+- With a window, the D3D12 backend starts and is fed a 1920x1080 texture bind,
+  a shader, a render target and blending. Whether the picture is right has not
+  been looked at by a person.
+- No bad boot in 20, or in the 8 before them. Phase 18 measured 5 in 30. One
+  boot after the fix did go wrong (main stuck at `lr=0x0067E990`, the render
+  thread calling through a zeroed vtable), so the fault is rarer, not gone.
+  **Hypothesis**, untested: the one-second timeouts changed the timing that
+  exposed it. Phase 18's cause is still not found.
+
+**Also in this phase.** `scripts/bootcheck.py` recognises the bad-boot
+signatures; `boot.py` retries such a boot and `soak.py` reports and replaces
+it (`SOAK_KEEP_BAD=1` to keep them and measure the rate).
+`GT5P_PEEK_R31=off,...` dumps memory relative to main's `r31`.
+
+**Next.** Look at the window. Then follow RPCS3's sequence: about 20 s after
+`BootRoot.gpb` it opens `TV.DAT` and installs to the hard disk, which the port
+has not been seen to start.
+
 ## Phase 18 — The "mutex deadlock" is not a deadlock (2026-10-12)
 
 Still BCUS98158. Phase 17 ended with "2 of 8 runs deadlock on a mutex in the
