@@ -94,6 +94,27 @@ void gt5p_start_present_thread(void);     /* src/gt5p_present.cpp */
 
 static ppu_context g_main_ctx;
 
+/* How the HLE libraries call back into lifted code (ps3emu/guest_call.h). The
+ * runtime leaves the hook NULL and a library that finds it NULL skips its
+ * callback without saying so. The disc build needs it at boot:
+ * cellGameDataCheckCreate2 hands the title its hard-disk directory through a
+ * callback, and without it every path the title built under /dev_hdd0 was
+ * missing "game/BCUS98158/USRDIR". Found by comparing against an RPCS3 log. */
+extern "C" {
+typedef void (*ps3_guest_caller_fn)(uint32_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                                    uint64_t, uint64_t, uint64_t, uint64_t);
+extern ps3_guest_caller_fn g_ps3_guest_caller;            /* libs/system/cellSysutil.c */
+uint64_t ppu_guest_call(uint32_t opd, uint64_t, uint64_t, uint64_t, uint64_t,
+                        uint64_t, uint64_t, uint64_t, uint64_t);   /* ppu_loader.cpp */
+void spurs_set_synth_job_done(int on);                             /* cellSpurs.c */
+}
+static void gt5p_guest_caller(uint32_t opd, uint64_t a0, uint64_t a1, uint64_t a2,
+                              uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6,
+                              uint64_t a7)
+{
+    ppu_guest_call(opd, a0, a1, a2, a3, a4, a5, a6, a7);
+}
+
 /* The guest context of whichever thread asks (ppu_loader.cpp). */
 extern "C" thread_local ppu_context* g_active_ctx;
 
@@ -560,6 +581,10 @@ int main(int argc, char* argv[])
 
     ppu_recomp_register();
     ppu_install_thread_trampoline();
+    if (!getenv("GT5P_NO_GUEST_CALLER")) g_ps3_guest_caller = gt5p_guest_caller;
+    /* Whether the runtime invents a completion event for each SPURS job. This
+     * build's jobs send their own (config/targets.json). */
+    spurs_set_synth_job_done(GT5P_SPURS_SYNTH_DONE);
     gt5p_spu_register_all();   /* after the ELF load: fingerprints the loaded image */
 
     uint32_t entry_addr = (uint32_t)elf.func_addr;

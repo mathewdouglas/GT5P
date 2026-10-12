@@ -1,0 +1,264 @@
+diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
+index 688ff04..0f4de84 100644
+--- a/libs/spurs/cellSpurs.c
++++ b/libs/spurs/cellSpurs.c
+@@ -679,14 +679,55 @@ static void spurs_cancel_attached_queues(u32 spurs_ea)
+  * so the lv2 delivery path had nowhere to look and dropped the event -- and
+  * with it the ack the SPU then blocks on in SPU_RdInMbox. Havok's SPU task
+  * stalls on the first physics step that way (port 2), and the PPU step waits
+- * for it forever. */
+-static u32 s_spurs_port_queue[64];
++ * for it forever.
++ *
++ * Ports belong to a SPURS instance, not to the process: a title with two
++ * instances (GT5 Prologue BCUS98158 runs Wws_Job on one and its sound engine,
++ * "sgx-spurs-", on another) may attach the same static port number on each.
++ * One table for both made the second attach fail BUSY, which that title treats
++ * as a failed sound init. The SPU-side lookup has no instance to key on yet, so
++ * it returns the most recent binding of the port. */
++#define SPURS_PORT_OWNERS 8
++static struct { u32 owner; u32 queue[64]; u32 stamp[64]; } s_spurs_ports[SPURS_PORT_OWNERS];
++static u32 s_spurs_port_stamp;
++
++static u32* spurs_port_table(u32 owner, u32** stamp)
++{
++    int free_slot = -1;
++    for (int i = 0; i < SPURS_PORT_OWNERS; i++) {
++        if (s_spurs_ports[i].owner == owner) { *stamp = s_spurs_ports[i].stamp; return s_spurs_ports[i].queue; }
++        if (!s_spurs_ports[i].owner && free_slot < 0) free_slot = i;
++    }
++    if (free_slot < 0) free_slot = 0;       /* out of slots: share the first */
++    else s_spurs_ports[free_slot].owner = owner;
++    *stamp = s_spurs_ports[free_slot].stamp;
++    return s_spurs_ports[free_slot].queue;
++}
+ 
+ uint32_t spurs_port_queue(uint32_t port)
+ {
+-    return port < 64 ? s_spurs_port_queue[port] : 0;
++    u32 best = 0, best_stamp = 0;
++    if (port >= 64) return 0;
++    for (int i = 0; i < SPURS_PORT_OWNERS; i++)
++        if (s_spurs_ports[i].queue[port] && s_spurs_ports[i].stamp[port] >= best_stamp) {
++            best = s_spurs_ports[i].queue[port];
++            best_stamp = s_spurs_ports[i].stamp[port];
++        }
++    return best;
+ }
+ 
++/* The same lookup for a caller that knows which instance it is running under
++ * (an SPU reads it from its kernel context, LS[0x1C4]). Falls back to the
++ * instance-blind answer when that instance bound nothing on the port. */
++uint32_t spurs_port_queue_for(uint32_t spurs_ea, uint32_t port)
++{
++    if (port >= 64) return 0;
++    if (spurs_ea)
++        for (int i = 0; i < SPURS_PORT_OWNERS; i++)
++            if (s_spurs_ports[i].owner == spurs_ea && s_spurs_ports[i].queue[port])
++                return s_spurs_ports[i].queue[port];
++    return spurs_port_queue(port);
++}
+ s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
+                                  s32 isDynamic)
+ {
+@@ -714,18 +755,21 @@ s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
+      * and hand it back. This used to write 0 either way, so every attach
+      * landed on port 0 and the SPU's real port number routed nowhere. */
+     u32 p = *port_h;
++    u32* stamp;
++    u32* ports = spurs_port_table((u32)(uintptr_t)spurs, &stamp);
+     if (isDynamic) {
+         p = 64;
+-        for (u32 i = 0x10; i < 64 && p == 64; i++) if (!s_spurs_port_queue[i]) p = i;
+-        for (u32 i = 0; i < 0x10 && p == 64; i++) if (!s_spurs_port_queue[i]) p = i;
++        for (u32 i = 0x10; i < 64 && p == 64; i++) if (!ports[i]) p = i;
++        for (u32 i = 0; i < 0x10 && p == 64; i++) if (!ports[i]) p = i;
+         if (p == 64) return CELL_SPURS_CORE_ERROR_BUSY;
+         *port_h = (u8)p;
+     } else if (p >= 64) {
+         return CELL_SPURS_CORE_ERROR_INVAL;
+-    } else if (s_spurs_port_queue[p]) {
++    } else if (ports[p]) {
+         return CELL_SPURS_CORE_ERROR_BUSY;
+     }
+-    s_spurs_port_queue[p] = queue;
++    ports[p] = queue;
++    stamp[p] = ++s_spurs_port_stamp;
+     printf("[cellSpurs] AttachLv2EventQueue(queue=%u) port=%u%s\n", queue, p,
+            isDynamic ? " (dynamic)" : "");
+     return CELL_OK;
+@@ -734,7 +778,7 @@ s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
+ s32 cellSpursDetachLv2EventQueue(CellSpurs* spurs, u8 port)
+ {
+     if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
+-    if (port < 64) s_spurs_port_queue[port] = 0;
++    if (port < 64) { u32* stamp; spurs_port_table((u32)(uintptr_t)spurs, &stamp)[port] = 0; }
+     printf("[cellSpurs] DetachLv2EventQueue(port=%u)\n", port);
+     return CELL_OK;
+ }
+@@ -1511,6 +1555,16 @@ static WklPm* spurs_resolve_pm(u32 wid)
+  * then busy-waits at the cross-SPU barrier for lane 1, which the sequential
+  * loop can never advance (SPU 1 hasn't run). Concurrency is required, not an
+  * optimization: SPU 0's barrier poll observes SPU 1's atomic lane update live. */
++/* The SPURS instance whose SPU code this host thread is running, for code that
++ * has only an spu_context to go on. A job image is loaded over the kernel
++ * context in LS, so the instance cannot be read back from LS[0x1C0] there. */
++#ifdef _WIN32
++static __declspec(thread) uint32_t s_tls_spurs_ea;
++#else
++static __thread uint32_t s_tls_spurs_ea;
++#endif
++uint32_t spurs_current_instance(void) { return s_tls_spurs_ea; }
++
+ struct spurs_pm_worker_arg {
+     spu_lifted_entry_fn fn; int image_id;
+     const uint8_t* pm; uint32_t pm_size;
+@@ -1522,6 +1576,7 @@ static DWORD WINAPI spurs_pm_worker(LPVOID p)
+     { ULONG g = 256 * 1024; SetThreadStackGuarantee(&g); }
+ #endif
+     struct spurs_pm_worker_arg* a = (struct spurs_pm_worker_arg*)p;
++    s_tls_spurs_ea = a->ea;
+     spu_run_policy_module(a->fn, a->image_id, a->pm, a->pm_size,
+                           a->arg, a->wid, a->ea, a->spu_num);
+     return 0;
+@@ -2527,6 +2582,16 @@ static u64 spurs_event_data3_probe(void)
+     return (u64)(unsigned)v;
+ }
+ 
++/* Whether jc_signal_done sends anything. The event it sends is a stand-in for
++ * the one a job's own SPU code sends (sys_spu_thread_throw_event on the port
++ * the application attached). A title whose lifted jobs really run, with that
++ * port bound, gets the real event as well and counts every completion twice:
++ * GT5 Prologue BCUS98158's sound service then waits for a job that has
++ * already finished. Such a port turns the stand-in off at start-up;
++ * SPURS_NO_SYNTH_DONE=1 does the same from the environment. */
++static int s_synth_job_done = 1;
++void spurs_set_synth_job_done(int on) { s_synth_job_done = on ? 1 : 0; }
++
+ static void jc_signal_done(u32 jc_ea, int job_index)
+ {
+     /* Carry the job's mailbox answer in the completion event. On hardware the
+@@ -2541,6 +2606,9 @@ static void jc_signal_done(u32 jc_ea, int job_index)
+      * so a data2 pinned at 0 never ends that loop -- with the chain's lwmutex
+      * held, which blocks the main thread's teardown behind it. A chain-level
+      * signal (job_index < 0) sends 0. */
++    { static int off = -1;
++      if (off < 0) off = getenv("SPURS_NO_SYNTH_DONE") ? 1 : 0;
++      if (off || !s_synth_job_done) return; }
+     u64 d2 = (u64)(unsigned)(job_index < 0 ? 0 : job_index);
+     u64 mbox = 0, d3 = 0;
+     (void)spurs_event_data3_probe();   /* prime d3_probe_valid */
+@@ -2586,6 +2654,12 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+ {
+     u32 pc = entry_ea, ret_pc = 0;
+     int jobs = 0;
++    /* Index of the next job within the current pass. A guarded chain is a
++     * service loop, and the application counts completions per pass: GT5
++     * Prologue's sound service indexes a 128-entry callback table with the
++     * data2 of each completion event. Numbering jobs from the start of the
++     * walk instead ran that index off the table after a few passes. */
++    int lap = 0;
+     /* Bound IDLE steps, not total steps. A SPURS job chain is frequently a
+      * SERVICE LOOP -- guard, job, sync, next, repeat -- and is meant to run for
+      * the lifetime of the subsystem. A flat cap on total commands therefore
+@@ -2602,7 +2676,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+ 
+         if (cmd != 0 && op == 0) {                    /* JOB */
+             { extern u32 g_spurs_job_ls_handle; g_spurs_job_ls_handle = jc_ea; }
+-            int idx = jobs++;
++            int idx = lap++;
++            jobs++;
+             jc_run_one_job((u32)(cmd & ~7ull), idx, size_desc);
+             idle = 0;                    /* real work: the chain is healthy */
+             /* Signal per JOB, not per lap. The application waits once for each
+@@ -2619,7 +2694,7 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+         if (op == 7) {
+             if (ext == (7 | (15 << 3))) {                     /* END */
+                 printf("[cellSpurs] chain 0x%08X: END after %d job(s)\n", jc_ea, jobs);
+-                if (jobs) jc_signal_done(jc_ea, jobs - 1);
++                if (lap) jc_signal_done(jc_ea, lap - 1);
+                 return;
+             }
+             if (ext == (7 | (14 << 3))) {                     /* RET */
+@@ -2634,6 +2709,7 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+         if (op == 7 && ext == (7 | (1 << 3))) {           /* GUARD */
+             u32 g_ea = (u32)(cmd & ~127ull);
+             if (!jg_wait(g_ea)) return;                  /* still closed */
++            lap = 0;                                     /* a new pass begins */
+             pc += 8; continue;
+         }
+         /* NOP(0) / SYNC+LWSYNC(2, one virtual SPU: nothing to wait for) /
+diff --git a/libs/system/cellGame.c b/libs/system/cellGame.c
+index 071b9ec..74fc692 100644
+--- a/libs/system/cellGame.c
++++ b/libs/system/cellGame.c
+@@ -529,13 +529,29 @@ s32 cellGameDataCheckCreate2(u32 version, const char* dirName, u32 errDialog,
+     if (version != 0 || !dir_ea || !func_opd)
+         return CELL_GAME_ERROR_PARAM;
+ 
+-    /* We report existing data (isNewData=0) + ample space; DeS's callback
+-     * returns CELL_GAMEDATA_CBRESULT_OK_CANCEL (check-only) -> CELL_OK. */
++    /* isNewData has to be true to the disk. It was pinned at 0 ("data exists"),
++     * which suits a title that only checks (Demon's Souls returns OK_CANCEL
++     * either way) but not one that installs: GT5 Prologue BCUS98158 was told
++     * its game data existed, then failed to find the PARAM.SFO that would be
++     * in it, where on a console (and in RPCS3) it is told the data is new and
++     * goes on to build its cache directories. */
++    extern int cellfs_translate_path(const char* ps3_path, char* host_buf, size_t buf_size);
++    char guest_dir[128], host_dir[CELL_GAME_PATH_MAX];
++    snprintf(guest_dir, sizeof guest_dir, "/dev_hdd0/game/%s", (const char*)(vm_base + dir_ea));
++    int have_host = cellfs_translate_path(guest_dir, host_dir, sizeof host_dir) == 0;
++    uint32_t is_new = (have_host && !dir_exists(host_dir)) ? 1u : 0u;
++
+     s32 result = gamedata_stat_callback("DataCheckCreate2", version, dir_ea,
+-                                        func_opd, 0);
++                                        func_opd, is_new);
+     if (result < 0)
+         return CELL_GAME_ERROR_PARAM;   /* callback reported an error */
+-    /* OK / OK_CANCEL: succeed (our HLE doesn't create/modify the on-disk data). */
++    /* OK on new data means "create it"; OK_CANCEL means check only. */
++    if (is_new && result == CELL_GAMEDATA_CBRESULT_OK) {
++        char usrdir[CELL_GAME_PATH_MAX];
++        snprintf(usrdir, sizeof usrdir, "%s/USRDIR", host_dir);
++        ensure_dirs(usrdir);
++        printf("[cellGame] DataCheckCreate2: created %s\n", usrdir);
++    }
+     return CELL_OK;
+ }
+ 
+diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
+index bcb1df4..8102958 100644
+--- a/runtime/syscalls/lv2_register.c
++++ b/runtime/syscalls/lv2_register.c
+@@ -1606,8 +1606,20 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
+     unsigned code = value >> 24;
+     /* No lv2 group: SPU code under SPURS. Only its user events route, through
+      * the ports cellSpursAttachLv2EventQueue bound; the rest stays as it was. */
+-    extern uint32_t spurs_port_queue(uint32_t port);
+-    if (!spu->spu_group_id && (code >= 128 || !spurs_port_queue(code & 63))) {
++    extern uint32_t spurs_port_queue_for(uint32_t spurs_ea, uint32_t port);
++    /* Prefer the instance the host thread is running SPU code for; the kernel
++     * context's copy at LS[0x1C0] (be64) is only there before a job image is
++     * loaded over it. */
++    extern uint32_t spurs_current_instance(void);
++    uint32_t spurs_ea = spurs_current_instance();
++    if (!spurs_ea) spurs_ea = ((uint32_t)spu->ls[0x1C4] << 24) | ((uint32_t)spu->ls[0x1C5] << 16) |
++                        ((uint32_t)spu->ls[0x1C6] << 8) | (uint32_t)spu->ls[0x1C7];
++    if (!spu->spu_group_id && getenv("SPURS_PORT_DBG")) { static int n; if (n++ < 24)
++        fprintf(stderr, "[spu-evt] img=%d code=%u LS[0x1C0..7]=%02X%02X%02X%02X %02X%02X%02X%02X -> queue %u\n",
++                spu->image_id, code, spu->ls[0x1C0], spu->ls[0x1C1], spu->ls[0x1C2], spu->ls[0x1C3],
++                spu->ls[0x1C4], spu->ls[0x1C5], spu->ls[0x1C6], spu->ls[0x1C7],
++                spurs_port_queue_for(spurs_ea, code & 63)); }
++    if (!spu->spu_group_id && (code >= 128 || !spurs_port_queue_for(spurs_ea, code & 63))) {
+         if (code < 128) { static int n; if (n++ < 16)
+             fprintf(stderr, "[spu-evt] SPURS user event on unbound port %u dropped (img=%d value=0x%08X)\n",
+                     code & 63, spu->image_id, value); }
+@@ -1637,7 +1649,7 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
+         unsigned port = code & 63;
+         uint32_t queue = 0;
+         if (!spu->spu_group_id) {
+-            queue = spurs_port_queue(port);
++            queue = spurs_port_queue_for(spurs_ea, port);
+         } else {
+             AcquireSRWLockShared(&s_spu_port_lock);
+             spu_group_t* group = spu_find_group(spu->spu_group_id);
