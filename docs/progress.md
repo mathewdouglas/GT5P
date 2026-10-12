@@ -9,6 +9,44 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 21 — The job finishes; frames run for the whole boot; 159 draws a frame, nothing visible (2026-10-12)
+
+Still BCUS98158. Phase 20 ended with the wid 4 job running but its run never
+finishing, and two hypotheses. Both were wrong. The job is short and correct:
+2,119 transfers, start to return. Four further defects sat behind it.
+
+| Defect | Evidence | After the fix |
+|---|---|---|
+| The module calls the job and the job returns to `0x3258`, which was not a lifted entry. The interpreter took the tail, and its `lqa`/`bi` on the saved return slot went to LS 0, the interrupt vector | Trail frozen with `SPURS_PM_FLOW_FREEZE=3258`: `040F4 03258 02660 02664 02668 02698 03260 00000 00A2C`. `SPU_LS_WATCH=0x1500` shows one write to the slot, the correct `0x2CA8`. Then the same seven addresses for ever, 56 million transfers in 10 s | `0x3258` and `0x3260` seeded (`wws_job_pm_extra_funcs`). The trail goes `03260 02CA8 02CB8` and into the store phase |
+| 8 MFC engine slots. A policy-module context is persistent and keeps its slot, so the title passed 8 on every boot and the rest shared one engine's tag state | `[SPU] more than 8 contexts hold an MFC engine at once`. Five 60 s boots: 611, 615, 614, 658, 748 flips, each ending with the module asking for ever whether DMA tag 1 had completed (`02C88 02340 02D30 02D38`) | 32 slots. Five boots: 1,173 to 1,187 flips. One 120 s boot: 1,962 |
+| Graphics interrupts were delivered only at HLE entry. With a window the FIFO walker runs on the present thread, and the render thread is by then asleep in `sys_cond_wait` on the user-command object with a one-second timeout | Windowed: 42 flips in 45 s, title bar `FPS: 1.00`, render thread at `lr=0x00BCA01C` in `sys_cond_wait(0x6A, 1000000)` | Also delivered at `lv2_syscall` entry. Three windowed 45 s runs: 81, 866, 561 flips. The slow one is not explained |
+| A second weak declaration of `ppu_gcm_pump` is a duplicate definition to the COFF linker | `lld-link: error: duplicate symbol: ppu_gcm_pump` | A plain wrapper in `ppu_hle.cpp` |
+
+Phase 20's "more than 32 contexts" still prints once late in a run, so slots are
+also being leaked by something that is not a policy module. Not looked at.
+
+**The picture.** With a window the title bar reads `FPS: 13.00 | draws: 159`.
+A capture of the window at 60 s (`PrintWindow`, saved to `scratch/`) is solid
+black. Earlier in the boot, before any draw, the same capture is dark blue, so
+the capture does see the swap chain. 159 draws a frame are reaching the D3D12
+backend and none of them shows.
+
+**Frame rate.** About 13 a second once the job runs, against 30 before it. One
+job per frame, so the job path is the limit: the kernel thread polls every
+1 ms and runs the five workloads in turn.
+
+**File activity.** No new path after `serverlist2_us.xml` in 120 s. Whether the
+title is waiting for input on a screen that cannot be seen, or for the network,
+is not known.
+
+**Diagnostics added.** The hang watchdog now also prints the last 64 transfers
+and a total, twice, two seconds apart (`HUNG-RUN NOW`), which is what separated
+"long loop" from "seven addresses for ever". `SPURS_PM_FLOW_FREEZE=<hex pc>`
+stops that ring 24 transfers after an address is first seen.
+
+**Next.** Why 159 draws show nothing: which render target they go to and what
+is presented. Then the intermittent slow windowed boot.
+
 ## Phase 20 — Frames stop at 20 s: the job manager was lifted at the wrong address (2026-10-12)
 
 Still BCUS98158. Phase 19's boots were 20 s long. A 90 s boot issues the same

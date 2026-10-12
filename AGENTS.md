@@ -89,17 +89,15 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 20 of
-[docs/progress.md](docs/progress.md); read Phase 20, then 19, which corrects
-the two before it.
+Details and evidence are in Phases 17 to 21 of
+[docs/progress.md](docs/progress.md); read 21, 20 and 19 in that order. Each
+corrects the one before.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
   last three paths are `BootRoot.gpb` (RPCS3's next step), `AgreementRoot.gpb`
   and `serverlist2_us.xml`.
 - Main sitting in `sys_cond_wait` at `lr=0x00B391F4` is normal. It has handed a
   request to a script thread. It is not the stop, and was never a deadlock.
-- With a window the D3D12 backend starts and is given textured draws. Nobody
-  has yet looked at whether the picture is right.
 - Three cellGcm defects in ps3recomp were behind the old "stop": 16 IO mapping
   slots, two handlers stored but never called, and user commands routed to a
   path with no listener.
@@ -110,23 +108,29 @@ the two before it.
 - Ruled out for that fault, by measurement: a held mutex, a spurious condition
   wake, stack overflow, main's missing thread id, the cellFs descriptor table,
   the lightweight mutex on the heap. Do not re-test these without a new reason.
-- Frames stop about 20 s in, at roughly 610 flips. The render thread waits on
-  a job-manager workload (wid 4) whose job does not finish (Phase 20).
+- Frames now run for the whole boot: about 1,180 flips in 60 s, 13 a second
+  once the per-frame SPU job starts (Phase 21). Until Phase 21 they stopped at
+  about 610.
+- With a window the backend is given 159 draws a frame and the window is
+  black. That is the current problem.
 - The job manager's policy module must be lifted at `0xA00`, where SPURS loads
   it, not at 0. `scripts/lift_spu_jobs.py` now does that, and also lifts the
   job bodies the module streams into its own local store
   (`wws_job_bodies` in `config/targets.json`). Before this the SPURS kernel
   thread was stuck in workload 0 for the whole run.
-- Next: find out whether the loop the wid 4 job sits in (`0x41F0` in the body
-  at `0x011A4100`) ends. After that, check the window, then the `TV.DAT`
-  install RPCS3 starts about 20 s after `BootRoot.gpb`.
+- A new job body shows up as `[spu-smc] microstep ... handing to the
+  interpreter`. Do not trust the interpreter with it: dump it with
+  `SPU_DUMP_OVL`, add it to `wws_job_bodies` and re-lift.
+- Next: why the draws show nothing, then the intermittent slow windowed boot,
+  then the `TV.DAT` install RPCS3 starts about 20 s after `BootRoot.gpb`.
 
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
 mutex with each main-thread sample), `PS3_SYNCLOG=1` (failed locks, with the
 lock object), `PS3_LWM_CHECK=1` (two threads inside one lightweight mutex).
 For the job manager: `SPURS_PM_TRACE=1` (each policy-module run and how it
 ended), `SPURS_PM_FLOW=1 SPURS_PM_FLOW_ALL=1` (the control-flow trail of a run
-still going after 5 s), `SPU_DUMP_OVL=<existing dir>,0x4000` (each job body the
+still going after 5 s; add `SPURS_PM_FLOW_FREEZE=<hex pc>` to keep the
+transfers around one address), `SPU_DUMP_OVL=<existing dir>,0x4000` (each job body the
 module streams in). Do not set `SPU_ATOM_EA`: it ignores its line cap and wrote
 1.8 GB in 30 s.
 
@@ -136,7 +140,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirteen files under `libs/` and `runtime/`. The disc build does not
+changes in sixteen files under `libs/` and `runtime/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

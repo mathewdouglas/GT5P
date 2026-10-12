@@ -361,6 +361,45 @@ index 9684667..2284688 100644
  
  /* Debug output levels */
  #define CELL_GCM_DEBUG_LEVEL0           0
+diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
+index acbaf12..1c91bb0 100644
+--- a/runtime/ppu/ppu_hle.cpp
++++ b/runtime/ppu/ppu_hle.cpp
+@@ -106,6 +106,9 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd,
+                                     uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7);
+ /* Weak: builds that don't link cellGcmSys.c (test harnesses) get a null and skip. */
+ extern "C" __attribute__((weak)) void ppu_gcm_pump(void);
++/* For other translation units: a second weak declaration of the same symbol
++ * is a duplicate definition to the COFF linker, so they call this instead. */
++extern "C" void ps3_gcm_pump_if_present(void) { if (ppu_gcm_pump) ppu_gcm_pump(); }
+ /* The SPURS SPU kernel spawn hook, whose real definition is per-port
+  * (flow_spurs_kernel.c). This used to be a weak extern DECLARATION written at
+  * block scope inside ps3_hle_call, guarded by a test of its own address -- so
+diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
+index e73a151..5183ade 100644
+--- a/runtime/ppu/ppu_loader.cpp
++++ b/runtime/ppu/ppu_loader.cpp
+@@ -2952,6 +2952,7 @@ extern "C" void ppu_prof_stamp(void* ctx, unsigned lr);
+ #define PS3_SC_INFLIGHT_MAX 64
+ extern "C" uint32_t g_sc_inflight[PS3_SC_INFLIGHT_MAX] = { 0 };
+ 
++extern "C" void ps3_gcm_pump_if_present(void);   /* ppu_hle.cpp */
+ extern "C" void lv2_syscall(ppu_context* ctx)
+ {
+     /* One-shot: PPU_GUARD_EA=<hex> arms the page guard on that address without
+@@ -2962,6 +2963,12 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+       if (!_ge) { _ge = 1;
+           const char* e = getenv("PPU_GUARD_EA");
+           if (e && *e) ppu_guard_page((uint32_t)strtoul(e, 0, 16)); } }
++    /* Deliver pending graphics interrupts here as well as at HLE entry. The
++     * FIFO walker can run on the present thread, and then the thread waiting
++     * for a user command is already asleep in a syscall: with delivery only at
++     * HLE entry nothing pumped until its one-second timeout woke it. Threads
++     * that only ever sleep and wait still pass through here every few ms. */
++    ps3_gcm_pump_if_present();
+     uint64_t num = ctx->gpr[11];
+     /* Milestone: which lv2 calls this title makes, in first-occurrence order.
+      * Formatting the key each time is noise next to the profiler stamp below,
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
 index d857f30..c7583a1 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
@@ -440,7 +479,7 @@ index d857f30..c7583a1 100644
          vm_write32(lwmutex + LWM_RECUR, rc ? rc : 1);
      }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d0..605980a 100644
+index 0b235d0..a9d3f7d 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,9 +21,9 @@
@@ -552,7 +591,21 @@ index 0b235d0..605980a 100644
      /* Nest-safe: a job run synchronously from inside another SPU's execution
       * re-enters here on the same host thread. The halt target is per-thread,
       * so save the outer one and put it back on the way out -- otherwise the
-@@ -743,7 +743,7 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -293,7 +293,12 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
+  *     stored both took the same slot and then shared one engine's queue and tag
+  *     state -- one SPU's tag wait satisfied by the other SPU's transfer.
+  * ===========================================================================*/
+-#define SPU_MAX_CONTEXTS 8
++/* 8 was "more SPUs than the machine has", but a context is not an SPU: every
++ * SPURS workload keeps a persistent policy-module context, and each holds its
++ * slot for the life of the title. GT5 Prologue has five job-manager workloads
++ * plus its job and sound contexts, went past 8 on every boot, and the ones
++ * left over shared one engine's tag state. */
++#define SPU_MAX_CONTEXTS 32
+ 
+ typedef struct {
+     spu_context* volatile ctx;
+@@ -743,7 +748,7 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
                        ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea); }
          ctx->resv_valid = 0;                           /* reservation consumed */
          spu_lockline_unlock();
@@ -561,7 +614,7 @@ index 0b235d0..605980a 100644
          return 1;
  
      case MFC_PUTLLUC_CMD:
-@@ -760,7 +760,7 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -760,7 +765,7 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
          spu_coh_notify_write(ea);
          ctx->resv_valid = 0; ctx->atomic_stat = 2;   /* PUTLLUC complete */
          spu_lockline_unlock();
@@ -570,7 +623,7 @@ index 0b235d0..605980a 100644
          return 1;
  
      default:
-@@ -2032,10 +2032,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2032,10 +2037,10 @@ static int spu_smc_microstep(spu_context* ctx)
                        " microstep set -- handing to the interpreter (steps=%d)\n",
                        ctx->image_id, pc, w, steps); }
          ctx->pc = pc;
@@ -585,7 +638,7 @@ index 0b235d0..605980a 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2087,7 +2087,14 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2087,7 +2092,14 @@ void spu_indirect_branch(spu_context* ctx)
              if (n <= 4 || (n % 4096) == 0)
                  fprintf(stderr, "[spurs-pm] poll #%u (r3=0x%08X) -> continue\n",
                          n, ctx->gpr[3]._u32[0]);
@@ -601,8 +654,43 @@ index 0b235d0..605980a 100644
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
          }
+diff --git a/runtime/spu/spu_drain.c b/runtime/spu/spu_drain.c
+index 931d3b3..8404448 100644
+--- a/runtime/spu/spu_drain.c
++++ b/runtime/spu/spu_drain.c
+@@ -32,6 +32,8 @@ SPU_THREAD_LOCAL unsigned g_spu_pch_n;
+  * armed/dumped by spu_run_policy_module. */
+ uint32_t          g_pm_flow_buf[8192];
+ volatile unsigned g_pm_flow_n = 0;
++uint32_t          g_pm_flow_tail[64];
++volatile unsigned long long g_pm_flow_total = 0;
+ void* volatile    g_pm_flow_ctx = 0;
+ 
+ #include <stdlib.h>
+@@ -116,6 +118,21 @@ void spu_task_launch_check(spu_context* ctx, void* fn)
+               fflush(stderr);
+           }
+       } }
++    /* The buffer keeps the START of a run. A run that never ends is described
++     * by where it is now, so keep the last 64 transfers and a total as well. */
++    if (g_pm_flow_ctx == (void*)ctx) {
++        /* SPURS_PM_FLOW_FREEZE=<hex pc>: stop the tail 24 transfers after that
++         * pc is first seen, so the ring shows how the run got there instead of
++         * the millions of laps it has made since. */
++        static int64_t s_fz = -2; static int s_left = -1;
++        if (s_fz == -2) { const char* e = getenv("SPURS_PM_FLOW_FREEZE");
++                          s_fz = e ? (int64_t)strtoul(e, 0, 16) : -1; }
++        if (s_left != 0) {
++            g_pm_flow_tail[g_pm_flow_total++ & 63] = ctx->pc;
++            if (s_left > 0) s_left--;
++            else if (s_fz >= 0 && (ctx->pc & SPU_LS_MASK) == (uint32_t)s_fz) s_left = 24;
++        }
++    }
+     if (g_pm_flow_ctx == (void*)ctx && g_pm_flow_n < 8192)
+         g_pm_flow_buf[g_pm_flow_n++] = ctx->pc;
+ 
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..506eea1 100644
+index 4f82063..7c689fc 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -35,6 +35,7 @@ extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
@@ -613,16 +701,17 @@ index 4f82063..506eea1 100644
  
  int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                            const uint8_t* pm_host, uint32_t pm_size,
-@@ -219,7 +220,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -219,7 +220,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static volatile unsigned long long s_flow_arm_ms;
      extern unsigned long long ps3_ms_now(void);
      if (tracing) {
 -        g_pm_flow_n = 0; g_pm_flow_ctx = ctx;
++        { extern volatile unsigned long long g_pm_flow_total; g_pm_flow_total = 0; }
 +        g_pm_flow_n = 0; g_pm_flow_ctx = ctx; g_pm_flow_arms++;
          s_flow_arm_ms = ps3_ms_now();
          { static int _a = 0; if (_a++ < 8) {
              fprintf(stderr, "[pm-flow] ARM wid=%u spu=%u (watch=0x%08X)\n",
-@@ -439,9 +440,16 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
+@@ -439,9 +441,25 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
      (void)p;
      extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
      extern void* volatile g_pm_flow_ctx;
@@ -639,6 +728,15 @@ index 4f82063..506eea1 100644
 +        ctx = (spu_context*)g_pm_flow_ctx;
 +        if (ctx && arms == g_pm_flow_arms) break;
 +    }
++    { extern uint32_t g_pm_flow_tail[]; extern volatile unsigned long long g_pm_flow_total;
++      for (int pass = 0; pass < 2; pass++) {
++          unsigned long long t = g_pm_flow_total;
++          fprintf(stderr, "[pm-flow] HUNG-RUN NOW: %llu transfers so far; last 64 (oldest first):", t);
++          for (unsigned k = 0; k < 64; k++)
++              fprintf(stderr, " %05X", g_pm_flow_tail[(t + k) & 63] & SPU_LS_MASK);
++          fprintf(stderr, "\n"); fflush(stderr);
++          if (!pass) Sleep(2000);
++      } }
      unsigned n = g_pm_flow_n; if (n > 8192) n = 8192;
      fprintf(stderr, "[pm-flow] HUNG-RUN PARTIAL: %u transfers, live pc=0x%05X "
              "LS12A0=%02X%02X LS12C0=%02X%02X LS12F0=%02X%02X%02X%02X LS1300=%02X%02X:",
