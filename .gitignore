@@ -72,3 +72,50 @@ build.*/
 # Per-machine notes and the guest hard disk the port writes at run time
 AGENTS.local.md
 gamedata/
+
+# More game files. The disc layout brings kinds the PSN package did not, and
+# extensions are listed in both cases because git matches case exactly on
+# Linux and macOS. scripts/check_no_game_files.py enforces the same list, and
+# more, on content -- an ignore rule alone does not stop `git add -f`.
+*.vol
+*.VOL
+*.dat
+*.DAT
+*.pam
+*.PAM
+*.esp
+*.ESP
+*.sfo
+*.SFO
+*.sfb
+*.SFB
+*.sdat
+*.SDAT
+*.rif
+*.RIF
+*.RAP
+*.prx
+*.SPRX
+*.gpb
+*.rt2
+*.p3t
+*.at3
+*.AT3
+*.img
+*.pkg
+ICON0.PNG
+PIC[0-9].PNG
+PS3_GAME/
+USRDIR/
+PDIPFS/
+klics.txt
+keys
+ldr_curves
+vsh_curves
+
+# Reverse-engineering databases hold decompiled game code
+*.gpr
+*.rep/
+*.gzf
+*.i64
+*.idb

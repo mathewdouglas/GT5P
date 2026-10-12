@@ -272,3 +272,13 @@ already covers `input/`, `generated/`, `analysis/`, `data/keys`, `build/` and th
 game file extensions. Ghidra databases and decompiler output derived from the
 game binary belong in those ignored folders too. Do not paste decompiled game
 code into tracked files; describe behaviour and cite addresses.
+
+This is enforced, not just asked for:
+
+- `scripts/check_no_game_files.py` refuses files by name, extension, directory,
+  size and magic bytes, so a renamed or force-added game file is still caught.
+- `.githooks/pre-commit` runs it on every commit. Enable it once per clone with
+  `git config core.hooksPath .githooks`. It is enabled on this machine.
+- `.github/workflows/no-game-files.yml` runs it on GitHub for every push.
+- Never bypass it with `git commit --no-verify` or `git add -f`. If it refuses a
+  file that is legitimately ours, change the rule in the script and say why.

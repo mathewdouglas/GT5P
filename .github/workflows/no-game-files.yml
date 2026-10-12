@@ -1,0 +1,24 @@
+name: No game files
+
+# The commit hook in .githooks/ only protects a clone that has enabled it.
+# This runs the same check on GitHub for every push and pull request, over the
+# files in the commit and over every blob in the history that was fetched.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_no_game_files.py --tracked --history

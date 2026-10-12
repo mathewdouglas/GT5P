@@ -1,0 +1,14 @@
+#!/bin/sh
+# Refuse a commit that contains game files, keys or generated code.
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# The rules are in scripts/check_no_game_files.py. If no Python can be found
+# the commit is refused rather than waved through.
+root=$(git rev-parse --show-toplevel) || exit 1
+for py in "$root/.venv/Scripts/python.exe" "$root/.venv/bin/python" python3 python py; do
+    if command -v "$py" >/dev/null 2>&1; then
+        exec "$py" "$root/scripts/check_no_game_files.py" --staged
+    fi
+done
+echo "pre-commit: no Python found, cannot check for game files -- commit refused" >&2
+exit 1

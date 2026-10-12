@@ -239,6 +239,10 @@ This repository holds the port's own code and tooling. It contains no proprietar
 Sony or Polyphony Digital code, no game assets, and no decryption keys. You must
 provide your own legally obtained copy. It exists for game preservation.
 
+This fork checks that mechanically. `scripts/check_no_game_files.py` refuses game
+files by name, extension, size and content; it runs as a commit hook (enable it
+with `git config core.hooksPath .githooks`) and on GitHub for every push.
+
 **Gran Turismo** is a trademark of Sony Interactive Entertainment. This project is
 not affiliated with, endorsed by, or connected to Sony or Polyphony Digital in any
 way.
