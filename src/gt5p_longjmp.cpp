@@ -38,6 +38,7 @@
 
 struct gt5p_jmp {
     jmp_buf  host;
+    int      call_depth;   /* the runtime's indirect-call depth when armed */
     uint32_t buf_ea;   /* the guest jmp_buf, aligned the way the guest aligns it */
 };
 
@@ -45,6 +46,9 @@ struct gt5p_jmp {
  * while the frame that armed it is still on the host stack. The wrapper around
  * each setjmp-calling function restores the depth on the way out, so a buffer
  * whose frame has returned can never be fired into. */
+extern "C" int  ppu_indirect_depth_get(void);
+extern "C" void ppu_indirect_depth_set(int d);
+
 static thread_local gt5p_jmp g_jmp[GT5P_JMP_MAX];
 static thread_local int      g_depth;
 
@@ -60,6 +64,7 @@ extern "C" gt5p_jmp* gt5p_jmp_push(uint32_t buf_ea)
     }
     gt5p_jmp* e = &g_jmp[g_depth++];
     e->buf_ea = gt5p_jmp_key(buf_ea);
+    e->call_depth = ppu_indirect_depth_get();
     return e;
 }
 
@@ -74,6 +79,18 @@ extern "C" void gt5p_jmp_fire(uint32_t buf_ea, int value)
     for (int i = g_depth - 1; i >= 0; i--) {
         if (g_jmp[i].buf_ea != key) continue;
         g_depth = i;                       /* the target frame is the new top */
+        /* The host jump skips every return between here and the setjmp, so
+         * the runtime's count of nested indirect calls has to be put back by
+         * hand. Left alone it only grew, until the runtime's recursion cap
+         * started dropping calls. */
+        {
+            int now = ppu_indirect_depth_get();
+            static int shown = 0;
+            if (now != g_jmp[i].call_depth && shown++ < 4)
+                fprintf(stderr, "[setjmp] longjmp unwinds %d indirect call(s)%c",
+                        now - g_jmp[i].call_depth, 10);
+            ppu_indirect_depth_set(g_jmp[i].call_depth);
+        }
         longjmp(g_jmp[i].host, value ? value : 1);
     }
     static int warned = 0;

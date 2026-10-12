@@ -9,6 +9,273 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 26 — Past the agreement: an unmatched `bctr` was lifted as a call (2026-10-12)
+
+Still BCUS98158. Phase 25 left the process exiting after the agreement. Two
+controlled runs settle what triggers it: left alone for 60 s the title stays on
+the agreement (1,117 flips, alive); with the user pressing down to the end,
+right, Z, then Z on "Confirmation", it exits 5 to 10 s later, every time
+(four runs). `scratch/inp.ps1 <secs>` is the harness: it captures the window
+every 5 s and reports when the process goes away.
+
+**What the exit was.** Just before the stack overflow the runtime prints
+`[ppu] recursion cap @0x00B5D900 depth=4001 -- skipping`, three times. The
+dispatcher in `ppu_loader.cpp` counts nested indirect guest calls and, past
+4,000, returns without making the call. A skipped call is silent data
+corruption; here it was followed at once by a tree erase walking a null node
+(`func_00CB0698`) until the host stack ran out.
+
+**First hypothesis, wrong for this crash.** That the counter leaks: a guest
+`longjmp` is done with a host `longjmp`, which skips the decrement. It does
+leak, by one per jump (`[setjmp] longjmp unwinds 1 indirect call(s)`), and
+`gt5p_longjmp.cpp` now restores the depth it recorded at `setjmp`. The exit
+happened again with that in. Only three calls were skipped before the crash,
+which also says the depth was not stuck high; it was really that deep.
+
+**The cause.** The cap now prints the outermost targets. After a dozen
+ordinary frames they are six addresses, `0x0078CCEC` to `0x0078CFB0`, over
+and over, while the guest stack pointer does not move. Those are case blocks
+of one function with a loop around a switch: it reads a byte, dispatches
+through a table (`bctr` at `0x0078CD90`), and each case branches back to the
+top. `scripts/jumptables.py` did not match that table, so the lifter split the
+cases into functions and emitted the `bctr` as
+`ps3_indirect_call(ctx); return;`, a nested host call per pass round the
+loop. Four thousand bytes of input reach the cap.
+
+**The fix.** A `bctr` with no matched table is still a jump. The lifter now
+emits `ps3_indirect_tail(ctx); return;`, and the runtime hands a known target
+to the tail-call trampoline, so the caller runs it at the same depth. The
+generated source was brought into line by the same textual change (1,778
+sites) rather than a re-lift. `PPU_NO_INDIRECT_TAIL=1` restores the nested
+call. Measured: a headless boot is unchanged, and in the next input run the
+recursion cap does not print.
+
+**Still exits, one step further on.** The same input run ends at the same
+moment with a stack overflow in a different function, `func_00D80560`: the
+same shape of tree erase (node flag at `+0x45` this time), node argument 0.
+The last file activity before it is `TopRoot.gpb` and `TopMenuTemplate.gpb`
+read from `GT.VOL`, then a failed `stat` of
+`/dev_hdd0/game/BCUS98158/USRDIR/grim/file/contents/tv2_us_root.xml=` (the
+trailing `=` is in the request). So the title is building its top menu. Not
+investigated. Two readings, neither tested: a container whose head node was
+never allocated (Phase 22's unchecked allocation again), or an error path for
+the missing file that the title never takes on a console with its data
+installed.
+
+**Windowed boots that stall are unchanged**: three of the eleven boots in
+this phase never drew.
+
+## Phase 25 — First picture: the licence agreement is readable (2026-10-12)
+
+Still BCUS98158. The window now shows the "Online User Agreement" screen: the
+title, the scrolling agreement text, "Decline", "Accept" and "Enter", all
+legible. Three faults in ps3recomp's graphics path stood between Phase 24 and
+that, found in this order.
+
+**1. Texel-addressed textures were sampled as if normalised.** The painting
+quads were rasterising all along. The title binds the mask with the
+unnormalised-coordinates bit set (`0x40` in the texture format) and passes
+coordinates in texels, 1 to about 1226 on a 1920×1080 texture. The D3D12
+backend passed them straight to the sampler, so every sample fell outside the
+glyphs and the quads came out with alpha 0. The decompiler already had the
+fix-up (`rsx_fp_apply_unnorm_scale`); this backend never called it. It does
+now, and the scale is part of the pipeline cache key. `RSX_NO_UNNORM=1` turns
+it off.
+
+Measured: with it on, `[FP] fp=0x507F3C1 texel-addressed units 0x1: 4 sample
+sites scaled (unit0 1920x1080)`, and the page layout appears, with several
+glyphs stacked in each cell.
+
+**Phase 24's "forced to white shows nothing" was not a test.** `FP_ONE`
+rewrites the text `_po.c0 = `, which the decompiler in this tree does not
+emit; it ends with `float4 _o = h[0];`. The switch did nothing, silently, for
+both that experiment and the mask pass, which relies on the same rewrite. It
+now matches either spelling. The four things Phase 24 ruled out with it
+(culling, depth, alpha test, re-binding) were ruled out by a test that could
+not fail; they did turn out not to be the cause. The two leads it listed were
+not the cause either: `D3D12_DBG=1 D3D12_IQ=1` reports no validation messages
+for a 159-draw frame.
+
+**2. Immediate-mode draws were dropped.** The stacked glyphs were cells never
+being wiped. An `RSX_TRACE` of a late frame (new: `RSX_TRACE_FROM_STENCIL=<k>`
+starts it after the k-th stencil enable) shows, per glyph: all three stencil
+ops set to zero, `BEGIN(quads)`, eight writes to `0x1880`/`0x1884`, `END`;
+then ops keep/keep/invert and the polygon through `DRAW_ARRAYS`. `0x1880` is
+`SET_VERTEX_DATA2F_M`: the wipe quad's four corners are sent inline in the
+command stream, with no vertex array. `rsx_commands.c` ignored the method, so
+the wipes never happened. It now collects those vertices and hands them to a
+new optional backend hook, `draw_immediate`, at `END`; the D3D12 backend draws
+them through the quad path. `RSX_NO_IMM=1` drops them again.
+
+Measured: draws per frame went from 159 to 206, and the text became legible.
+Phase 23 described the wipe correctly; Phase 24's frame listing could not show
+it, because a draw that was never recorded is not in the list.
+
+There is no stencil clear to rely on: `CLEARDBG=1` shows the title's clears
+are `0x1` (depth only) and `0xF0` (colour). The clear handler used to ignore
+its flags and treat every clear as a colour clear; it now leaves colour alone
+when no colour bit is set, and clears the mask target on a stencil clear.
+
+**3. The guest scissor was not applied.** Agreement text scrolled above its
+panel and ran over the title. The trace shows a scissor of 869×480 at
+(205, 113) around the text draws and 100×42 at (1099, 21) around "Enter". The
+backend used the viewport as the scissor. Each draw record now carries the
+guest scissor and it is intersected with the viewport rectangle.
+`RSX_NO_SCISSOR=1` turns it off. Measured: the text now stops at the panel's
+top edge and fades out at its bottom edge, and the title is clear.
+
+**Input works, and the title goes past the agreement.** The runs in this
+phase were not all untouched: the user was scrolling the agreement and
+pressing Z in the window, which the title takes as "Accept". That is where the
+second captured screen comes from: "Confirmation. This game supports the
+auto-save feature. ..." with an "OK" button, caught mid-fade at 70 draws a
+frame and 20 frames a second. It follows the agreement.
+
+**Open: the process then exits.** Four of fourteen runs ended by themselves
+after 800 to 1,170 flips. The one trace kept (`scratch/crash.err`) is a stack
+overflow: `func_00CB0698` calling itself without end at `lr=0x00CB082C`, with
+its node argument 0 and reads of addresses `0x8` and `0x31`. By its shape the
+function is a red-black tree erase (node flag at `+0x31`, child links at `+0`
+and `+8`, a short-string capacity test against 15), so a container is being
+destroyed through a null root. Hypothesis, not tested: this happens on the
+step after "Confirmation", and is the unchecked failed allocation of Phase 22
+showing up later. Which runs had key presses was not recorded, so the link to
+input is the user's account plus timing, not a controlled test.
+
+Eight further runs with `RSX_NO_IMM=1 RSX_NO_SCISSOR=1`: one exited the same
+way at 1,131 flips, two were on a 42-draw screen (the confirmation without its
+wipe quads), two were on the agreement, two stalled at `draws: 0` and one
+exited at start. So the exit does not need the immediate-mode or scissor
+changes. Input was not controlled in these either.
+
+**Not yet right.** Nothing is drawn behind the text; the frame holds only mask
+draws and the quads that paint them, so either this screen has no background
+or its draws are another kind the backend drops. Not looked at. Back-face
+stencil ops (`0x035C` to `0x0364`) and the stencil write mask (`0x032C`) are
+still untracked; here they equal the front-face values and `0xFF`.
+
+**Windowed boots are still unreliable**, as in Phase 24: in this session
+about one run in four sat at `draws: 0` with roughly 80 flips, and two exited
+at start. Those are not explained by input.
+
+Diagnostics added: `RSX_TRACE_FROM_STENCIL`, `CLEARDBG`, `RSX_NO_UNNORM`,
+`RSX_NO_IMM`, `RSX_NO_SCISSOR`; `VP_POSDBG` now prints all four corners of a
+quad and the enabled vertex arrays; `D3D12_IQ` prints how many messages it
+found, so "none" is distinguishable from "not running".
+
+## Phase 24 — The mask renders: "Decline", "Accept", "Enter". The quads that paint it still do not (2026-10-12)
+
+Still BCUS98158. Phase 23's second route is in: a draw with stencil on and
+colour writes off now goes to an offscreen colour target keyed by the zeta
+offset (`rsx_stencil_mask_pass`), with the stencil pass op done as a blend and
+the pixel shader forced to output 1. `RSX_NO_STENCIL_MASK_RT=1` turns it off.
+A logic op was tried first and D3D12 refused the pipeline (`0x80070057`): it
+allows logic ops only on integer formats.
+
+**It works as far as the mask.** `RTT_SAVERT=1100000 RTT_SAVERT_AFTER=45`
+saves that target. It holds a row of glyphs reading "Decline", "Accept" and
+"Enter", twice, in the top-left 1280×720 of a 1920×1080 surface. So the title
+is on its licence-agreement screen (it stat-ed `AgreementRoot.gpb` just
+before), its text is drawn as vector outlines, and each glyph is rasterised
+into a 60-texel cell and then sampled four times by the quad that paints it.
+
+**The painting quads show nothing.** Measured so far:
+
+- they are recorded and submitted: 31 with program `0x507F3C1` and 8 with
+  `0x507F0C1` per frame, target the back buffer, colour mask `F`, texture 0
+  resolved to the mask target (`texrt=0`), the guest's own pipeline
+  (`VP_SUBMIT`);
+- their corners are on screen: `VP_POSDBG=12` gives clip positions such as
+  `(-0.25, 0.75, 0, 1)` and `(0.30, 0.22, 0, 1)`;
+- the back buffer is presented: `CLEAR_RGB=0.4,0,0` gives a red window;
+- nothing appears on that red with the output forced to white (`FP_ONE`),
+  culling off, depth test off, alpha test off and the render target re-bound
+  before every draw.
+
+So the draws reach the GPU with sane positions and write nothing. Not yet
+explained. Two things to check next, neither tested:
+
+- the mask target is 1920×1080 and is bound with the 1280×720 depth buffer,
+  which D3D12 does not allow. The mask draws rasterise anyway, but the state
+  left behind may be what drops the quads. Give the mask pass no depth buffer,
+  or one of its own size;
+- `DRAW_KEEP_TEX=1100000 DRAW_KEEP_NOCLEAR=1` keeps only the draws that sample
+  the mask. If they show on their own, the fault is in the switching between
+  the two targets.
+
+**Windowed boots are unreliable.** Of the last dozen windowed runs about a
+third never reached the UI in 50 s (70 to 150 flips, `draws: 0`), one of them a
+bad boot by `bootcheck` and one a crash at start. Headless soaks do not show
+this rate. Not looked at.
+
+Diagnostics added: `VP_POSDBG=<N>`. Files `RTT_SAVERT` and `FP_DUMP` write go
+to the working directory; move them to `scratch/`.
+
+## Phase 23 — Why the window is black: the title draws into the stencil buffer and reads it back as a texture (2026-10-12)
+
+Still BCUS98158. Phase 22 ended on a hypothesis about vertex layout. It was
+wrong: attribute 0 really is four floats, and the title's 39-instruction vertex
+program uses the last two as texel coordinates on purpose. The shaders
+translate correctly and the matrix is a plain 2/1920, 2/1080 scale.
+
+**What the frame is made of.** `RTT_DUMP=2` lists a frame's draws with their
+state, and `RSX_TRACE=1500000` gives the commands around them.
+
+| Draws per frame | Program | Colour writes | Stencil |
+|---|---|---|---|
+| about 120, polygons and quads | `0xFFFFDC1` | off | on, compare ALWAYS |
+| 31, quads | `0x507F3C1` | on | off |
+| 8, quads | `0x507F0C1` | on | off |
+
+For each shape the title does this, 559 times in the frames traced:
+
+1. stencil ops ZERO, ZERO, ZERO and one quad: wipe the shape's rectangle;
+2. stencil ops KEEP, KEEP, INVERT and the shape's polygons: an even-odd fill
+   into the stencil buffer;
+3. nothing tests that stencil. The compare is ALWAYS throughout, and
+   `SET_STENCIL_FUNC` is sent 34 times in 1.5 million commands, always ALWAYS.
+
+The coloured quads that follow bind texture 0 at offset `0x01100000`
+(`DRAWARGS`), which is the depth and stencil surface (`SET_SURFACE_ZETA_OFFSET
+= 0x01100000`). So the stencil buffer is the title's coverage mask and it is
+**sampled as a texture**. The 1920×1080 surface under a 1280×720 viewport is
+consistent with that.
+
+**Why nothing shows.** The D3D12 backend had stencil disabled in every
+pipeline, so step 2 wrote to no buffer at all. It also cannot hand the stencil
+plane to a pixel shader as a texture, so the quads sample whatever is in guest
+memory at that offset, which is nothing.
+
+**Done.**
+
+- Stencil state is now part of the pipeline key and is applied
+  (`rsx_stencil_key`), with the reference value set per draw. Only the front
+  state is tracked; the title sets back to the same values.
+- Polygons go through the vertex-program path as fans (Phase 22).
+- `VP_VIEWDBG=1` prints the guest viewport transform; `RTT_DUMP` lines now
+  carry the stencil word, reference and blend key.
+
+A read-back of the back buffer after this is still solid black
+(`CELLMARK_DUMP=2 CELLMARK_DUMP_MINDRAWS=100`), which is what the above
+predicts: the mask is being built and never read.
+
+**Not done: reading it back.** Two ways:
+
+- bind the depth-stencil buffer's stencil plane as a shader resource when a
+  texture's offset equals the zeta offset, and convert it to the channel the
+  guest expects. A D24S8 word read as A8R8G8B8 puts stencil in blue;
+- or keep it out of the depth buffer: send the colour-masked, stencil-only
+  draws to an offscreen colour target keyed by the zeta offset, with INVERT as
+  a `1 - dest` blend and ZERO as a plain write of 0, writing blue only. The
+  backend already resolves a texture bound at a render target's offset to that
+  target, so the coloured quads would pick it up with no further change.
+
+The second is smaller and is the one to try first.
+
+**Other things seen.** The 8-draw program is text: quads in 1920×1080 pixels,
+glyph cells 60 texels apart. A windowed boot sometimes sits at 1 frame a second
+for its first 90 frames before speeding up; not looked at.
+
 ## Phase 22 — The bad boot is a heap allocation that fails; priority scheduling makes it rare (2026-10-12)
 
 Still BCUS98158. Two questions: why some boots go wrong, and why a good boot

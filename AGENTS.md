@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 22 of
-[docs/progress.md](docs/progress.md); read 22, 21, 20 and 19 in that order.
+Details and evidence are in Phases 17 to 26 of
+[docs/progress.md](docs/progress.md); read 26 down to 19 in that order.
 Each corrects the one before.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
@@ -111,11 +111,35 @@ Each corrects the one before.
 - Frames now run for the whole boot: about 1,180 flips in 60 s, 13 a second
   once the per-frame SPU job starts (Phase 21). Until Phase 21 they stopped at
   about 610.
-- With a window the backend is given 159 draws a frame, mostly polygons, and
-  the window is black. The title renders at 1920x1080 into a 1280x720 window.
-  A flat-colour pixel shader does not help. The vertices are text quads in
-  pixel coordinates with the texture coordinate packed after x and y; the
-  untested suspicion is that the backend reads that as z and w (Phase 22).
+- With a window the title now shows its first screen, the "Online User
+  Agreement", with readable text (Phase 25). It draws text by filling glyph
+  outlines into the stencil buffer with colour writes off, then sampling the
+  depth-stencil surface as a texture (Phase 23); the backend sends those draws
+  to a colour target instead. Three ps3recomp faults hid the result: texture
+  coordinates given in texels were not scaled, immediate-mode draws
+  (`SET_VERTEX_DATA2F_M` between `BEGIN` and `END`) were dropped, and the
+  guest scissor was not applied.
+- Nothing is drawn behind the text yet.
+- Keyboard input reaches the title: down to the end of the agreement, right,
+  Z accepts, and a "Confirmation" screen about auto-save follows; Z again
+  starts the top menu loading (`TopRoot.gpb`, `TopMenuTemplate.gpb`). The
+  process then exits with a stack overflow in `func_00D80560`, a tree erase
+  walking a null node (Phase 26). Not investigated.
+- `scratch/inp.ps1 <secs>` runs a windowed boot for someone to drive, with a
+  capture every 5 s.
+- A `bctr` the lifter cannot match to a jump table is now a tail call
+  (`ps3_indirect_tail`), not a nested call. If `[ppu] recursion cap` ever
+  prints, treat the run as corrupt from that line on: the runtime has skipped
+  a guest call.
+- A windowed run someone is typing into is not a clean measurement. Say so
+  when asking for one, or use `PS3_HEADLESS=1`.
+- `FP_ONE`, `FP_SHOW` and the other switches that rewrite `_po.c0 = ` in the
+  generated shader may do nothing: the decompiler in this tree ends with
+  `float4 _o = ...`. Only `FP_ONE` has been fixed. Check that a switch took
+  effect before reading a result from it.
+- Diagnostics that write files (`VTX_DUMP`, `VP_DUMP`, `CELLMARK_DUMP`) put
+  them in the working directory unless told otherwise. Move them to `scratch/`;
+  they are derived from the running game.
 - A bad boot is a heap allocation that comes back empty and is not checked
   (Phase 22). Guest threads are now scheduled by PS3 priority on two cores
   (`PS3_PPU_PRIO_SCHED=2`, set in `src/main.cpp`), and with that 1 boot in 52
@@ -129,8 +153,9 @@ Each corrects the one before.
 - A new job body shows up as `[spu-smc] microstep ... handing to the
   interpreter`. Do not trust the interpreter with it: dump it with
   `SPU_DUMP_OVL`, add it to `wws_job_bodies` and re-lift.
-- Next: why the draws show nothing, then the intermittent slow windowed boot,
-  then the `TV.DAT` install RPCS3 starts about 20 s after `BootRoot.gpb`.
+- Next: the exit while the top menu loads, the missing background, the
+  intermittent slow windowed boot, then the `TV.DAT` install RPCS3 starts
+  about 20 s after `BootRoot.gpb`.
 
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
 mutex with each main-thread sample), `PS3_SYNCLOG=1` (failed locks, with the
@@ -148,7 +173,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in sixteen files under `libs/` and `runtime/`. The disc build does not
+changes in twenty files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
