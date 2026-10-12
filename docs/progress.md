@@ -9,6 +9,173 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 17 — The Disc Build, BCUS98158 v03.00 (2026-10-12)
+
+This fork's input is the US disc release, not the PSN package the phases below
+describe. Every address from here to the next phase heading is a BCUS98158
+address; none of them match v02.00. Build-specific constants now live in
+`config/targets.json` (see AGENTS.md).
+
+Measured against the v02.00 figures, with ps3recomp `master` at `5244db9` plus
+the three local changes listed below:
+
+| | v02.00 | BCUS98158 v03.00 |
+|---|---|---|
+| End of last executable section | `0xBE0AF4` | `0xE3EC24` |
+| Functions lifted | 42,316 | 50,075 |
+| Jump tables / seed addresses | — | 280 / 2,872 |
+| Imports | 439 in 26 modules | 565 in 31 modules |
+| `setjmp` / `longjmp` | `0x00A0A458` / `0x00A0A57C` | `0x00C109F0` / `0x00C10B14` |
+| `Wws_Job` policy module | `0x00F4CB80`, 11,648 bytes | `0x01238F00`, 11,648 bytes |
+| SPU job images captured | 12 | 12 |
+| Game data | `PDIPFS` tree | `GT.VOL`, opened with `boot_from=bdvd` |
+
+`setjmp`/`longjmp` were found by instruction shape (`scripts/find_setjmp.py`);
+exactly one pair matched, 0x124 apart as in v02.00. The patch wrapped 2 call
+sites.
+
+```
+python scripts/soak.py 6 40
+run 1: running  gtvol_opens=6   prepare_flip=4  pad_poll=1 crash=0 main_lr=0x00B577A0
+run 2: running  gtvol_opens=6   prepare_flip=4  pad_poll=1 crash=0 main_lr=0x00B577A0
+run 3: running  gtvol_opens=2   prepare_flip=0  pad_poll=0 crash=0 main_lr=0x007D4308
+run 4: running  gtvol_opens=6   prepare_flip=4  pad_poll=1 crash=0 main_lr=0x00B577A0
+run 5: running  gtvol_opens=2   prepare_flip=0  pad_poll=0 crash=0 main_lr=0x007D4308
+run 6: running  gtvol_opens=6   prepare_flip=4  pad_poll=1 crash=0 main_lr=0x00B577A0
+```
+
+So the boot is **not deterministic**: two outcomes in six runs. In four, the
+title reads from `GT.VOL`, runs its SPURS jobs with no dispatch miss, starts
+polling the pad, and calls `SetPrepareFlip` four times; main then sits at
+`lr=0x00B577A0` with `r3=2000` (`func_00B57790`, a wrapper around
+`func_00B442A0`). In two, main is at `lr=0x007D4308`, inside the sound engine's
+allocator (`func_007D4260`), with two opens. One separate 40 s run logged 124
+`GT.VOL` opens and stats under `/dev_hdd0/grim/...`; the soak did not reproduce
+that count and the difference is **not explained**. No frame is drawn.
+
+`gtvol_opens` counts opens of one file, so it is not comparable with the 116
+distinct `PDIPFS` files of Phase 16. A like-for-like asset count for the disc
+build does not exist yet.
+
+### Three runtime faults, each found by the stall it caused
+
+All three are in ps3recomp, changed locally in `../ps3recomp-gt5p-master` and
+not sent upstream.
+
+- **SPURS event ports were one table for the whole process.** This build runs
+  two SPURS instances: `Wws_Job` on one and the sound engine (`sgx-snd`,
+  prefix `sgx-spurs-`) on another, and both attach static port 1.
+  `cellSpursAttachLv2EventQueue` returned BUSY for the second, the sound init
+  (`func_007D4390`) unwound, and its error path (`func_007DD8B0` →
+  `func_007DAEC0`) walked a thread list whose initialiser (`func_007DFA00`) had
+  never run: an endless loop reading the null page. Ports are now kept per
+  instance. Confirmed by the import trace: `Attach` was followed directly by
+  `Detach` and `Finalize`, and after the change it is not.
+- **The job-chain walker numbered completed jobs from the start of the walk.**
+  The sound service (`func_007FE9E0`) indexes a 128-entry callback table with
+  the `data2` of each completion event, per pass. After a few passes the index
+  reached 0x19A, the entry read back as `0xFFFFFFFF`, and the load through it
+  faulted. The index now restarts at each GUARD. Confirmed by the faulting
+  thread's registers: `r6=r30=0x19A`, `r10=0xFFFFFFFF`.
+- **SPU user events could not name their SPURS instance.** Added a per-thread
+  record of the instance a policy-module worker runs for, used when routing an
+  SPU event to a queue. This was written while chasing the fault above on a
+  theory that turned out wrong (the events were correctly addressed), so its
+  effect is **untested**.
+
+### Compared against RPCS3 (same day)
+
+The disc build was booted in RPCS3 (`rpcs3.exe --no-gui <dump>/PS3_GAME/USRDIR/EBOOT.BIN`)
+for about 105 s of game time and its log kept as `scratch/rpcs3.log`
+(`scripts/rpcs3log.py` summarises one). RPCS3 holds the log open exclusively
+while it runs, so it can only be read after RPCS3 exits. What it settled:
+
+- **Launch arguments.** `EBOOT.BIN` exits into `EMAIN.SELF` with
+  `argv = { "/dev_bdvd/PS3_GAME/USRDIR/EMAIN.SELF", "boot_from=bdvd" }`. The
+  port's guess was right.
+- **The port never ran HLE callbacks.** `g_ps3_guest_caller` was NULL, so
+  `cellGameDataCheckCreate2` skipped the title's `funcStat` callback, the title
+  retried it three times and then built every hard-disk path without
+  `game/BCUS98158/USRDIR`. `main.cpp` now installs the hook. After that the soak
+  is the same on every run:
+
+  ```
+  python scripts/soak.py 6 40
+  assets: 6 6 6 6 6 6        prepare_flip 19 19 19 21 19 19, main_lr=0x00B577A0 each time
+  ```
+
+  The early stall at `lr=0x007D4308` did not occur in these six runs or the
+  three after the next change. Why installing the hook removed it is **not
+  established**.
+- **`isNewData` was pinned at 0.** RPCS3 reports new data on a first boot and
+  the callback answers `OK_CANCEL`; the port reported existing data and got
+  `OK`. `cellGameDataCheckCreate2` in ps3recomp now checks the host directory.
+  The port's callback now answers `OK_CANCEL` too.
+- **On a first boot this build installs itself to the hard disk.** In RPCS3 it
+  creates `grim/` cache directories under `/dev_hdd0/game/BCUS98158/USRDIR`,
+  and from about 30 s in it opens `TV.DAT` and writes a `PDIPFS` tree there:
+  4,345 files, 4.0 GB, by the time RPCS3 was closed. Whether that install had
+  finished is not known.
+- **Where the port still falls short.** In RPCS3 the title opens `GT.VOL` 125
+  times in its first 10 s and goes on to `sceNp2Init` / `sceNpInit` about 0.4 s
+  after `cellSysutilRegisterCallback`. The port opens it 6 times and never
+  reaches `sceNp2Init`; it cycles `SetPrepareFlip` / `SetFlipImmediate` instead.
+  The divergence is somewhere in that 0.4 s and has not been located: RPCS3's
+  log there is dominated by SPU recompiler messages.
+
+### The runtime was reporting every SPU job twice
+
+`libs/spurs/cellSpurs.c` sends a completion event for each job its chain walker
+runs (`jc_signal_done`). That is a stand-in for the event the job's own SPU code
+sends with `sys_spu_thread_throw_event` on the port the title attached. In this
+build the lifted sound jobs run and port 16 is bound to queue 3, so the real
+event arrives as well. Queue 3 showed both kinds side by side:
+
+```
+[evt] q=3 receive RETURNED: src=0xFFFFFFFF53505501 d1=0x0 d2=0x1000000000 d3=0x400   <- the job's own
+[evt] q=3 receive RETURNED: src=0x0 d1=0x20046600 d2=0x1 d3=0x0                      <- the stand-in
+```
+
+The sound service counts completions, so the extra ones left main waiting on
+queue 3 inside the sound init, or stopped the file thread after six opens. The
+stand-in is now switchable (`spurs_set_synth_job_done`, or
+`SPURS_NO_SYNTH_DONE=1`) and off for this build through `config/targets.json`.
+A first attempt that dropped the stand-in only for jobs seen to report
+themselves made things worse (four different outcomes in eight runs) and was
+removed.
+
+```
+python scripts/soak.py 8 40                  # PS3_VERBOSE=0
+assets: 127 127 127 40 127 40 127 127
+python scripts/soak.py 6 30 PS3_VERBOSE=1
+assets: 127 127 127 127 127 127
+```
+
+In the 127 runs the port now tracks RPCS3 through about the first 11 s of game
+time: 127 `GT.VOL` opens against RPCS3's 125 in its first 10 s, the same 24
+paths in the same order, and the same run of `sceNpInit` /
+`sceNpManagerRegisterCallback` / `cellNetCtlGetInfo` /
+`sceNpBasicRegisterHandler`. Main then parks in `sys_cond_wait` (syscall 107)
+at `lr=0x00B391F4`, under `func_00B391A0` ← `func_00B39260` ← `func_0030BC70`.
+That is the same kind of stop as Phase 16's, on a different build; whether it
+is the same cause is **not established**. RPCS3's next step is a stat of
+`.../projects/gt5p/boot/US/BootRoot.gpb`, which the port does not reach.
+
+In the 40 runs (2 of 8, and none of 6 with verbose logging) main is blocked in
+`sys_mutex_lock` (syscall 102) at `lr=0x00B56EDC`, under `func_00B3B998` ←
+`func_00B3BA10` ← `func_007A9C20`, in the sound code. The holder of that mutex
+has not been identified.
+
+### Not done
+
+- `GAMEDATA.ESP` (20 MB, header is the bitwise complement of a SELF header) is
+  untouched and its role is unknown.
+- 12 distinct unresolved imports are called during boot: `cellPadInfoSensorMode`,
+  `cellKbRead`, `cellHttpInitCookie`, and nine unnamed NIDs in `cellHttp`,
+  `sys_io`, `cellUsbd` and `sysPrxForUser`.
+- The stat of `/dev_hdd0/PARAM.SFO` fails. On hardware this build installs game
+  data to the hard disk; whether it expects that install to exist is not checked.
+
 ## Phase 16 — Onto Current ps3recomp (2026-09-28)
 
 A month's work on four sibling ports (Tornado Outbreak, Guitar Hero III, The

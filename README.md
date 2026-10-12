@@ -47,6 +47,88 @@ since August. Main now waits somewhere new, not yet characterised. The full
 investigation, phase by phase, is in [docs/progress.md](docs/progress.md); what
 comes next is in [ROADMAP.md](ROADMAP.md); versions in [CHANGELOG.md](CHANGELOG.md).
 
+## This fork: the disc build
+
+This is a fork of [sp00nznet/GT5P](https://github.com/sp00nznet/GT5P). Upstream
+targets the US PSN release, NPUA80075 v02.00. This fork adds a second target,
+the **US disc release, BCUS98158 v03.00**, which is a different executable:
+more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
+tree. Everything above and below this section still describes NPUA80075 unless
+it says otherwise.
+
+**Disc build status: pre-alpha. It loads its start-up assets and then waits. It
+does not draw a frame, and the boot is not yet the same on every run.**
+
+| Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
+|---|---|---|
+| Decrypt | RAP-derived key, `ps3sce` | RPCS3 `--decrypt`, no RAP needed |
+| PPU lift | 42,316 functions | 50,075 functions, clean compile |
+| Imports | 439 across 26 modules | 565 across 31 modules |
+| SPU | 12 images | Policy module and 12 job images, 0 dispatch misses |
+| Boot | 116 `PDIPFS` assets, 8 of 8 runs | 127 `GT.VOL` opens in 12 of 14 runs; 2 deadlock after 40 |
+| Where main stops | `sys_cond_wait` | `sys_cond_wait` in the good runs |
+| Graphics, audio, input | Not reached | Audio port opened, pad polled, flips cycle; no frame |
+
+In the good runs the disc build's file activity matches an RPCS3 boot of the
+same disc through about the first 11 seconds of game time: the same 24 paths in
+the same order. The two builds' asset counts are not comparable, because one
+counts distinct files and the other counts opens of one volume.
+
+What the disc build needs that upstream does not:
+
+- **Per-build constants.** Every address and boot setting that belongs to one
+  executable is in [config/targets.json](config/targets.json), read by the
+  scripts through `scripts/target.py` and by CMake. Select a build with
+  `GT5P_TARGET`, or by writing its title id to `input/target`; the default is
+  NPUA80075, so upstream's flow is unchanged.
+- **Local ps3recomp changes.** The disc build does not boot on stock ps3recomp.
+  The changes are in
+  [patches/ps3recomp-5244db9-local.patch](patches/ps3recomp-5244db9-local.patch),
+  against ps3recomp `5244db9`: per-instance SPURS event ports, a per-pass job
+  index, a switch for the runtime's stand-in job-completion event, and a
+  game-data check that reports new data truthfully. They have not been sent to
+  ps3recomp.
+
+Building the disc build, from a dump of your own disc:
+
+```bash
+T=../ps3recomp-gt5p-master/tools
+git -C ../ps3recomp-gt5p-master apply ../GT5P/patches/ps3recomp-5244db9-local.patch
+rpcs3 --decrypt <dump>/PS3_GAME/USRDIR/EMAIN.SELF     # writes EMAIN.elf beside it
+cp <dump>/PS3_GAME/USRDIR/EMAIN.elf input/EMAIN.ELF
+mkdir -p input/pkg && cp -r <dump>/PS3_GAME/PARAM.SFO <dump>/PS3_GAME/USRDIR input/pkg/
+echo BCUS98158 > input/target
+
+python scripts/jumptables.py --write        # config/extra_seeds_bcus98158.json
+python $T/find_functions.py input/EMAIN.ELF --json --seed-json config/extra_seeds_bcus98158.json --output analysis/functions.json
+python -c "import json; f=json.load(open('analysis/functions.json')); json.dump([x for x in f if int(x['start'],16) < 0xE3EC24], open('analysis/functions_code.json','w'))"
+PYTHONPATH=$T python scripts/gen_hle_stubs.py input/EMAIN.ELF analysis/hle_stubs.json
+python $T/ppu_lifter.py input/EMAIN.ELF --functions analysis/functions_code.json --output generated --code-end 0xE3EC24 --header-name ppu_recomp.h --source-name ppu_recomp.c --hle-stubs analysis/hle_stubs.json
+python scripts/setjmp_patch.py
+python $T/gen_hle_nids.py --all --out src/gen/ppu_hle_nids.cpp
+scripts/build.cmd -DGT5P_TARGET=BCUS98158
+```
+
+The SPU registry for the disc build is committed
+(`src/gen/spu_workloads_bcus98158.c`), but the lifted SPU sources are not, as
+with everything under `generated/`. To produce them, build once, run with
+`SPU_DUMP_MISS=analysis/spu/dump` to capture the job images, then run
+`python scripts/lift_spu_jobs.py` and rebuild.
+
+Tools added for this work:
+
+| Command | What it does |
+|---|---|
+| `python scripts/soak.py 8 40` | 8 headless boots of 40 s; one line of counts per run. Works for either build |
+| `python scripts/boot.py 40 NAME=VALUE` | One boot with a log summary; extra arguments set the game's environment |
+| `python scripts/threads.py` | What each guest thread was last doing, from a boot log |
+| `python scripts/cdis.py 0xADDR` | Full disassembly of a function |
+| `python scripts/find_setjmp.py` | Locate the guest `setjmp`/`longjmp` in a build where they are unknown |
+| `python scripts/rpcs3log.py RPCS3.log` | Summarise an RPCS3 log for comparison against a port run |
+
+The investigation is Phase 17 of [docs/progress.md](docs/progress.md), and
+[AGENTS.md](AGENTS.md) is the working brief for the disc build.
+
 ## Screenshots
 
 None yet — the title has not presented a frame. This section gets real output

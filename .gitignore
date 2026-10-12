@@ -68,3 +68,7 @@ analysis/spu/
 scratch/
 generated.*/
 build.*/
+
+# Per-machine notes and the guest hard disk the port writes at run time
+AGENTS.local.md
+gamedata/
