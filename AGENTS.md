@@ -89,9 +89,9 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 21 of
-[docs/progress.md](docs/progress.md); read 21, 20 and 19 in that order. Each
-corrects the one before.
+Details and evidence are in Phases 17 to 22 of
+[docs/progress.md](docs/progress.md); read 22, 21, 20 and 19 in that order.
+Each corrects the one before.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
   last three paths are `BootRoot.gpb` (RPCS3's next step), `AgreementRoot.gpb`
@@ -111,8 +111,16 @@ corrects the one before.
 - Frames now run for the whole boot: about 1,180 flips in 60 s, 13 a second
   once the per-frame SPU job starts (Phase 21). Until Phase 21 they stopped at
   about 610.
-- With a window the backend is given 159 draws a frame and the window is
-  black. That is the current problem.
+- With a window the backend is given 159 draws a frame, mostly polygons, and
+  the window is black. The title renders at 1920x1080 into a 1280x720 window.
+  A flat-colour pixel shader does not help. The vertices are text quads in
+  pixel coordinates with the texture coordinate packed after x and y; the
+  untested suspicion is that the backend reads that as z and w (Phase 22).
+- A bad boot is a heap allocation that comes back empty and is not checked
+  (Phase 22). Guest threads are now scheduled by PS3 priority on two cores
+  (`PS3_PPU_PRIO_SCHED=2`, set in `src/main.cpp`), and with that 1 boot in 52
+  went bad against about 1 in 4 without. Why the heap is empty is not known.
+  `PS3_PPU_PRIO_SCHED=0` brings the fault back for study.
 - The job manager's policy module must be lifted at `0xA00`, where SPURS loads
   it, not at 0. `scripts/lift_spu_jobs.py` now does that, and also lifts the
   job bodies the module streams into its own local store

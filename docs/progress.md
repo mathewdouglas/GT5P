@@ -9,6 +9,96 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 22 — The bad boot is a heap allocation that fails; priority scheduling makes it rare (2026-10-12)
+
+Still BCUS98158. Two questions: why some boots go wrong, and why a good boot
+shows nothing.
+
+### The bad boot
+
+Phase 18 listed four signatures and no cause. They are one fault seen at four
+distances.
+
+**What happens.** A bad and a good boot were traced with `PS3_SCTRACE=1
+PS3_HLE_TRACE=400000` and compared.
+
+- The file calls are identical in both, call for call, up to the last one the
+  bad boot makes: 245 `cellFs` calls, the last a read of `0x1B210` bytes.
+- In the good boot that read goes to `0x204DAE80`. In the bad boot it goes to
+  `0x00000880`. The loader adds `0x880` to the block it was given, and the
+  block was null.
+- Under the heap's lightweight mutex (`0x016F8A08`) the bad boot has five
+  requests in a row that come back empty: `0x620`, `0x680`, `0x810`,
+  `0xFFFCA470` and `0x1BB00` bytes. The good boot has none at that point. The
+  two boots' heap activity is the same for 1,131 lock operations and differs
+  from there.
+- Nothing checks the result. The I/O worker reads the file to address `0x880`,
+  reports success, and the sound loader walks what it thinks is a bank
+  (func_007CA908). From there memory is overwritten: the first failing system
+  call comes 79,000 trace lines later, and after that the vertical-sync
+  handler (func_00BCC1B8) is locking mutex ids `0` and `0xF950434E`.
+- The other signatures are the same failure met elsewhere. "Allocation retried
+  for ever" is main asking the same heap. "Lock on a corrupt object" and the
+  rest come after the overwrite.
+
+A good boot has no failing system call at all in 14 s. The bad one has 1,900.
+
+**Why the heap is empty then is not known.** Phase 18's list of things ruled
+out still stands, and `PS3_LWM_CHECK=1 PS3_SYNCLOG=1` found nothing in 12
+boots, none of which went bad: the extra logging hides the fault.
+
+**What makes it rare.** `PS3_PPU_PRIO_SCHED`, written in an earlier session and
+left off: guest threads are confined to one or two host cores and run by PS3
+priority.
+
+| Setting | Bad boots |
+|---|---|
+| off | 3 of 14, 3 of 9, 2 of 8 |
+| `=1` | 0 of 14, 0 of 14 |
+| `=2` | 0 of 14, then 1 of 10 once it was the default |
+
+That is 1 bad boot in 52 with it on against 8 in 31 with it off. It is rarer,
+not gone: the one that did go bad was the allocation retry. So the fault is
+far more likely when guest threads run in an order the console's scheduler
+does not allow. That is a description, not a cause: which two threads, and
+what one of them does to the heap, is still open. `src/main.cpp` now sets
+`PS3_PPU_PRIO_SCHED=2` unless the variable is already set; `=0` turns it off.
+
+It is also faster. Two 60 s boots with `=1`: 2,926 and 2,931 flips, against
+about 1,180 without. They reach 25 paths rather than 27 in that time.
+
+### The black window
+
+- The title renders at 1920×1080. Its two colour surfaces are at offsets `0`
+  and `0x880000` with a 1920×1080 clip (`RT_OFFDBG=1`), and both are registered
+  display buffers, so the draws are aimed at the back buffer. The backend's
+  window and viewport are 1280×720.
+- Of the draws sampled, 89 are primitive 10 (polygon) and 22 primitive 8
+  (quads). The per-frame SPU job of Phase 20 is what builds them.
+- The D3D12 backend sent polygons down its fixed-function path, which neither
+  expands them nor runs the guest's vertex program. They now go through the
+  vertex-program path as fans. **The window is still black after that**, with
+  a flat-colour pixel shader forced as well (`FP_IDCOLOR=1`), so the fault is
+  before the pixel shader: in the vertex transform, the viewport, or the
+  surface the result lands on.
+
+- `VTX_DUMP=1` writes `vtx_dump.txt` into the working directory (move it to
+  `scratch/`; it is derived from the running game). Its quads have attribute 0
+  as `(718.9, 23.0, 1.0, 1.0)`, `(764.1, 23.0, 61.3, 1.0)`,
+  `(764.1, 68.3, 61.3, 61.3)`: x and y in 1920×1080 pixels, and the third and
+  fourth numbers stepping by 60 from quad to quad in the way cells of a glyph
+  atlas would. So the title is drawing a row of text near the top of the
+  screen, and its vertices are two floats of position followed by two of
+  texture coordinate. **Hypothesis, not tested:** the backend reads attribute 0
+  as four floats, so the texture coordinate lands in z and w, and a w of 61
+  puts the vertex nowhere useful.
+
+**Next.** For the picture: check the size the title declares for attribute 0
+against what `upload_quads_vp` and `upload_strip_vp` read, and fill missing
+components with (0, 0, 0, 1). For the bad boot: find the heap
+operation at lock 1,131 that only the bad boot makes, and which thread makes
+it.
+
 ## Phase 21 — The job finishes; frames run for the whole boot; 159 draws a frame, nothing visible (2026-10-12)
 
 Still BCUS98158. Phase 20 ended with the wid 4 job running but its run never

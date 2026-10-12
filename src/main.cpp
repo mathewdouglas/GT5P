@@ -561,6 +561,13 @@ static void setup_argv(const char* argv0)
 
 int main(int argc, char* argv[])
 {
+    /* Schedule guest threads by their PS3 priority on two host cores, as the
+     * console's two hardware threads would. Left to the host scheduler, about
+     * one boot in four fails during sound start-up; with this on, 1 in 52
+     * did (docs/progress.md, Phase 22). Set PS3_PPU_PRIO_SCHED=0 to turn it
+     * off. Must be set before the runtime creates its first thread. */
+    if (!getenv("PS3_PPU_PRIO_SCHED")) _putenv_s("PS3_PPU_PRIO_SCHED", "2");
+
     /* Buffer both streams. Unbuffered stdio issues a write per conversion, so
      * with several guest threads logging at once lines interleave mid-token and
      * a message that IS in the log reads as absent to grep. The crash filter

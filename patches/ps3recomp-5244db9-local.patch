@@ -361,6 +361,32 @@ index 9684667..2284688 100644
  
  /* Debug output levels */
  #define CELL_GCM_DEBUG_LEVEL0           0
+diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
+index 68929ed..a966a99 100644
+--- a/libs/video/rsx_d3d12_backend.c
++++ b/libs/video/rsx_d3d12_backend.c
+@@ -6113,14 +6113,19 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+      * zero pixels (it also uploads to vp_vb, leaving the fixed-function vb empty).
+      * Geometry already in clip space with no VP -- flOw's injected scene -- must
+      * go down the fixed-function passthrough below instead. */
++    /* POLYGON is assembled exactly as a fan (one convex polygon: v0, then each
++     * consecutive pair). It used to fall through to the fixed-function path
++     * below, which neither expands it nor runs the guest's vertex program, so a
++     * title that draws its 2D with polygons showed nothing at all. */
+     if ((primitive == RSX_PRIMITIVE_TRIANGLES || primitive == RSX_PRIMITIVE_TRIANGLE_STRIP
+-         || primitive == RSX_PRIMITIVE_TRIANGLE_FAN) &&
++         || primitive == RSX_PRIMITIVE_TRIANGLE_FAN || primitive == RSX_PRIMITIVE_POLYGON) &&
+         s_d3d.vp_vb_mapped && s_d3d.vp_root_sig &&
+         s_d3d.current_rsx_state && s_d3d.current_rsx_state->vp_ucode_bytes >= 16) {
+         u32 rec = s_d3d.vp_vb_offset;
+         u32 emitted = (primitive == RSX_PRIMITIVE_TRIANGLES)
+             ? upload_tris_vp(s_d3d.current_rsx_state, first, count)
+-            : upload_strip_vp(s_d3d.current_rsx_state, first, count, primitive == RSX_PRIMITIVE_TRIANGLE_FAN);
++            : upload_strip_vp(s_d3d.current_rsx_state, first, count,
++                              primitive == RSX_PRIMITIVE_TRIANGLE_FAN || primitive == RSX_PRIMITIVE_POLYGON);
+         /* RSX splits one primitive stream across several DRAW_ARRAYS entries
+          * inside a single BEGIN/END (each carries at most 256 vertices), and the
+          * hardware concatenates them before assembling primitives. Recording a
 diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
 index acbaf12..1c91bb0 100644
 --- a/runtime/ppu/ppu_hle.cpp
