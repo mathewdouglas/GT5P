@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 28 of
-[docs/progress.md](docs/progress.md); read 28 down to 19 in that order.
+Details and evidence are in Phases 17 to 29 of
+[docs/progress.md](docs/progress.md); read 29 down to 19 in that order.
 Each corrects the one before.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
@@ -126,9 +126,13 @@ Each corrects the one before.
   scene scripts, a character and motions). "Confirmation" takes its OK only
   once that load has finished. Then comes the main menu, and Cross on it
   enters Dealerships ("ACURA"); text only on black in both (Phase 28).
-- It stops there: when the dealership's 3D scene starts drawing, the GPU
-  device is removed (`DXGI_ERROR_DEVICE_HUNG`) and the process ends. Not
-  investigated; Phase 28 lists three leads.
+- The dealership holds but is not usable: about 8 s a frame, spent by the
+  title waiting for SPU work, and none of the 3D scene is visible (Phase 29).
+  The device removal Phase 28 stopped at was failed pipelines; the backend
+  now carries sixteen texture units a draw, not four.
+- A windowed run whose title shows well under 1 frame a second: look for
+  `PSO FAIL` in the log before anything else, and run with `D3D12_DBG=1` to
+  get the reason printed beside it.
 - A windowed boot that shows dark blue and `draws: 0` is the Phase 22 heap
   fault, about 1 boot in 4 with a window. Dark blue is the backend's default
   clear colour. Retry it; do not read anything else into it.
@@ -169,8 +173,8 @@ Each corrects the one before.
 - A new job body shows up as `[spu-smc] microstep ... handing to the
   interpreter`. Do not trust the interpreter with it: dump it with
   `SPU_DUMP_OVL`, add it to `wws_job_bodies` and re-lift.
-- Next: the device hang in the dealership, the heap fault behind failed
-  boots, the missing background, the
+- Next: the SPU job the dealership waits on, the heap fault behind failed
+  boots, the missing 3D scene and background, the
   intermittent slow windowed boot, then the `TV.DAT` install RPCS3 starts
   about 20 s after `BootRoot.gpb`.
 
@@ -190,7 +194,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in twenty-three files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in twenty-four files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

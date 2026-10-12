@@ -9,6 +9,70 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 29 — The device removal was failed pipelines: four texture units where the RSX has sixteen (2026-10-12)
+
+Still BCUS98158. Phase 28 stopped at a removed GPU device as the first 3D
+draws arrive, and offered three leads. None of the three was the cause.
+
+**What "0.1 frames a second, Not Responding" was.** Two things, in different
+runs, both the same failure seen from different ends:
+
+- pipeline creation fails for a program, nothing is cached for it, and every
+  draw that uses it decompiles and compiles its shader again, every frame;
+- after a device removal every creation fails, so that becomes all of them:
+  `PERF=2` showed 2,304 pipeline requests a frame, 2,304 misses, 17 s a frame.
+
+A failed creation is now cached like a successful one, and after a removal
+the backend stops asking (`s_device_lost`). `PERF=<n>` above 1 now reports
+every n frames; at 20 frames a report this scene never produced one.
+
+**Why creation failed.** `D3D12_DBG=1` and the failure path now print the
+validation layer's reason: "Shader sampler descriptor range
+(BaseShaderRegister=15 ...) is not fully bound in root signature", and the
+same for 14. The scene's fragment programs sample units 14 and 15. The
+backend carried four units per draw: four SRVs in the descriptor table, four
+static samplers, `tex[4]` in the draw record. It is sixteen now
+(`RSX_TEX_UNITS`). Texel-coordinate scaling and cube detection still cover
+units 0 to 3 only.
+
+Measured after: no `PSO FAIL`, no device removal, and the dealership screen
+("ACURA", Cr.35,000) holds for the rest of a 100 s run. `render_frame` is
+0.17 s a frame there.
+
+**Phase 28's leads, checked.** The vertex-program dispatch bound:
+`RSX_VP_LOOP_MAX=64` (new) changed nothing, so not that. `FP_OFF=1` did avoid
+the removal, which pointed at fragment programs; the reason is the one above,
+not a loop. The "resource deleted prior to closing the command list" errors
+and the `[VPFB]` projection override are still there and still unexamined.
+Whether the original `DXGI_ERROR_DEVICE_HUNG` was a consequence of the failed
+pipelines is not established: it has not recurred in the three runs since, and
+that is all that can be said.
+
+**Where it stands now.** Two faults remain in the dealership, both measured:
+
+- The title takes about 8 s a frame there and the backend is not why:
+  `PERF=2` gives `guest 16.27s (98%)` over two frames. `GT5P_THREADS=1` has the
+  render thread (tid 21) in the job-counter spin at `0x00BAA9FC` in 8 samples
+  of 10, so it is waiting for SPU work. Which job, and why it is slow, is not
+  found. One earlier run had SPU image 2 (`j0AB3F1A7`) resuming at `0x6C6C`
+  about 70 million times a second; that address is a 15-entry jump table,
+  lifted as code, whose first word decodes as `stop`. The table's targets are
+  all lifted entries, so the switch read a zero where an entry should be.
+  Hypothesis, not tested: that job is the one being waited for. It did not
+  show in later runs, which may only mean they did not get as far.
+- Nothing of the 3D scene is visible, the frame hits the 2,048 draw-record
+  cap, and `VBFULL=1` reports the vertex buffer full (393,216 vertices of 256
+  bytes).
+
+**Harness.** `PrintWindow` blocks for ever on a window that has stopped
+answering; `scratch/inp.ps1` now stops instead. A run that hung this way sat
+for 18 minutes.
+
+Diagnostics added: `RSX_VP_LOOP_MAX`, `PERF=<n>`, the device-removed report
+(draws and vertices per fragment program for the frame in flight), the
+pipeline-failure reason, and `[spu] drain-resume` once per distinct image and
+address with the registers a switch would have used.
+
 ## Phase 28 — The main menu and the dealership; the GPU device hangs on the first 3D scene (2026-10-12)
 
 Still BCUS98158. Driven by `scratch/auto.ps1` (hold Down from 16 s to 27 s,
