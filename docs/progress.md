@@ -9,6 +9,177 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 28 — The main menu and the dealership; the GPU device hangs on the first 3D scene (2026-10-12)
+
+Still BCUS98158. Driven by `scratch/auto.ps1` (hold Down from 16 s to 27 s,
+Right, then Cross every 4 s).
+
+**Phase 27's "stays on Confirmation" was not a stall.** The page takes its OK
+only once the load behind it has finished; presses made before that are
+ignored, and the earlier script stopped pressing too soon. With presses
+continuing, the title shows its main menu ("Welcome to Gran Turismo 5:
+Prologue. The first thing you need to do is visit the Dealerships and buy
+yourself a car.", Cr.35,000, and 2P Battle, Events, Garage, Dealerships,
+Replay, Options, Manual), and the next press enters Dealerships: "ACURA" with
+its reflection. Text only, on black, in both. The threads named "Http
+Thread", "Comm Thread" and "Hash Thread" that start here are the title's
+online-content layer; they were a suspect and are not what it waits for.
+
+**Two counters that wrapped.** Both are `static int n; if (n++ < CAP)` around
+a debug line on a hot path. After 2^31 passes the int is negative and the
+line prints every time.
+
+- `spu_drain.c`, `[spu] drain-resume`, cap 8: an SPU loop resumes there about
+  70 million times a second. 3.1 GB of stderr in one run.
+- `sys_ppu_thread.c`, `[prof-stamp]`, cap 0 (a disabled trace), on every
+  syscall and HLE dispatch. It wrapped about a minute in, sooner now that
+  the timer fix lets the title run faster; from then on every dispatch wrote
+  a line. This is the "0.2 frames a second, Not Responding" the user saw on
+  the main menu, and the 12 GB log noted in Phase 24.
+
+Both fixed. The same idiom is used hundreds of times in ps3recomp; only
+these two were found on paths hot enough to wrap. If a log suddenly grows by
+gigabytes of one line, look for it.
+
+**`PAD_SCRIPT` was already taken.** ps3recomp had a variable of that name
+with another format (`<sec>:<mask>`), and both parsers read the string.
+Phase 27's addition is renamed `PAD_HOLD`.
+
+**The pipeline cache thrashed, partly from Phase 25's fix.** In the
+dealership the window showed `draws: 2048` (the backend's per-frame cap) at
+0.25 frames a second. `FP_LIST=1` counted 12,639 shader compiles in 80 s, then
+33,928. Phase 25 had put the texel-addressed texture sizes into the pipeline
+key and into the shader text, for every draw, including programs that sample
+nothing. Now: the scale is read from the per-draw constants the backend
+already uploaded (`rsx_texscale` at `b1`), the key holds only which units are
+texel-addressed, programs with no sample site to scale are remembered and
+keyed as plain, and the cache holds 1,024 entries, not 256. Measured: 465
+compiles in a run that reaches the same point. `PSOMISSDBG=1` now names every
+key field and prints 400 misses, not 12; what is left differs by vertex
+program and stencil state, which are real variants.
+
+**Where it stops now: the device is removed.** As the dealership's 3D scene
+begins (the first `draw_indexed` calls, 256 indices at a time), pipeline
+creation starts failing with `0x887A0005` and the process ends.
+`D3D12_DBG=1 D3D12_IQ=1` gives the reason: `DXGI_ERROR_DEVICE_HUNG`, the GPU
+took too long to execute its commands. Not investigated. Leads, none tested:
+
+- the decompiled vertex programs with flow control run a dispatch loop of up
+  to 16,384 passes per vertex; a program whose branch target is not one of
+  the emitted blocks would spend all of them on every vertex;
+- the validation layer also reports, six times each, a resource "deleted
+  prior to closing the command list" and prior to executing it. Something
+  releases a texture or target that the frame still uses;
+- `[VPFB] fallback proj` prints for these draws: the backend replaces the
+  title's projection matrix when its first element is outside 0 to 8, and
+  here it is -1.47.
+
+**Failed boots** (a sub-agent's report; it ran 21 windowed boots and stopped
+early at the user's request). Every stall it could classify is Phase 22's
+fault, a guest heap allocation that returns null: five of 21 runs.
+`scripts/bootcheck.py` recognises both shapes when `GT5P_MAINSTACK=5` is set.
+
+| Shape | Seen from outside | What it is |
+| --- | --- | --- |
+| Stall B | 1 to 3 frames a second, `draws: 0`, 33 to 41 flips | the allocator wrapper `func_00B3BB60` retries a 2,000-byte request for ever |
+| Stall A | frame counter frozen, `draws: 0`, about 78 flips | the same null, unchecked: the sound loader reads into address `0x880`, and the vsync handler's descriptor is overwritten, so flips stop |
+| Early exit | process gone in the first seconds | not seen in its runs; unclassified |
+
+The dark blue the user saw on failed boots is the backend's own default clear
+colour (0, 0, 0.1), set in `rsx_d3d12_backend_init` and replaced only when the
+title issues a display clear. A dark blue window means the title never
+cleared the screen.
+
+Not measured, because the runs were cut short: the rate headless against
+windowed, with `GT5P_TIMER_RES=0`, and with `PS3_PPU_PRIO_SCHED=0`. Its runs
+also spanned several rebuilds and five overlapped another instance, so the
+1-in-4 is a rough figure. Its proposed next step is to dump the heap object
+on a stall and watch its limit words for the thread that rewrites them; the
+address it derived for the heap pointer slot (about `0x012918D0`) is not
+validated.
+
+## Phase 27 — 62 frames a second, and the top-menu crash was `cellHttpUtilParseUri` (2026-10-12)
+
+Still BCUS98158. Two separate results.
+
+**Frame rate: Windows timer granularity.** The agreement screen ran at 12.8
+frames a second and the confirmation at 20, both steady. A sub-agent measured
+it without building: the D3D12 backend takes 3% of a frame (`PERF=1`, 0
+pipeline misses), turning priority scheduling off changes nothing, logging is
+under 1 MB a run, and two guest threads are busy while the rest wait. What is
+left is sleeping. Nothing in the port asked for a finer timer, so `Sleep(1)`
+lasted about 15.6 ms (15.25 ms measured in a fresh process on this machine),
+and the SPURS kernel poll thread, the present thread and guest `usleep` all
+pace themselves with short sleeps. 12.8 frames a second is 78.1 ms, exactly
+five such sleeps.
+
+`src/main.cpp` now calls `timeBeginPeriod(1)` at start-up.
+`GT5P_TIMER_RES=0` leaves the system default. Measured after: 62 to 63 on the
+confirmation screen (was 20), and 3,100 to 3,300 flips in a 65 s run (was
+about 1,550). The agreement screen was not sampled alone after the change.
+Not re-measured: the bad-boot and stalled-boot rates, which depend on timing;
+two of the six windowed boots since stalled, as before.
+
+The agent's other proposals, none done: wake the SPURS kernel thread on a
+kick instead of polling (`spurs_kernel_thread` in `cellSpurs.c`), have the
+present thread wait on the existing `cellGcm_fifo_kick_wait` instead of
+`Sleep(4)`, and yield in the guest's job-counter spin at `0x00BAA9FC`, which
+holds a core at about 90%.
+
+**The crash while the top menu loads.** Phase 26 left a stack overflow in
+`func_00D80560`, a tree erase walking a null node. Found in five steps, each a
+measurement:
+
+1. Runs no longer need a person. `PAD_HOLD="<from_ms>-<to_ms>:<KEY>,..."`
+   (new, `libs/input/cellPad.c`) holds buttons on a schedule with no keyboard
+   or focus. `scratch/auto.ps1` builds and drives the title past the
+   agreement with it.
+2. The crash report now follows the guest back chain and lists the code
+   addresses stored on the stack around the object in `r3`
+   (`src/main.cpp`). That named the path: `func_008E0848` has a local object
+   at `r1+0x1C8`; it is built by `func_00B94278`, which allocates the tree's
+   head node, and destroyed at `0x008E0978` through `func_00B93E20` and
+   `func_00E01020`.
+3. The allocation does not fail. Null stores are now reported once per new
+   writer after the first eight (`ppu_loader.cpp`), and the constructor is not
+   among them. So this is not Phase 22's failure, which was one of the two
+   readings Phase 26 offered.
+4. Nothing lifted clears the pointer. `PPU_WWATCH_TAIL=1` (new) keeps the last
+   96 writes to a watched address and the crash handler prints them: the last
+   write to the head pointer is the constructor's. But vector stores in lifted
+   code are a bare `memcpy` into guest memory and never reach the watch.
+5. `PPU_WW_GUARD=1 PPU_WW_GUARD_FN=B94278` (the second is new: arm the page
+   guard only when that function sets the word) caught it: a host routine
+   clearing upward in 32-byte steps from `0xD00CD5B0`, called from
+   `func_008DF718` at `0x008DF7F8` with a structure at `r1+0x70`, a string, a
+   buffer at `r1+0x90` and the size `0x100`.
+
+That call is `cellHttpUtilParseUri(uri, string, pool, size, required)`. The
+guest structure is 28 bytes: five string pointers, a port, four reserved
+bytes, with the strings placed in the caller's pool. ps3recomp modelled it as
+seven inline character arrays, 2,708 bytes, and began by zero-filling all of
+it. The fill ran 2.7 KB up the guest stack through three callers' frames.
+Both `cellHttpUtilParseUri` and `cellHttpUtilBuildUri` are rewritten to the
+real layout and read and write the structure by offset.
+
+Measured after: a 120 s scripted run takes no fault and prints no recursion
+cap; the title goes on to stat and read 60 more files (scene scripts, a
+character, motions), and `draw_indexed` is called for the first time.
+
+**Where it stops now.** The window stays on the dimmed "Confirmation" page at
+62 frames a second. File activity ends about 30 s before the run was stopped,
+after `motion/m0076`; the main thread is in its usual wait and no thread is
+reported spinning. Not investigated. `draw_indexed` being new is a lead: the
+backend may be dropping what the next screen draws.
+
+Corrections to earlier phases: Phase 26's failed `stat` of
+`tv2_us_root.xml=` was not the cause, and the missing-file reading it offered
+is wrong; that string is what was being parsed as a URI.
+
+Diagnostics added: `PAD_HOLD`, `PPU_WWATCH_TAIL`, `PPU_WW_GUARD_FN`,
+`GT5P_TIMER_RES`, the per-writer null-store report, and the back chain and
+stack scan in the crash report.
+
 ## Phase 26 — Past the agreement: an unmatched `bctr` was lifted as a call (2026-10-12)
 
 Still BCUS98158. Phase 25 left the process exiting after the agreement. Two

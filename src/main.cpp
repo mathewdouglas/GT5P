@@ -19,6 +19,8 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>                 /* timeBeginPeriod */
+#pragma comment(lib, "winmm.lib")
 #endif
 
 #include "ps3emu/ps3types.h"
@@ -62,6 +64,7 @@ void vm_write32(uint64_t addr, uint32_t val);   /* big-endian guest store */
 uint32_t vm_read32(uint64_t addr);
 extern uint32_t ppu_hle_inject_base;      /* HLE-visible GCM window base */
 uint32_t ppu_prof_resolve_host(void* ra);  /* host RIP -> guest function addr */
+void ppu_ww_dump_tail(void);              /* PPU_WWATCH_TAIL ring, if armed */
 int  ppu_stwcx32(uint64_t ea, uint32_t expected, uint32_t val);
 void ps3_indirect_call(ppu_context* ctx);
 void ps3_hle_call(unsigned nid, ppu_context* ctx);
@@ -469,7 +472,67 @@ static LONG CALLBACK report_crash(EXCEPTION_POINTERS* ep)
             fprintf(stderr, "%s r%d=%llX", r % 8 == 0 ? "\n[GT5P]    " : "", r,
                     (unsigned long long)c->gpr[r]);
         fputc('\n', stderr);
+        /* The host unwind above stops after 16 frames, which in a runaway
+         * recursion is 16 copies of one name. The guest stack still holds the
+         * whole story: follow its back chain and print each return address
+         * once per run of repeats, so the frames under the recursion show. */
+        if (vm_base) {
+            auto rd32 = [](uint64_t ea) -> uint32_t {
+                const uint8_t* p = vm_base + (uint32_t)ea;
+                return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+            };
+            uint32_t sp = (uint32_t)c->gpr[1], last = 0, run = 0, stride = 0; int shown = 0;
+            fprintf(stderr, "[GT5P]   guest back chain from sp=%08X:", sp);
+            for (uint32_t n = 0; n < 8000000u && sp >= 0x10000u && shown < 28; n++) {
+                uint32_t up = rd32((uint64_t)sp + 4);          /* low word of the 64-bit back chain */
+                if (up <= sp || up - sp > 0x100000u) {
+                    /* A recursion this deep runs off its own stack into
+                     * memory other threads write. Step over the damage at the
+                     * frame size seen so far. */
+                    if (!stride || n < 16) break;
+                    up = sp + stride;
+                    if (shown < 27 && !run) { fprintf(stderr, " [chain broken at %08X]", sp); }
+                }
+                stride = up - sp;
+                uint32_t lr = rd32((uint64_t)up + 0x14);       /* saved LR in the caller's frame */
+                if (lr == last) run++;
+                else {
+                    if (run) fprintf(stderr, " (x%u)", run + 1);
+                    fprintf(stderr, " %08X@%08X", lr, up); last = lr; run = 0; shown++;
+                }
+                sp = up;
+            }
+            if (run) fprintf(stderr, " (x%u)", run + 1);
+            fprintf(stderr, "; stopped at sp=%08X [sp]=%08X %08X\n", sp, rd32(sp), rd32((uint64_t)sp + 4));
+            /* What lies above the last frame followed, raw: 96 words. */
+            fprintf(stderr, "[GT5P]   stack above %08X:", sp);
+            for (int k = 0; k < 96; k++) {
+                if (k % 8 == 0) fprintf(stderr, "\n[GT5P]     +%03X:", k * 4);
+                fprintf(stderr, " %08X", rd32((uint64_t)sp + k * 4));
+            }
+            fputc('\n', stderr);
+            /* Return addresses near the object in r3: when it is a local of
+             * the function that started the recursion, its callers' saved LRs
+             * are just above it. Word pairs (0, code address) only. */
+            { uint32_t o2 = (uint32_t)c->gpr[3] & ~7u;
+              if (o2 >= 0x10000u) {
+                  fprintf(stderr, "[GT5P]   code addresses on the stack around r3:");
+                  for (uint32_t a = o2 - 0x600u; a < o2 + 0x2000u; a += 8) {
+                      uint32_t hi = rd32(a), lo = rd32((uint64_t)a + 4);
+                      if (!hi && lo >= 0x00010000u && lo < 0x00E40000u && !(lo & 3u))
+                          fprintf(stderr, " %08X@%+d", lo, (int)(a - o2));
+                  }
+                  fputc(10, stderr);
+              } }
+            uint32_t o = (uint32_t)c->gpr[3];
+            if (o >= 0x10000u) {
+                fprintf(stderr, "[GT5P]   [r3=%08X]:", o);
+                for (int k = 0; k < 12; k++) fprintf(stderr, " %08X", rd32((uint64_t)o + k * 4));
+                fputc('\n', stderr);
+            }
+        }
     }
+    ppu_ww_dump_tail();   /* PPU_WWATCH_TAIL=1: the last writes to the watched address */
     fprintf(stderr, "[GT5P]   r1(SP)=0x%08X r2(TOC)=0x%08X r3=0x%08X LR=0x%08X CTR=0x%08X\n",
             (uint32_t)g_main_ctx.gpr[1], (uint32_t)g_main_ctx.gpr[2],
             (uint32_t)g_main_ctx.gpr[3], (uint32_t)g_main_ctx.lr,
@@ -567,6 +630,16 @@ int main(int argc, char* argv[])
      * did (docs/progress.md, Phase 22). Set PS3_PPU_PRIO_SCHED=0 to turn it
      * off. Must be set before the runtime creates its first thread. */
     if (!getenv("PS3_PPU_PRIO_SCHED")) _putenv_s("PS3_PPU_PRIO_SCHED", "2");
+
+    /* Ask for 1 ms timer resolution. Without it Sleep(1) lasts about 15.6 ms
+     * on Windows, and the runtime paces the SPU job poll, the present thread
+     * and guest usleep with short sleeps: the agreement screen ran at 12.8
+     * frames a second, exactly five such sleeps a frame (docs/progress.md,
+     * Phase 27). GT5P_TIMER_RES=0 leaves the system default, to compare. */
+    {
+        const char* tr = getenv("GT5P_TIMER_RES");
+        if (!tr || tr[0] != '0') timeBeginPeriod(1);
+    }
 
     /* Buffer both streams. Unbuffered stdio issues a write per conversion, so
      * with several guest threads logging at once lines interleave mid-token and

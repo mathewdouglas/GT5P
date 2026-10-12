@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 26 of
-[docs/progress.md](docs/progress.md); read 26 down to 19 in that order.
+Details and evidence are in Phases 17 to 28 of
+[docs/progress.md](docs/progress.md); read 28 down to 19 in that order.
 Each corrects the one before.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
@@ -122,11 +122,27 @@ Each corrects the one before.
 - Nothing is drawn behind the text yet.
 - Keyboard input reaches the title: down to the end of the agreement, right,
   Z accepts, and a "Confirmation" screen about auto-save follows; Z again
-  starts the top menu loading (`TopRoot.gpb`, `TopMenuTemplate.gpb`). The
-  process then exits with a stack overflow in `func_00D80560`, a tree erase
-  walking a null node (Phase 26). Not investigated.
+  starts the top menu loading (`TopRoot.gpb`, `TopMenuTemplate.gpb`, then
+  scene scripts, a character and motions). "Confirmation" takes its OK only
+  once that load has finished. Then comes the main menu, and Cross on it
+  enters Dealerships ("ACURA"); text only on black in both (Phase 28).
+- It stops there: when the dealership's 3D scene starts drawing, the GPU
+  device is removed (`DXGI_ERROR_DEVICE_HUNG`) and the process ends. Not
+  investigated; Phase 28 lists three leads.
+- A windowed boot that shows dark blue and `draws: 0` is the Phase 22 heap
+  fault, about 1 boot in 4 with a window. Dark blue is the backend's default
+  clear colour. Retry it; do not read anything else into it.
+- The crash that used to follow was `cellHttpUtilParseUri` zero-filling 2.7 KB
+  of guest stack (Phase 27). When an HLE function takes a guest structure,
+  check its size against the SDK before trusting a host-side `memset`.
 - `scratch/inp.ps1 <secs>` runs a windowed boot for someone to drive, with a
-  capture every 5 s.
+  capture every 5 s. `scratch/auto.ps1 <tag>` builds and drives it unattended
+  with `PAD_HOLD` (timed button presses, no keyboard or focus needed).
+- Frame rate was bounded by Windows timer granularity; `src/main.cpp` now
+  calls `timeBeginPeriod(1)` (`GT5P_TIMER_RES=0` to undo). 62 frames a second
+  on the confirmation screen against 20 before.
+- Lifted vector stores do not reach `PPU_WWATCH`. For "who cleared this",
+  use `PPU_WW_GUARD=1`, with `PPU_WW_GUARD_FN=<fn>` to arm it late.
 - A `bctr` the lifter cannot match to a jump table is now a tail call
   (`ps3_indirect_tail`), not a nested call. If `[ppu] recursion cap` ever
   prints, treat the run as corrupt from that line on: the runtime has skipped
@@ -153,7 +169,8 @@ Each corrects the one before.
 - A new job body shows up as `[spu-smc] microstep ... handing to the
   interpreter`. Do not trust the interpreter with it: dump it with
   `SPU_DUMP_OVL`, add it to `wws_job_bodies` and re-lift.
-- Next: the exit while the top menu loads, the missing background, the
+- Next: the device hang in the dealership, the heap fault behind failed
+  boots, the missing background, the
   intermittent slow windowed boot, then the `TV.DAT` install RPCS3 starts
   about 20 s after `BootRoot.gpb`.
 
@@ -173,7 +190,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in twenty files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in twenty-three files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
