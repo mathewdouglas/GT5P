@@ -95,11 +95,25 @@ are in Phase 17 of [docs/progress.md](docs/progress.md).
   the same order as RPCS3's first 10 s, starts the network library, and then
   main parks in `sys_cond_wait` at `lr=0x00B391F4`. That is the same kind of
   stop upstream reports for v02.00. No frame is drawn.
-- In the other 2 (only seen with `PS3_VERBOSE=0`) main deadlocks earlier on a
-  mutex in the sound code, at `lr=0x00B56EDC`, after 40 opens.
-- Two jobs follow: find who holds that mutex, and find what main's
-  `sys_cond_wait` is waiting for. RPCS3's next step after this point is a stat
-  of `.../projects/gt5p/boot/US/BootRoot.gpb`.
+- About 1 run in 6 goes wrong earlier, during sound start-up. It is not a
+  deadlock: nobody holds the mutex. Phase 18 of the progress log has the
+  evidence. The commonest form is a sound bank whose load comes back with data
+  pointer `0x880`, after which `func_007CA908` overwrites memory; the others
+  are an allocation retried for ever, a sound job event that never arrives,
+  and a sleep loop. The cause under them is not found.
+- Ruled out by measurement: a held mutex, a spurious condition wake, stack
+  overflow, main's missing thread id, the cellFs descriptor table, the
+  lightweight mutex on the heap. Do not re-test these without a new reason.
+- Enforcing guest priorities lowers the rate but not to zero, on samples too
+  small to trust. `GT5P_PRIO_HANDOFF=1` and `PS3_PPU_PRIO_SCHED=1` are the two
+  experiments; both are off by default.
+- Then: find what main's `sys_cond_wait` is waiting for. Not started. RPCS3's
+  next step after this point is a stat of
+  `.../projects/gt5p/boot/US/BootRoot.gpb`.
+
+Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
+mutex with each main-thread sample), `PS3_SYNCLOG=1` (failed locks, with the
+lock object), `PS3_LWM_CHECK=1` (two threads inside one lightweight mutex).
 
 Build note: `GT5P_*` compile definitions are scoped to `src/main.cpp`. Do not
 put a definition on the whole `gt5p` target; changing one recompiles all ten
@@ -107,8 +121,10 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c` and
-`runtime/syscalls/lv2_register.c`. The disc build does not boot without them.
+changes in nine files under `libs/` and `runtime/`. The disc build does not
+boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
+and `runtime/syscalls/lv2_register.c`, and `src/main.cpp` no longer compiles
+without the ones in `runtime/syscalls/sys_ppu_thread.*`.
 A copy is kept in `patches/ps3recomp-5244db9-local.patch`; refresh it after any
 further change there, and do not reset that checkout without it.
 

@@ -1,3 +1,65 @@
+diff --git a/libs/filesystem/cellFs.c b/libs/filesystem/cellFs.c
+index 5166a47..0d4e779 100644
+--- a/libs/filesystem/cellFs.c
++++ b/libs/filesystem/cellFs.c
+@@ -322,27 +322,53 @@ typedef struct {
+ static FsFileSlot s_files[MAX_OPEN_FILES];
+ static FsDirSlot  s_dirs[MAX_OPEN_DIRS];
+ 
++/* Claiming a slot has to be atomic. A title that loads from several threads
++ * opens files concurrently, and two unlocked scans both found the same free
++ * slot: both callers were handed one descriptor, the second open replaced the
++ * first's FILE*, and from then on each thread read, seeked and closed the
++ * other's file. GT5P's three loader threads hit this in about one boot in
++ * six, and what they loaded was garbage. */
++#ifdef _WIN32
++static SRWLOCK s_fd_lock = SRWLOCK_INIT;
++#  define FD_LOCK()   AcquireSRWLockExclusive(&s_fd_lock)
++#  define FD_UNLOCK() ReleaseSRWLockExclusive(&s_fd_lock)
++#else
++#  include <pthread.h>
++static pthread_mutex_t s_fd_lock = PTHREAD_MUTEX_INITIALIZER;
++#  define FD_LOCK()   pthread_mutex_lock(&s_fd_lock)
++#  define FD_UNLOCK() pthread_mutex_unlock(&s_fd_lock)
++#endif
++
+ static CellFsFd alloc_fd(void)
+ {
++    CellFsFd fd = -1;
++    FD_LOCK();
+     for (int i = 3; i < MAX_OPEN_FILES; i++) {  /* skip 0,1,2 = stdin/out/err */
+         if (!s_files[i].in_use) {
++            s_files[i].host_fp = NULL;
+             s_files[i].in_use = 1;
+-            return i;
++            fd = i;
++            break;
+         }
+     }
+-    return -1;
++    FD_UNLOCK();
++    return fd;
+ }
+ 
+ static CellFsDir alloc_dir(void)
+ {
++    CellFsDir fd = -1;
++    FD_LOCK();
+     for (int i = 0; i < MAX_OPEN_DIRS; i++) {
+         if (!s_dirs[i].in_use) {
+             memset(&s_dirs[i], 0, sizeof(FsDirSlot));
+             s_dirs[i].in_use = 1;
+-            return i;
++            fd = i;
++            break;
+         }
+     }
+-    return -1;
++    FD_UNLOCK();
++    return fd;
+ }
+ 
+ /* Build fopen mode string from PS3 flags */
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
 index 688ff04..0f4de84 100644
 --- a/libs/spurs/cellSpurs.c
@@ -226,6 +288,84 @@ index 071b9ec..74fc692 100644
      return CELL_OK;
  }
  
+diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
+index d857f30..c7583a1 100644
+--- a/runtime/ppu/ppu_sysprx.cpp
++++ b/runtime/ppu/ppu_sysprx.cpp
+@@ -149,7 +149,8 @@ static void sys_lwmutex_create(ppu_context* ctx)
+ #define LWM_HASH 65536u
+ static struct LwmSlot { volatile long addr; HANDLE sem;
+     volatile long holder; volatile long long acq_us; volatile long long acq_fences;
+-    volatile unsigned long long acq_cpu_us; } g_lwm[LWM_HASH];
++    volatile unsigned long long acq_cpu_us;
++    volatile long chk; } g_lwm[LWM_HASH];
+ extern "C" { extern volatile long long g_gcm_ref_pub_count;    /* cellGcmSys.c */
+              unsigned long long ppu_thread_cpu_us(unsigned tid);   /* sys_ppu_thread.c */
+              unsigned ppu_thread_prof_pc(unsigned tid); }
+@@ -159,6 +160,27 @@ static volatile long g_lwm_tab_lock = 0;
+  * contended block it logs who holds it and for how long; on unlock it flags a
+  * long hold. The leaf holder (the one blocked on a non-lwmutex wait) is the
+  * convoy root. Default OFF. */
++/* PS3_LWM_CHECK=1: verify the one thing an lwmutex is for. `chk` is the id of
++ * the thread inside, kept by the runtime itself and independent of the guest
++ * owner word. A second thread getting in, or a release by a thread that is not
++ * inside, is reported -- either means two threads can be in one critical
++ * section, and every structure the title guards this way is then suspect. */
++static int lwm_check(void){ static int v=-1; if(v<0){const char*e=getenv("PS3_LWM_CHECK"); v=e?1:0;} return v; }
++static struct LwmSlot* lwm_find(uint32_t addr);
++static void lwm_chk_enter(uint32_t lwm, uint32_t self, const char* how){
++    struct LwmSlot* sl = lwm_find(lwm); if(!sl) return;
++    long prev = _InterlockedExchange(&sl->chk, (long)self);
++    if (prev) { static long n=0; if (_InterlockedIncrement(&n) <= 40)
++        fprintf(stderr, "[LWM-CHECK] DOUBLE ENTRY lwm=0x%08X %s by tid=%u while tid=%ld is inside (guest owner=%u recur=%u)\n",
++                lwm, how, self, prev, vm_read32(lwm), vm_read32(lwm + 0xC)); }
++}
++static void lwm_chk_leave(uint32_t lwm, uint32_t self){
++    struct LwmSlot* sl = lwm_find(lwm); if(!sl) return;
++    long prev = _InterlockedExchange(&sl->chk, 0);
++    if (prev != (long)self) { static long n=0; if (_InterlockedIncrement(&n) <= 40)
++        fprintf(stderr, "[LWM-CHECK] RELEASE lwm=0x%08X by tid=%u but inside=%ld (guest owner=%u recur=%u)\n",
++                lwm, self, prev, vm_read32(lwm), vm_read32(lwm + 0xC)); }
++}
+ static int lwm_trace(void){ static int v=-1; if(v<0){const char*e=getenv("PS3_LWMUTEX_TRACE"); v=e?1:0;} return v; }
+ static long long lwm_now_us(void){
+ #ifdef _WIN32
+@@ -259,6 +281,7 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+         }
+     }
+     if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
++    if (lwm_check()) lwm_chk_enter(lwm, self, "lock");
+ #endif
+     vm_write32(lwm + LWM_OWNER, self);
+     vm_write32(lwm + LWM_RECUR, 1);
+@@ -279,6 +302,7 @@ static void sys_lwmutex_trylock(ppu_context* ctx)
+         if (WaitForSingleObject(s, 0) != WAIT_OBJECT_0) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x8001000Bu; return; } // EBUSY
+     }
+     if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
++    if (lwm_check()) lwm_chk_enter(lwm, self, "trylock");
+ #endif
+     vm_write32(lwm + LWM_OWNER, self);
+     vm_write32(lwm + LWM_RECUR, 1);
+@@ -296,6 +320,7 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
+     vm_write32(lwm + LWM_RECUR, 0);
+     vm_write32(lwm + LWM_OWNER, 0);
+ #ifdef _WIN32
++    if (lwm_check()) lwm_chk_leave(lwm, LWM_SELF(ctx));
+     if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm);
+         if (sl && sl->holder) { long long held = lwm_now_us() - sl->acq_us;
+             if (held > 100000) {
+@@ -368,9 +393,11 @@ static void sys_lwcond_wait(ppu_context* ctx)
+         uint32_t rc  = vm_read32(lwmutex + LWM_RECUR);
+         vm_write32(lwmutex + LWM_RECUR, 0);
+         vm_write32(lwmutex + LWM_OWNER, 0);
++        if (lwm_check()) lwm_chk_leave(lwmutex, LWM_SELF(ctx));
+         ReleaseSemaphore(s, 1, NULL);
+         Sleep(1);
+         WaitForSingleObject(s, INFINITE);
++        if (lwm_check()) lwm_chk_enter(lwmutex, LWM_SELF(ctx), "lwcond");
+         vm_write32(lwmutex + LWM_OWNER, own);
+         vm_write32(lwmutex + LWM_RECUR, rc ? rc : 1);
+     }
 diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
 index bcb1df4..8102958 100644
 --- a/runtime/syscalls/lv2_register.c
@@ -262,3 +402,259 @@ index bcb1df4..8102958 100644
          } else {
              AcquireSRWLockShared(&s_spu_port_lock);
              spu_group_t* group = spu_find_group(spu->spu_group_id);
+diff --git a/runtime/syscalls/sys_cond.c b/runtime/syscalls/sys_cond.c
+index 45235ea..549d053 100644
+--- a/runtime/syscalls/sys_cond.c
++++ b/runtime/syscalls/sys_cond.c
+@@ -144,6 +144,12 @@ int64_t sys_cond_wait(ppu_context* ctx)
+     sys_mutex_info* m = &g_sys_mutexes[c->mutex_id - 1];
+     if (!m->active) { cond_unlock(c); return (int32_t)CELL_ESRCH; }
+     if (m->owner_tid != ctx->thread_id || m->lock_count <= 0) {
++        /* A title that waits once, without re-testing its predicate, carries
++         * straight on from this as if it had been signalled. */
++        if (getenv("PS3_SYNCLOG"))
++            fprintf(stderr, "[SYNC] cond_wait EPERM cond=%u mutex=%u tid=%llu owner=%llu count=%d lr=0x%08X%c",
++                    LV2_ARG_U32(ctx, 0), c->mutex_id, (unsigned long long)ctx->thread_id,
++                    (unsigned long long)m->owner_tid, m->lock_count, (uint32_t)ctx->lr, 10);
+         cond_unlock(c); return (int32_t)CELL_EPERM;
+     }
+     struct sys_cond_waiter waiter = {NULL, 0};
+diff --git a/runtime/syscalls/sys_mutex.c b/runtime/syscalls/sys_mutex.c
+index 2e760ea..7788f6f 100644
+--- a/runtime/syscalls/sys_mutex.c
++++ b/runtime/syscalls/sys_mutex.c
+@@ -8,6 +8,7 @@
+ #include "../memory/vm.h"
+ #include <string.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ 
+ /* ---------------------------------------------------------------------------
+  * Globals
+@@ -177,22 +178,48 @@ int64_t sys_mutex_destroy(ppu_context* ctx)
+  * r3 = mutex_id
+  * r4 = timeout_usec (0 = infinite)
+  * -----------------------------------------------------------------------*/
++/* PS3_SYNCLOG: a failing lock is rarely expected by the title, and one that
++ * retries on failure spins forever with nothing in the log. Say why, a few
++ * times. */
++static int64_t mtx_lock_fail(ppu_context* ctx, uint32_t id, int32_t rc)
++{
++    static int n[64];
++    unsigned t = (unsigned)ctx->thread_id & 63;
++    if (n[t] < 3 && getenv("PS3_SYNCLOG")) {
++        n[t]++;
++        fprintf(stderr, "[SYNC] mutex_lock FAILED id=%u rc=0x%08X tid=%llu lr=0x%08X r31=0x%08X\n",
++                id, (uint32_t)rc, (unsigned long long)ctx->thread_id, (uint32_t)ctx->lr,
++                (uint32_t)ctx->gpr[31]);
++        /* The words at r31: titles keep the id in a lock object and pass its
++         * address around, so a bad id usually means a bad or dead object. */
++        uint32_t ea = (uint32_t)ctx->gpr[31] & ~3u;
++        if (ea >= 0x10000u && id == 0) {
++            const uint8_t* p = (const uint8_t*)vm_to_host(ea - 0x10);
++            fprintf(stderr, "[SYNC]   [0x%08X]:", ea - 0x10);
++            for (int i = 0; i < 16; i++)
++                fprintf(stderr, " %02X%02X%02X%02X", p[i*4], p[i*4+1], p[i*4+2], p[i*4+3]);
++            fputc('\n', stderr);
++        }
++    }
++    return (int64_t)rc;
++}
++
+ int64_t sys_mutex_lock(ppu_context* ctx)
+ {
+     uint32_t mutex_id    = LV2_ARG_U32(ctx, 0);
+     uint64_t timeout_us  = LV2_ARG_U64(ctx, 1);
+     if (mutex_id == 0 || mutex_id > SYS_MUTEX_MAX)
+-        return (int64_t)(int32_t)CELL_ESRCH;
++        return mtx_lock_fail(ctx, mutex_id, (int32_t)CELL_ESRCH);
+ 
+     sys_mutex_info* m = &g_sys_mutexes[mutex_id - 1];
+     if (!m->active)
+-        return (int64_t)(int32_t)CELL_ESRCH;
++        return mtx_lock_fail(ctx, mutex_id, (int32_t)CELL_ESRCH);
+ 
+     uint64_t caller_tid = ctx->thread_id;
+ 
+     /* Check for deadlock on non-recursive mutex */
+     if (!m->recursive && m->owner_tid == caller_tid && m->lock_count > 0) {
+-        return (int64_t)(int32_t)CELL_EDEADLK;
++        return mtx_lock_fail(ctx, mutex_id, (int32_t)CELL_EDEADLK);
+     }
+ 
+ #ifdef _WIN32
+diff --git a/runtime/syscalls/sys_ppu_thread.c b/runtime/syscalls/sys_ppu_thread.c
+index fb3906a..3a92b21 100644
+--- a/runtime/syscalls/sys_ppu_thread.c
++++ b/runtime/syscalls/sys_ppu_thread.c
+@@ -321,6 +321,113 @@ void ppu_prof_stamp(void* vctx, unsigned lr)
+         t->prof_pc = lr;
+ }
+ 
++/* Priority hand-off at thread creation (opt-in: ppu_thread_set_prio_handoff).
++ *
++ * lv2 schedules PPU threads by strict priority, lower number first. Creating a
++ * thread of HIGHER priority than the creator therefore preempts the creator on
++ * the spot: the new thread runs until it first blocks, and only then does
++ * sys_ppu_thread_create return. Titles lean on that. One that starts a
++ * high-priority service thread and then immediately uses what the thread sets
++ * up has no lock around it and needs none on a PS3.
++ *
++ * Host threads all run at once, so without this the creator races the thread
++ * it just made. Here the creator waits until the new thread is seen inside a
++ * blocking lv2 call, or has finished, bounded so that a thread which blocks
++ * some way this cannot see (inside an HLE import, or never) costs a pause and
++ * not a hang. It does not model preemption after creation. */
++static int s_prio_handoff = 0;
++void ppu_thread_set_prio_handoff(int on) { s_prio_handoff = on; }
++
++/* PS3_PPU_PRIO_SCHED=<cores>: let the HOST scheduler stand in for lv2's.
++ *
++ * Confine every guest PPU thread to <cores> host cores (the PPU has two
++ * hardware threads, so 2 is the faithful value and 1 the strict one) and map
++ * guest priority onto host thread priority with dynamic boosting off. Among
++ * threads sharing a core Windows then runs the highest-priority ready one and
++ * preempts for it at once, which is the property titles rely on: a thread
++ * never observes a higher-priority one half-way through its work.
++ *
++ * The mapping is lossy -- seven host levels for 3072 guest ones -- so threads
++ * whose priorities fall in one band still interleave. Off by default. */
++#ifdef _WIN32
++static int host_sched_cores(void)
++{
++    static int n = -1;
++    if (n < 0) { const char* e = getenv("PS3_PPU_PRIO_SCHED"); n = e ? atoi(e) : 0; }
++    return n;
++}
++static void host_apply_prio(HANDLE h, int32_t prio)
++{
++    int n = host_sched_cores();
++    if (n <= 0 || !h) return;
++    SetThreadAffinityMask(h, n >= 2 ? 3 : 1);
++    SetThreadPriorityBoost(h, TRUE);            /* TRUE disables boosting */
++    SetThreadPriority(h, prio <= 1    ? THREAD_PRIORITY_TIME_CRITICAL
++                       : prio < 200   ? THREAD_PRIORITY_HIGHEST
++                       : prio < 400   ? THREAD_PRIORITY_ABOVE_NORMAL
++                       : prio < 800   ? THREAD_PRIORITY_NORMAL
++                       : prio < 1000  ? THREAD_PRIORITY_BELOW_NORMAL
++                       : prio <= 1001 ? THREAD_PRIORITY_LOWEST
++                       :                THREAD_PRIORITY_IDLE);
++}
++#else
++static int  host_sched_cores(void) { return 0; }
++#endif
++
++/* Call on the main guest thread, after ppu_thread_register_main. */
++void ppu_thread_set_main_priority(int32_t prio)
++{
++    g_ppu_threads[0].priority = prio;
++#ifdef _WIN32
++    if (host_sched_cores() > 0 && !g_ppu_threads[0].host_thread)
++        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
++                        &g_ppu_threads[0].host_thread, 0, FALSE, DUPLICATE_SAME_ACCESS);
++    host_apply_prio(g_ppu_threads[0].host_thread, prio);
++#endif
++}
++
++extern uint32_t g_sc_inflight[];           /* ppu_loader.cpp: lv2 call per thread id */
++
++static int sc_is_blocking(uint32_t n)
++{
++    switch (n) {
++    case 41:  /* sys_ppu_thread_exit */        case 44:  /* sys_ppu_thread_join */
++    case 85:  /* sys_event_flag_wait */        case 92:  /* sys_semaphore_wait */
++    case 97:  /* sys_lwmutex_lock */           case 102: /* sys_mutex_lock */
++    case 107: /* sys_cond_wait */              case 113: /* sys_lwcond_queue_wait */
++    case 122: /* sys_rwlock_rlock */           case 125: /* sys_rwlock_wlock */
++    case 130: /* sys_event_queue_receive */    case 141: /* sys_timer_usleep */
++    case 142: /* sys_timer_sleep */            case 178: /* sys_spu_thread_group_join */
++        return 1;
++    }
++    return 0;
++}
++
++static void prio_handoff_wait(const ppu_thread_info* nt, uint64_t new_tid)
++{
++#ifdef _WIN32
++    if (new_tid >= 64) return;
++    LARGE_INTEGER f, t0, t, since; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
++    since.QuadPart = 0;
++    for (;;) {
++        QueryPerformanceCounter(&t);
++        if (nt->state != PPU_THREAD_STATE_RUNNING) return;          /* ran to its end */
++        if ((t.QuadPart - t0.QuadPart) * 1000 / f.QuadPart >= 200) return;   /* 200 ms cap */
++        if (sc_is_blocking(g_sc_inflight[new_tid])) {
++            /* Still in the same kind of call a little later: it is parked,
++             * not passing through an uncontended lock. */
++            if (!since.QuadPart) since = t;
++            else if ((t.QuadPart - since.QuadPart) * 1000000 / f.QuadPart >= 300) return;
++        } else {
++            since.QuadPart = 0;
++        }
++        SwitchToThread();
++    }
++#else
++    (void)nt; (void)new_tid;
++#endif
++}
++
+ int64_t sys_ppu_thread_create(ppu_context* ctx)
+ {
+     uint32_t tid_out_addr = LV2_ARG_PTR(ctx, 0);
+@@ -441,6 +548,9 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+     unsigned _initflag = STACK_SIZE_PARAM_IS_A_RESERVATION;
+     int _gate_this = (g_gate_on > 0 && entry >= 0x10000 && entry < 0x10000000);
+     if (_gate_this) _initflag |= CREATE_SUSPENDED;
++    /* Start at the right priority, not at the creator's and corrected later. */
++    int _sched_this = (!_gate_this && host_sched_cores() > 0);
++    if (_sched_this) _initflag |= CREATE_SUSPENDED;
+     t->host_thread = (HANDLE)_beginthreadex(NULL, 256u * 1024 * 1024,
+                                   (unsigned (__stdcall*)(void*))ppu_host_thread_proc, t,
+                                   _initflag, (unsigned*)&t->host_tid);
+@@ -460,6 +570,8 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+      * ponytail: two host levels only; map the full range if a title needs it. */
+     if (priority < 256)
+         SetThreadPriority(t->host_thread, THREAD_PRIORITY_ABOVE_NORMAL);
++    host_apply_prio(t->host_thread, priority);
++    if (_sched_this) ResumeThread(t->host_thread);
+ #else
+     /* Same reservation, for the same reason. This is the HOST stack the
+      * recompiled C frames run on, not the guest stack (allocated above out of
+@@ -499,6 +611,12 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+ #endif
+ 
+     table_unlock();
++
++    if (s_prio_handoff) {
++        const ppu_thread_info* self = find_thread(ctx->thread_id);
++        if (self && priority < self->priority)
++            prio_handoff_wait(t, thread_id);
++    }
+     return CELL_OK;
+ }
+ 
+@@ -1155,6 +1273,9 @@ int64_t sys_ppu_thread_set_priority(ppu_context* ctx)
+     }
+ 
+     t->priority = priority;
++#ifdef _WIN32
++    host_apply_prio(t->host_thread, priority);
++#endif
+     table_unlock();
+     return CELL_OK;
+ }
+diff --git a/runtime/syscalls/sys_ppu_thread.h b/runtime/syscalls/sys_ppu_thread.h
+index a297bf5..d0a5714 100644
+--- a/runtime/syscalls/sys_ppu_thread.h
++++ b/runtime/syscalls/sys_ppu_thread.h
+@@ -89,6 +89,10 @@ int64_t sys_ppu_thread_create(ppu_context* ctx);
+  * Call before the first sys_ppu_thread_create so no created thread aliases
+  * main (thread_id 0 broke every owner-tracking sync primitive). */
+ uint64_t ppu_thread_register_main(void);
++/* Opt in to priority hand-off at thread creation, and give the main thread
++ * the priority its process parameters ask for (see sys_ppu_thread.c). */
++void ppu_thread_set_prio_handoff(int on);
++void ppu_thread_set_main_priority(int32_t prio);
+ int64_t sys_ppu_thread_exit(ppu_context* ctx);
+ int64_t sys_ppu_thread_join(ppu_context* ctx);
+ int64_t sys_ppu_thread_detach(ppu_context* ctx);

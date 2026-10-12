@@ -9,6 +9,86 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 18 — The "mutex deadlock" is not a deadlock (2026-10-12)
+
+Still BCUS98158. Phase 17 ended with "2 of 8 runs deadlock on a mutex in the
+sound code at `lr=0x00B56EDC`; find who holds it". Nobody holds it. This phase
+is not finished: the boot is still not the same every run, and the cause below
+the symptoms is not found.
+
+**What the bad run actually is.** `0x00B56EB4` is the title's lock wrapper, and
+it retries forever on any error from `sys_mutex_lock`. In a bad run that call
+*fails* with `ESRCH` because the lock object it was handed has a garbage id.
+The id is garbage because memory has been overwritten:
+
+- A page guard on the title's pointer table at `0x0129144C` reports zero writes
+  in good runs and thousands in bad ones, every one from `func_007CA908`.
+- `func_007CA908` is a pointer-fixup pass over a loaded sound bank
+  (`/sound_gt/se/squeal.esgx`, 0x1B210 bytes). `func_007A9B68` calls it with the
+  data pointer from the file layer's result. In a bad run that pointer is
+  `0x00000880`; in a good run it is `0x204DAE80`. The first bank loads to
+  `0x28575B80`. All three end in `0x80` after a `0x..00` boundary, so the
+  reading is buffer + `0x880` with a null buffer. **Hypothesis**, not measured:
+  the buffer allocation returned null.
+- With a null base the fixup pass walks all of memory rewriting words 16 bytes
+  apart. Everything else seen in a bad run follows from that: the timer
+  threads' list head, the sound objects at `0x0138D0E8`, the failing locks.
+
+**The other signatures.** Thirty boots with default settings: 24 good, and
+
+| Opens | Main is in | Count |
+|---|---|---|
+| 40 | `func_007CA908`, the runaway fixup above | 1 |
+| 2 | `func_00B3BB60`, an allocation that is retried for ever, called from sound setup at `func_007C59D0` | 2 |
+| 28 | `func_007FE9E0`, waiting for a sound job event that does not come | 1 |
+| 6 | `func_00B57790`, a 2 ms sleep loop under `func_00BFA3C8` | 1 |
+| 114 | still loading at the sample; not a failure | 1 |
+
+Four signatures, all during start-up while the sound threads are being
+created. Two of them are an allocation that cannot be satisfied.
+
+**Ruled out, each by measurement.**
+
+- A held mutex. The thread and mutex dump shows none that explains it.
+- A condition wait returning without a signal. Checked over full syscall
+  traces of bad runs: every return has a signal behind it.
+- Stack overflow. No guest thread comes near its stack floor.
+- The main thread having no identity. It ran as thread id 0, which the kernel
+  objects read as "nobody". Fixed, because it is wrong; 5 of 30 still bad.
+- The file-descriptor table. `alloc_fd` in cellFs had no lock, so two
+  concurrent opens could share a descriptor. Fixed, because it is wrong; this
+  title opens one file at a time and 6 of 30 were still bad.
+- The lightweight mutex that guards the title's heap. `PS3_LWM_CHECK=1` counts
+  threads inside each one; no double entry in 24 boots, 4 of them bad.
+- Byte-sized guest stores. They are plain stores of their own width.
+
+**Priorities: suggestive, not shown.** lv2 schedules by strict priority and the
+title sets them deliberately (main 1001, sound threads 1, 640, 937, 1001, and
+it raises itself to 1 around some locks). Host threads all run at once.
+
+| Setting | Bad runs |
+|---|---|
+| default | 5 of 30, 6 of 30, 5 of 30 |
+| `GT5P_PRIO_HANDOFF=1`: creator waits for a higher-priority new thread to block | 2 of 30, 3 of 24 |
+| `PS3_PPU_PRIO_SCHED=1`: guest threads on one host core, host priority from guest priority | 2 of 40 |
+
+Fewer, never zero, and the samples are too small to call the difference real.
+The host mapping has seven levels for the title's ten. Both are off by default.
+
+**New tools.**
+
+- `GT5P_THREADS=1` adds to each main-thread sample every guest thread (stack
+  pointer, stack free, last syscall, guest call chain) and every held mutex.
+- `PS3_SYNCLOG=1` reports a failing `sys_mutex_lock` with the lock object's
+  address and contents, and a refused `sys_cond_wait`.
+- `PS3_LWM_CHECK=1`, described above.
+- `GT5P_GUARD=<addr>:<arm>` already existed; it is what found the writer.
+
+**Next.** Find out what the bank loader's allocation returns in a bad run,
+rather than inferring it. The loader's result is built by a virtual call at
+`0x00B0C25C` in `func_00B0C0C0`; the request and its result live on main's
+stack at `0xCFEFF500`.
+
 ## Phase 17 — The Disc Build, BCUS98158 v03.00 (2026-10-12)
 
 This fork's input is the US disc release, not the PSN package the phases below

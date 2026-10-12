@@ -28,6 +28,8 @@
 #include "ppu_context.h"
 #include "vm.h"
 #include "lv2_syscall_table.h"
+#include "sys_ppu_thread.h"   /* g_ppu_threads: the all-threads dump */
+#include "sys_mutex.h"        /* g_sys_mutexes: who holds what */
 
 #include "elf_loader.h"
 
@@ -215,6 +217,61 @@ static void dump_hostmap(void)
     fflush(stderr);
 }
 
+/* GT5P_THREADS=1: with each main-thread sample, every guest thread the runtime
+ * created -- where it is and what it last asked the kernel for -- then every
+ * kernel mutex that is held and by whom. A deadlock needs both halves: the
+ * waiter names the mutex (r3 of syscall 102), the mutex names its owner, and
+ * the owner's line says what it is waiting for in turn. */
+static void dump_threads_and_mutexes(void)
+{
+    for (int i = 0; i < PPU_THREAD_MAX; i++) {
+        ppu_thread_info* t = &g_ppu_threads[i];
+        if (t->state != PPU_THREAD_STATE_RUNNING && t->state != PPU_THREAD_STATE_DETACHED)
+            continue;
+        char chain[400]; chain[0] = 0;
+        if (t->host_thread && SuspendThread(t->host_thread) != (DWORD)-1) {
+            CONTEXT hc; hc.ContextFlags = CONTEXT_FULL;
+            if (GetThreadContext(t->host_thread, &hc)) {
+                int p = 0;
+                for (int f = 0; f < 40 && hc.Rip && p < 340; f++) {
+                    uint32_t g = ppu_prof_resolve_host((void*)hc.Rip);
+                    if (g) p += snprintf(chain + p, sizeof(chain) - p, " func_%08X", g);
+                    else if (f == 0)    /* where exactly, when not in lifted code */
+                        p += snprintf(chain + p, sizeof(chain) - p, " <rva:%llX>",
+                                      (unsigned long long)(hc.Rip - (DWORD64)GetModuleHandleA(nullptr)));
+                    DWORD64 imgBase = 0;
+                    PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(hc.Rip, &imgBase, nullptr);
+                    if (!rf) break;
+                    PVOID hd = nullptr; DWORD64 est = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, imgBase, hc.Rip, rf,
+                                     &hc, &hd, &est, nullptr);
+                }
+            }
+            ResumeThread(t->host_thread);
+        }
+        /* Lowest word of the stack ever written: how deep it has been, not
+         * how deep it is now. Zero free means it reached the bottom, and the
+         * page below belongs to another thread. */
+        uint32_t low = t->stack_addr;
+        for (; t->stack_size && low < t->stack_addr + t->stack_size; low += 4) {
+            uint32_t w; memcpy(&w, vm_base + low, 4);
+            if (w) break;
+        }
+        fprintf(stderr, "[thread] tid=%llu name=\"%s\" sp=0x%08X stack=0x%08X+0x%X free=0x%X lr=0x%08X sc=%u r3=0x%08X r4=0x%08X chain:%s\n",
+                (unsigned long long)t->ctx.thread_id, t->name, (uint32_t)t->ctx.gpr[1],
+                t->stack_addr, t->stack_size, low - t->stack_addr, (uint32_t)t->ctx.lr,
+                (uint32_t)t->ctx.gpr[11], (uint32_t)t->ctx.gpr[3],
+                (uint32_t)t->ctx.gpr[4], chain);
+    }
+    for (int i = 0; i < SYS_MUTEX_MAX; i++) {
+        sys_mutex_info* m = &g_sys_mutexes[i];
+        if (!m->active || m->lock_count <= 0) continue;
+        char name[9]; memcpy(name, m->name, 8); name[8] = 0;
+        fprintf(stderr, "[mutex] id=%d name=\"%s\" owner_tid=%llu count=%d recursive=%d\n",
+                i + 1, name, (unsigned long long)m->owner_tid, m->lock_count, m->recursive);
+    }
+}
+
 static DWORD WINAPI main_stack_dump(LPVOID secs)
 {
   for (;;) {
@@ -305,6 +362,7 @@ static DWORD WINAPI main_stack_dump(LPVOID secs)
         }
     }
     fprintf(stderr, "[hostchain]%s\n", hoststack);
+    if (getenv("GT5P_THREADS")) dump_threads_and_mutexes();
 
     uint32_t last = 0;
     int shown = 0;
@@ -597,6 +655,24 @@ int main(int argc, char* argv[])
     }
 
     g_main_ctx.gpr[2] = elf.toc;
+
+    /* Give the main thread an identity. ps3recomp's own loader does this; a
+     * title with its own main() has to. Left at 0, main is the one thread the
+     * kernel objects cannot tell from "nobody": sys_mutex uses owner 0 as its
+     * free marker, and sys_ppu_thread_get_id reports a sentinel. The first
+     * thread the title creates also took slot 0 and id 1 -- main's by rights.
+     * GT5P_NO_MAIN_ID=1 restores the old behaviour for comparison. */
+    if (!getenv("GT5P_NO_MAIN_ID")) {
+        g_main_ctx.thread_id = ppu_thread_register_main();
+        /* 1001 is the primary priority in this executable's process
+         * parameters (RPCS3 logs it at load). The title compares the
+         * priorities of the threads it creates against it. */
+        ppu_thread_set_main_priority(1001);
+        /* GT5P_PRIO_HANDOFF=1: make a thread that creates a higher-priority
+         * one wait until it first blocks, as lv2 would. An experiment, off by
+         * default: measured, it did not remove the boot's bad runs. */
+        ppu_thread_set_prio_handoff(getenv("GT5P_PRIO_HANDOFF") ? 1 : 0);
+    }
 
     /* Give the main thread an actual stack.
      *
