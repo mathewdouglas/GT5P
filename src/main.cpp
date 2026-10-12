@@ -94,6 +94,9 @@ void gt5p_start_present_thread(void);     /* src/gt5p_present.cpp */
 
 static ppu_context g_main_ctx;
 
+/* The guest context of whichever thread asks (ppu_loader.cpp). */
+extern "C" thread_local ppu_context* g_active_ctx;
+
 /* function_table[] is emitted in ascending address order and
  * sentinel-terminated; function_table_count excludes the sentinel. */
 static void (*dispatch_lookup(uint32_t guest_addr))(ppu_context*)
@@ -294,6 +297,10 @@ static DWORD WINAPI main_stack_dump(LPVOID secs)
         shown++;
     }
     fflush(stderr);
+    /* stdout is fully buffered and a boot that never exits is killed from
+     * outside, which loses everything still in the buffer -- including the
+     * cellFs lines the asset count is taken from. */
+    fflush(stdout);
   }
 }
 #endif
@@ -336,6 +343,35 @@ static LONG CALLBACK report_crash(EXCEPTION_POINTERS* ep)
         if (vm_base && at >= (uintptr_t)vm_base && at < (uintptr_t)vm_base + 0x100000000ull)
             fprintf(stderr, " = GUEST 0x%08X", (uint32_t)(at - (uintptr_t)vm_base));
         fprintf(stderr, " (thread %lu)\n", GetCurrentThreadId());
+    }
+    /* The registers below are the main thread's, which is not much use when a
+     * worker faults. Name the guest function the faulting thread is in, and
+     * its callers, by unwinding the host stack -- same method as
+     * main_stack_dump. */
+    {
+        CONTEXT hc = *ep->ContextRecord;
+        fprintf(stderr, "[GT5P]   fault chain:");
+        for (int f = 0; f < 16 && hc.Rip; f++) {
+            uint32_t g = ppu_prof_resolve_host((void*)hc.Rip);
+            if (g) fprintf(stderr, " func_%08X", g);
+            else   fprintf(stderr, " <host:%08X>", (unsigned)(hc.Rip & 0xFFFFFFFF));
+            DWORD64 imgBase = 0;
+            PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(hc.Rip, &imgBase, nullptr);
+            if (!rf) break;
+            PVOID hd = nullptr; DWORD64 est = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, imgBase, hc.Rip, rf, &hc, &hd, &est, nullptr);
+        }
+        fputc('\n', stderr);
+    }
+    /* The filter runs on the faulting thread, so its own guest context is the
+     * runtime's thread-local one. */
+    if (ppu_context* c = g_active_ctx) {
+        fprintf(stderr, "[GT5P]   faulting thread regs: lr=%08X ctr=%08X",
+                (uint32_t)c->lr, (uint32_t)c->ctr);
+        for (int r = 0; r < 32; r++)
+            fprintf(stderr, "%s r%d=%llX", r % 8 == 0 ? "\n[GT5P]    " : "", r,
+                    (unsigned long long)c->gpr[r]);
+        fputc('\n', stderr);
     }
     fprintf(stderr, "[GT5P]   r1(SP)=0x%08X r2(TOC)=0x%08X r3=0x%08X LR=0x%08X CTR=0x%08X\n",
             (uint32_t)g_main_ctx.gpr[1], (uint32_t)g_main_ctx.gpr[2],
