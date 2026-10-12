@@ -22,14 +22,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import target
+from dis import read
+
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT.parent / "ps3recomp" / "tools"
 DUMPS = ROOT / "analysis" / "spu" / "dump"
 OUT = ROOT / "generated" / "spu_lifted"
-REG = ROOT / "src" / "gen" / "spu_workloads.c"
+REG = target.path("spu_registry")
 
-WWS_JOB_PM_EA = 0x00F4CB80
-WWS_JOB_PM_SIZE = 11648
+WWS_JOB_PM_EA = target.addr("wws_job_pm_ea")
+WWS_JOB_PM_SIZE = target.addr("wws_job_pm_size")
 
 NAME_RE = re.compile(r"^spujob_([0-9A-Fa-f]{16})_(\d+)\.bin$")
 
@@ -58,7 +61,16 @@ def main():
     if not dumps:
         raise SystemExit(f"no spujob_*.bin in {DUMPS} -- run with SPU_DUMP_MISS first")
 
-    # image_id 1 is the policy module; jobs take 2..N.
+    # image_id 1 is the policy module. It is embedded in the executable, so it
+    # is cut out of input/EMAIN.ELF here instead of being captured at run time.
+    pm_blob = ROOT / "analysis" / "spu" / "wwsjob.bin"
+    pm_blob.write_bytes(read(WWS_JOB_PM_EA, WWS_JOB_PM_SIZE))
+    pm_dir = OUT / "wwsjob"
+    pm_dir.mkdir(parents=True, exist_ok=True)
+    n = lift(pm_blob, "gt5p_wwsjob", pm_dir)
+    print(f"  policy module at 0x{WWS_JOB_PM_EA:08X}: {n} functions -> {pm_dir.relative_to(ROOT)}")
+
+    # Jobs take 2..N.
     jobs, total = [], 0
     for i, blob in enumerate(dumps, start=2):
         fp, size = NAME_RE.match(blob.name).groups()

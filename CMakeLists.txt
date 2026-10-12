@@ -24,6 +24,24 @@ endif()
 add_subdirectory(${PS3RECOMP_DIR} ps3recomp EXCLUDE_FROM_ALL)
 
 # =============================================================================
+# Game build
+# =============================================================================
+# Addresses and boot settings belong to one executable. They are read from
+# config/targets.json, the same file the scripts use (scripts/target.py).
+set(GT5P_TARGET "NPUA80075" CACHE STRING "Title id of the build in input/EMAIN.ELF")
+file(READ "${CMAKE_SOURCE_DIR}/config/targets.json" GT5P_TARGETS_JSON)
+string(JSON GT5P_T ERROR_VARIABLE GT5P_T_ERR GET "${GT5P_TARGETS_JSON}" "${GT5P_TARGET}")
+if(GT5P_T_ERR)
+    message(FATAL_ERROR "GT5P_TARGET=${GT5P_TARGET} is not in config/targets.json")
+endif()
+string(JSON GT5P_CODE_END     GET "${GT5P_T}" code_end)
+string(JSON GT5P_BOOT_FROM    GET "${GT5P_T}" boot_from)
+string(JSON GT5P_HDD_TITLE    GET "${GT5P_T}" hdd_title)
+string(JSON GT5P_SPU_REGISTRY GET "${GT5P_T}" spu_registry)
+string(JSON GT5P_SYNTH_DONE   GET "${GT5P_T}" spurs_synth_job_done)
+message(STATUS "game build: ${GT5P_TARGET} (code end ${GT5P_CODE_END}, boot_from=${GT5P_BOOT_FROM})")
+
+# =============================================================================
 # Lifted PPU code
 # =============================================================================
 set(GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated")
@@ -56,7 +74,7 @@ if(GT5P_ENABLE_SPU)
         "${CMAKE_SOURCE_DIR}/generated/spu_lifted/*/spu_recomp.c")
     list(LENGTH GT5P_SPU_LIFTED N_SPU)
     message(STATUS "lifted SPU images: ${N_SPU}")
-    set(GT5P_SPU_SOURCES "${CMAKE_SOURCE_DIR}/src/gen/spu_workloads.c" ${GT5P_SPU_LIFTED})
+    set(GT5P_SPU_SOURCES "${CMAKE_SOURCE_DIR}/${GT5P_SPU_REGISTRY}" ${GT5P_SPU_LIFTED})
     # The lifted sources include "spu_context.h" relative to the runtime; scope
     # the include to these TUs so the huge PPU chunks keep their cached command.
     set_source_files_properties(${GT5P_SPU_SOURCES} PROPERTIES
@@ -86,6 +104,23 @@ target_include_directories(gt5p PRIVATE
     ${PS3RECOMP_DIR}/runtime/memory
     ${PS3RECOMP_DIR}/runtime/syscalls
 )
+
+# Scoped to main.cpp, the only file that reads them. On the whole target, any
+# change to one of these recompiles every lifted chunk -- ten files of ~35 MB
+# each, enough at once to exhaust memory.
+set(GT5P_MAIN_DEFS
+    "GT5P_TITLE_ID=\"${GT5P_TARGET}\""
+    "GT5P_CODE_END=${GT5P_CODE_END}u"
+    "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\"")
+if(GT5P_HDD_TITLE)
+    list(APPEND GT5P_MAIN_DEFS "GT5P_HDD_TITLE=1")
+endif()
+if(GT5P_SYNTH_DONE)
+    list(APPEND GT5P_MAIN_DEFS "GT5P_SPURS_SYNTH_DONE=1")
+else()
+    list(APPEND GT5P_MAIN_DEFS "GT5P_SPURS_SYNTH_DONE=0")
+endif()
+set_source_files_properties(src/main.cpp PROPERTIES COMPILE_DEFINITIONS "${GT5P_MAIN_DEFS}")
 
 target_link_libraries(gt5p PRIVATE ps3recomp_runtime)
 

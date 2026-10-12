@@ -131,7 +131,7 @@ static uint32_t enclosing_func(uint32_t addr)
  * this title's code runs to 0xBE0AF4, so every address worth seeing here is
  * outside that window. */
 #define GT5P_CODE_LO 0x00010000u
-#define GT5P_CODE_HI 0x00BE0AF4u
+#define GT5P_CODE_HI GT5P_CODE_END      /* per build: config/targets.json */
 
 static HANDLE g_main_thread;
 static uintptr_t g_last_rip;
@@ -396,7 +396,7 @@ static void setup_argv(const char* argv0)
     /* gamedata, not bdvd. All three are accepted, but they select different
      * volume formats: bdvd looks for USRDIR/GT.VOL (the retail disc layout)
      * and gamedata looks for PDIPFS, which is what the PSN package ships. */
-    if (!extra || !*extra) extra = "boot_from=gamedata";
+    if (!extra || !*extra) extra = "boot_from=" GT5P_BOOT_FROM;
 
     char args[512];
     strncpy(args, extra, sizeof args - 1);
@@ -474,16 +474,26 @@ int main(int argc, char* argv[])
         const char* vfs = getenv("PS3_VFS_ROOT");
         if (!vfs || !*vfs) vfs = ".";
         cellfs_set_root_path(vfs);
-        cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/",          "input/pkg/");
-        cellfs_add_path_mapping("/dev_hdd0/game/NPUA80075/",    "input/pkg/");
-        cellfs_add_path_mapping("/app_home/",                   "input/pkg/");
+
+        /* GT5P_GAME_DIR: the folder holding PARAM.SFO and USRDIR, relative to
+         * the root and with a trailing slash. */
+        static char game_dir[512], pdipfs_dir[600];
+        const char* gd = getenv("GT5P_GAME_DIR");
+        snprintf(game_dir, sizeof game_dir, "%s", gd && *gd ? gd : "input/pkg/");
+        snprintf(pdipfs_dir, sizeof pdipfs_dir, "%sUSRDIR/PDIPFS/", game_dir);
+
+        cellfs_add_path_mapping("/dev_bdvd/PS3_GAME/",          game_dir);
+#ifdef GT5P_HDD_TITLE
+        cellfs_add_path_mapping("/dev_hdd0/game/" GT5P_TITLE_ID "/", game_dir);
+#endif
+        cellfs_add_path_mapping("/app_home/",                   game_dir);
         cellfs_add_path_mapping("/dev_hdd0/",                   "gamedata/dev_hdd0/");
         /* With boot_from=gamedata the title opens its packed volume by a
          * RELATIVE path -- "PDIPFS/K/4D" -- because on hardware the process's
          * working directory is its own USRDIR. Nothing here has a cwd, so map
          * the prefix explicitly. */
-        cellfs_add_path_mapping("PDIPFS/",                      "input/pkg/USRDIR/PDIPFS/");
-        printf("[GT5P] cellFs root=\"%s\" (disc + hdd game -> input/pkg/)\n", vfs);
+        cellfs_add_path_mapping("PDIPFS/",                      pdipfs_dir);
+        printf("[GT5P] cellFs root=\"%s\" (%s game dir -> %s)\n", vfs, GT5P_TITLE_ID, game_dir);
 
         /* Give cellGame the real ids. Without this the HLE answers every
          * cellGame/cellDiscGame query with its built-in fallback, and this
@@ -492,7 +502,7 @@ int main(int argc, char* argv[])
          * from it (/dev_hdd0/game/<id>/...). */
         {
             char sfo[512];
-            snprintf(sfo, sizeof sfo, "%s/input/pkg/PARAM.SFO", vfs);
+            snprintf(sfo, sizeof sfo, "%s/%sPARAM.SFO", vfs, game_dir);
             cellGame_init_from_paramsfo(sfo);
         }
     }

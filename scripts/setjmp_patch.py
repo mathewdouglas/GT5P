@@ -21,10 +21,12 @@ import re
 import sys
 from pathlib import Path
 
+import target
+
 GEN = Path(__file__).resolve().parent.parent / "generated"
 
-SETJMP = "00A0A458"
-LONGJMP = "00A0A57C"
+SETJMP = "%08X" % target.addr("setjmp")
+LONGJMP = "%08X" % target.addr("longjmp")
 
 DECLS = """
 /* ---- setjmp_patch.py ------------------------------------------------- */

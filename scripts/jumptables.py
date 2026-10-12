@@ -34,9 +34,10 @@ import struct
 import sys
 
 from dis import SEGS, read
+import target
 
 BCTR = 0x4E800420
-TEXT_LO, TEXT_HI = 0x00010000, 0x00BE0AF4
+TEXT_LO, TEXT_HI = 0x00010000, target.addr("code_end")
 
 
 def mapped(va):
@@ -129,11 +130,11 @@ def main():
     print('%d jump tables, %d distinct targets' % (found, len(all_t)))
 
     if '--write' in sys.argv:
-        path = os.path.join(os.path.dirname(__file__), '..', 'config', 'extra_seeds.json')
+        path = str(target.path('seeds'))
         existing = json.load(open(path)) if os.path.exists(path) else []
         merged = sorted(set(existing) | {'0x%08X' % t for t in all_t})
         json.dump(merged, open(path, 'w'), indent=2)
-        print('seeds: %d -> %d in config/extra_seeds.json' % (len(existing), len(merged)))
+        print('seeds: %d -> %d in %s' % (len(existing), len(merged), target.TARGET['seeds']))
 
 
 if __name__ == '__main__':
