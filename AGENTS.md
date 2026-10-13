@@ -89,10 +89,24 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 36 of
-[docs/progress.md](docs/progress.md); read 36 down to 19 in that order.
+Details and evidence are in Phases 17 to 37 of
+[docs/progress.md](docs/progress.md); read 37 down to 19 in that order.
 Each corrects the one before.
 
+- **Menus and scene now match RPCS3 in content (Phase 37, 2026-10-14).**
+  Menu images were immediate-mode strips and fans, which were dropped; shade
+  was black because sRGB decode on read (`SET_TEXTURE_ADDRESS` bits 20-22)
+  and encode on write (method `0x1FEC`) were ignored; the road was black
+  because fragment inputs TEX8 and TEX9 were zero. `0x1D7C` is the
+  antialiasing control, not the gamma enable. Switches: `IMM_QUADS_ONLY=1`,
+  `RSX_NO_GAMMA=1`.
+- Open from Phase 37: the 2D layer is about 0.6 times as bright as RPCS3's
+  on everything but large text (measured, cause not found); fragment
+  programs get only texture units 0 to 3.
+- `RSX_METHHIST=<n>` prints every RSX method sent in the first n, with
+  counts and first values: the way to find a register nothing reads.
+  `RSX_GAMMADBG=1`, `GCM_REPORTDBG=<n>`. Capture manifests print `gam=` and
+  `sw=` per draw.
 - **The 3D scene shows behind the main menu (Phase 34, 2026-10-14).** A
   street of half-timbered houses, captioned "Altstadt, Ahrweiler". It takes
   about 30 s after the menu appears to reach full brightness, and some
@@ -253,7 +267,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: why some scene surfaces are black; sound in a race, which has more
+- Next: the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
@@ -281,7 +295,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-one files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in thirty-two files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

@@ -9,6 +9,94 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 37 - Menu images, shade, and the road (2026-10-14)
+
+Still BCUS98158. Compared against screenshots of the same screens in RPCS3
+(agreement, "Confirmation", main menu, the idle scene). Three faults in the
+ps3recomp checkout accounted for nearly every difference; each has a switch
+that undoes it. Captures: `scratch/devrem/r11/` (menu at 45 s, scene at 60 s
+and 75 s), `r12/inp_040.png` ("Confirmation").
+
+**1. Every image in the menus was dropped.** The log already said so:
+`immediate-mode primitive 6 (4 vertices) is not drawn` and `primitive 7 (6
+vertices)`. The title draws its 2D images (logo, "My Page", icons, button
+prompts, dialog panels, the pointer, the GT loading mark) as four-vertex
+strips and six-vertex fans between `BEGIN` and `END`, and Phase 25 routed
+only quads. Lists, strips, fans and polygons now take the same route
+(`IMM_QUADS_ONLY=1` for the old behaviour).
+
+**2. sRGB was ignored on both sides of the fragment program.** With (1) the
+scene was still black wherever it was in shade (`r2/frame_01/rt_01980000.png`).
+The scene materials are short: a texture whose alpha is an exponent, times a
+brightness constant; nothing in them could lift shade. Ruled out first, by
+measurement:
+
+- *Exposure.* `FPK_FP=7460741` over 120 s: the brightness constant rises
+  from 0 and stops at 0.2207. It is a fade, not metering.
+- *Pixel-count queries.* `GCM_REPORTDBG` (new): each frame enables the
+  pixel count and zcull statistics, clears them, disables them and reads
+  five reports with no draw in between. Nothing is measured by them.
+- *The last display pass* (`0x057B6481`): its constants are a per-channel
+  power of 1.25, 1.3 and 1.4, which darkens.
+
+`RSX_METHHIST=<n>` (new) prints every method the title sends with a count
+and its first values. Two registers nothing read: bits 20 to 22 of
+`SET_TEXTURE_ADDRESS` (decode sRGB to linear on read; `0x60730303` on the
+units that sample render targets) and method `0x1FEC`, values 0 and 1,
+9,911 times. With `0x1FEC` taken as `SET_SHADER_PACKER`
+(`cellGcmSetFragmentProgramGammaEnable`: encode linear to sRGB on write),
+the capture manifest, which now prints both per draw (`gam=`, `sw=`), pairs
+exactly: every scene draw and every post-processing pass that reads a
+target through a decoding unit writes with the encode on, and the straight
+copies have neither. Both are now done in the generated shader (decode on
+the filtered sample, encode on each output), keyed with the pipeline.
+`RSX_NO_GAMMA=1` ignores both.
+
+A wrong turn on the way, recorded because the symptom was instructive:
+`0x1D7C` also toggles 0 and 1 around the scene, and was tried first. It is
+the antialiasing control (`0xFFFF0000 | enable`), and treating it as the
+encode made the manifest pair *wrongly* (decode on passes with no encode)
+and the picture nearly black (`r7/`).
+
+**3. TEX8 and TEX9 were zero.** After (2) the road, a hanging sign and one
+building were still black (`r10/inp_075.png`). Their programs
+(`0x07460841`, `0x07460F01`) decompiled with `float4(0,0,0,0)` where an
+input should be: the decompiler knew fragment inputs up to TEX7. TEX8 is
+vertex output register 15 and TEX9 shares register 6 with the point size;
+both are now passed. The fragment side declares them only in a program that
+reads them, so programs that do not still link against the backend's
+fixed vertex shaders.
+
+**Result.** The idle scene and the menu match the RPCS3 screenshots in
+content: road, shaded buildings, signs, sky, all menu images. No `PSO FAIL`
+in any run. Four 20 s headless boots: 129 opens each, no arena overrun
+(`scratch/ab-p37/`).
+
+**Still different, measured, cause not found.** The 2D layer is dimmer than
+RPCS3's. Brightest pixel of the same element, RPCS3 then here: "Cr.35,000"
+255 / 160, "Dealerships" 255 / 189, the logo 232 / 132, "2P Battle" 164 /
+90, the copyright line 113 / 62, the "Confirmation" panel about 61 / 28.
+The large "Welcome" text is 255 in both. The values here are the same in
+captures from before this phase (`final/inp_050.png`), so it is not the
+sRGB work. Roughly a factor of 0.55 to 0.63 on everything but large text.
+Hypothesis, not tested: the title rasterises its 2D shapes into the stencil
+atlas at twice their size and averages four samples per pixel
+(`0x0507F0C1` sums four taps), and something in where those taps land, or
+in how they are filtered, loses coverage on thin shapes.
+
+**Not looked at.** RPCS3's first screenshot has the sky blown out to white
+where this build shows blue sky and cloud from the same place; its second
+shows blue sky too, so this may be the moment in the fade or the bloom
+passes (the bloom scale of Phase 34 is still unverified). Fragment programs
+that sample units 4 and up get nothing (the backend binds four units);
+`0x07460841` samples 11, 12 and 13. The scene still takes until about 70 s
+to reach full brightness, which is the title's own fade (see above), not
+checked against RPCS3's timing.
+
+`scratch/menu.ps1` is 8 s faster: the agreement scrolls to its end in under
+5 s, so DOWN is held 13 s to 19 s instead of 16 s to 27 s, and CROSS is
+pressed every 3 s.
+
 ## Phase 36 - The remaining sound dropouts (2026-10-14)
 
 Still BCUS98158. Phase 35 left the menu music with 0 to 1.7% of its blocks
