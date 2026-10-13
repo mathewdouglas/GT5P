@@ -117,6 +117,61 @@ searchable size-class head is empty, and follow the final list removal before
 the retry. Keep the known sound-bank and null-vtable signatures separate; do
 not count every short/incomplete run as the same heap fault.
 
+### Why the menu picture never changes, and the live RSX engine (2026-10-13)
+
+Reported: at the main menu, left and right play the cursor sound but the
+picture does not change, and the title bar reads about 30 frames a second.
+
+**Hypothesis tested and rejected.** The proposal was that the menu is drawn
+offscreen and finished with a 2D-engine blit (NV3089) into the display
+buffer, which the D3D12 backend would count as a frame and never present.
+Measured on the executable built 16:19 (kept as `scratch/baseline/gt5p.exe`),
+one windowed run driven by `PAD_HOLD` with `VP_SUBMIT=200 RT_OFFDBG=1
+NV3089_DBG=50 CELLMARK_BLINKDBG=1` (logs: `scratch/menu_base.err`, `.out`):
+
+- no `[NV3089]` or `NV0039` line at all, in either stream;
+- the display buffers are `SetDisplayBuffer(id=0, offset=0x0, pitch=8192,
+  1280x720)` and `(id=1, offset=0x880000, ...)`, and `[RTOFF]` reports the
+  1920x1080-clip surface at offset 0 as `disp=1`;
+- frames carry on-screen draws and are presented: `[PRESENTGATE] records=247
+  onscreen=35 offscreen=212 clears=0 has_display=1 seen_content=1 ->
+  render_frame=YES`, 199 times, and `[PRESENT] draws=382` (the menu) 103
+  times. The 200 `[PRESENTGATE]` lines were used up on the agreement screen,
+  so the menu's own gate line was not captured; its `[PRESENT]` lines were.
+
+**What freezes the picture.** The same log has `[D3D12] DEVICE REMOVED
+(0x887A0006)`: Phase 30's device hang, on the first frame that adds the
+targets `0x2880000`, `0x57B6B00`, `0x5836B00`, `0x5856B00`. From then on the
+backend presents nothing, so the last picture and the last title-bar text
+stay up, while the title, its input and its sound carry on. In this run the
+window stopped answering at 70 s. "About 30 frames a second" is that frozen
+text (31.0 to 31.5 in Phase 30's runs), not a frame rate. New in this log:
+`[RT] recreate slot 8 off=0x2880000 2048x127 fmt=28 -> 2048x1436 fmt=28`
+straight after the removal, so that target was first made 127 rows high.
+Whether that is connected to the hang is not tested.
+
+**The live engine.** The supplied patch to `src/gt5p_present.cpp` applied
+cleanly (`git apply --3way`) and built without changes. With `RSX_LIVE_DRAW`
+unset the port behaves as before (`[rsx] backend init OK -- window open`,
+agreement at `draws: 206`, 49 frames a second). With `RSX_LIVE_DRAW=1`:
+
+- `[rsx] live-draw engine up (D3D12); GDI present suppressed`;
+- the run goes through agreement, confirmation and menu (title-bar draws
+  138, 0, 243, 563) and holds 48 to 61 frames a second to the end of an 80 s
+  run, with no device removal;
+- every capture is black, including the agreement screen
+  (`scratch/live/inp_005.png` to `inp_080.png`, all 4,994 bytes). The
+  engine's own counters say why text cannot appear: `groups[seen=231945
+  exec=78369 ... drop{... prim=153576 ...}]` and `depthSRV=0`. It drops the
+  polygon primitives the title draws its glyph outlines with, and does not
+  sample the depth-stencil surface as a texture (Phase 23). Unverified:
+  whether `PrintWindow` captures this engine's swap chain faithfully; the
+  window was not looked at by eye.
+
+So the live engine avoids the hang and shows nothing; the D3D12 backend shows
+the menu and then hangs. Left/right changing the picture was not observed in
+either. The patch is kept, off by default.
+
 ## Phase 31 — What the render thread waits for; and every boot now fails (2026-10-13)
 
 Still BCUS98158.
