@@ -79,7 +79,50 @@ def pic_continuations(raw, lsa):
     return found
 
 
-def main():
+FUNC_RE = re.compile(r"^void (\w+_spu_func_)([0-9A-F]{8})\(spu_context\* ctx\) \{")
+XFER_RE = re.compile(
+    r"\{ ctx->pc = (0x[0-9A-Fa-f]+); g_spu_trampoline_fn = (\w+_spu_func_([0-9A-F]{8})); return; \}")
+
+
+def chain_forward(outdir):
+    """Turn transfers to a LATER block of the same image into direct tail calls.
+
+    The lifter ends every block by naming the next one in g_spu_trampoline_fn
+    and returning to a dispatch loop, including when the next block is simply
+    the code that follows. The sound mixer's per-sample filter loop is three
+    such blocks, so each audio sample cost three trips through the dispatcher
+    and its per-step checks, which was over a quarter of the job thread's
+    time. A forward transfer (taken or fallen into) becomes a guaranteed tail
+    call instead. Backward transfers still go through the dispatcher, so every
+    loop keeps passing the point where interrupts and halts are noticed.
+    `spu_link` calls and indirect branches are left alone. Idempotent."""
+    src = outdir / "spu_recomp.c"
+    out, cur, n = [], None, 0
+    for line in src.read_text(encoding="utf-8").split("\n"):
+        m = FUNC_RE.match(line)
+        if m:
+            cur = int(m.group(2), 16)
+        elif cur is not None and "spu_link(" not in line:
+            def sub(x):
+                nonlocal n
+                if int(x.group(3), 16) <= cur:
+                    return x.group(0)
+                n += 1
+                return ("{ ctx->pc = %s; __attribute__((musttail)) return %s(ctx); }"
+                        % (x.group(1), x.group(2)))
+            line = XFER_RE.sub(sub, line)
+        out.append(line)
+    src.write_text("\n".join(out), encoding="utf-8", newline="\n")
+    return n
+
+
+def main():    # --chain: apply chain_forward to the job images already generated, without
+    # lifting again.
+    if "--chain" in sys.argv:
+        for d in sorted(OUT.glob("j*")):
+            if d.is_dir():
+                print(f"  {d.name}: {chain_forward(d)} forward transfers made direct")
+        return
     dumps = sorted(p for p in DUMPS.glob("spujob_*.bin") if NAME_RE.match(p.name))
     if not dumps:
         raise SystemExit(f"no spujob_*.bin in {DUMPS} -- run with SPU_DUMP_MISS first")
@@ -106,7 +149,8 @@ def main():
         outdir.mkdir(parents=True, exist_ok=True)
         n = lift(blob, prefix, outdir)
         total += n
-        print(f"  {blob.name}: {n} functions -> {outdir.relative_to(ROOT)}")
+        print(f"  {blob.name}: {n} functions -> {outdir.relative_to(ROOT)}"
+              f" ({chain_forward(outdir)} forward transfers made direct)")
         jobs.append((fp, int(size), prefix, i, blob.name))
 
     externs = "\n".join(

@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 35 of
-[docs/progress.md](docs/progress.md); read 35 down to 19 in that order.
+Details and evidence are in Phases 17 to 36 of
+[docs/progress.md](docs/progress.md); read 36 down to 19 in that order.
 Each corrects the one before.
 
 - **The 3D scene shows behind the main menu (Phase 34, 2026-10-14).** A
@@ -105,13 +105,25 @@ Each corrects the one before.
   frame, and this title stops clearing the display at the menu. 8 of 8
   boots good afterwards. A title bar stuck at `draws: 2048` means frames
   are piling up unpresented, not that the title is slow.
-- **Sound (Phase 35).** The menu music had 40 to 49% of its blocks empty
-  because the sound mixer's job chain ran at half speed; now 0 to 1.7%.
-  `AUDIO_RATE=1` prints the empty-block share, `SPURS_JC_STATS=1` the job
-  rate (3,190 a second is full rate on the menu), `SPURS_JC_SAMPLE=<chain>`
-  with `scratch/maplook.py` and a `/MAP` link shows where the walker's time
-  goes. The walker is at about 90% of a core on the menu, so heavier scenes
-  will stutter again. Counts only; nobody has listened yet.
+- **Sound (Phases 35 and 36).** The menu music had 40 to 49% of its blocks
+  empty; a 330 s run now has none and no underrun. The mixer's job chain
+  runs at full rate (3,190 jobs a second on the menu) at 58% of a core, and
+  the audio mixer follows the blocks the title has written through a small
+  jitter buffer instead of reading at a fixed place. Measured on the menu
+  only, and nobody has listened yet.
+- Sound diagnostics: `AUDIO_RATE=1` (empty-block share, underruns, mixer
+  tick jitter), `AUDIO_GAPDBG=1` (each dropout with the ring at that
+  moment), `AUDIO_LEADDBG=1` (where the title writes), `SPURS_JC_STATS=1`
+  (job rate and cost), `SPURS_JG_GAPDBG=<ms>` (late guard notifies),
+  `SPURS_JC_SAMPLE=<chain>` with `scratch/maplook.py` and a `/MAP` link
+  (where the walker's time goes).
+- **Do not launch with `GT5P_MAINSTACK` set when judging sound or smoothness.**
+  It suspends guest threads every N seconds; `scratch/inp.ps1` used to set
+  it to 5 and that alone was an 85 ms dropout every 5 s.
+- `scripts/lift_spu_jobs.py` now post-processes the job images it lifts
+  (forward transfers become direct tail calls); `--chain` applies that to
+  images already in `generated/`. Re-lifting without it puts the sound
+  walker back to about 80% of a core.
 - The menu runs at 31 frames a second with the main thread at 93% of a
   core. The console runs it at 60.
 - `scratch/menu.ps1 <dir>` drives a windowed boot to the menu and stays
@@ -241,8 +253,9 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: why some scene surfaces are black; headroom for the sound job
-  walker and the main thread (Phase 35); the
+- Next: why some scene surfaces are black; sound in a race, which has more
+  voices than the menu; the main thread's 93% of a core at 31 frames a
+  second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
   black at 25 frames a second without freezing; immediate-mode strips and
   fans, which are still dropped. Then which per-SPU counter the dealership's
@@ -268,7 +281,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-one files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in thirty-four files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

@@ -9,6 +9,89 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 36 - The remaining sound dropouts (2026-10-14)
+
+Still BCUS98158. Phase 35 left the menu music with 0 to 1.7% of its blocks
+empty, arriving sixteen at a time. Three causes, found in this order with
+two new logs: `AUDIO_GAPDBG=1` prints each run of empty blocks with the
+ring at that moment, and `AUDIO_LEADDBG=1` prints where the title writes
+relative to the index it is shown.
+
+**1. The test launcher.** The gaps came every 5.1 s. `scratch/inp.ps1` set
+`GT5P_MAINSTACK=5`, which suspends guest threads every 5 s to print the
+main thread's call chain, and the sound stops for as long. Removed from the
+script's defaults. Anyone launching through that script has been hearing an
+85 ms dropout every 5 s that the port itself does not have.
+
+**2. A reader at a fixed distance from the index.** `AUDIO_LEADDBG` on the
+menu, five seconds of writes by distance ahead of the published read index
+(0 is the block about to be consumed, 15 is one behind it):
+
+    468 0 0 0 0 0 0 0 0 0 0 0 36 0 12 395
+
+The title writes one block per consumed-block event at a position it
+counts for itself: the published index or one behind, never ahead. Held up
+for a few blocks, it writes them afterwards, in order, and stays that far
+behind until it next resynchronises. Phase 35's reader, two blocks behind
+the index, then found nothing for a whole lap of the 16-block ring (85 ms
+of silence) and played everything a lap late after that; `[audio-gap]`
+showed the ring empty at the start of such a gap with no stall at that
+moment. The mixer now follows the data: it consumes written blocks in the
+order they were written, starts only when a cushion has built up
+(`AUDIO_JITTER=<blocks>`, default 8, about 43 ms), and waits for the
+cushion again if it runs dry. The index shown to the title still advances
+one block per period. "Written" is "not all zero", which a consumed block
+is because the mixer clears it.
+
+**3. No headroom to catch up.** With (2) in, the gaps that were left lined
+up with stalls of the title's audio thread (`SPURS_JG_GAPDBG=<ms>` prints a
+guard notified later than that after its previous notify; the notifier is
+`sgx-audio-thr`, priority 214). After a 25 ms stall the title owes five
+blocks, and a job walker at 90% of a core produces them barely faster than
+they are consumed. So the walker was made cheaper again:
+
+| Change | ms per job | walker busy |
+| --- | --- | --- |
+| Phase 35's end | 0.28 | 89% |
+| forward transfers in job images made direct tail calls; fast path in the dispatch step | 0.24 | 78% |
+| `rotqby`, `rotqbyi`, `shlqbyi` as one `pshufb` each | 0.18 | 58% |
+
+- **Forward chaining.** The lifter ends every block by naming the next in
+  `g_spu_trampoline_fn` and returning to a dispatch loop, including when
+  the next block is the code that follows. The mixer's per-sample filter
+  loop (`j65DD2F53`, `0x1E8` to `0x220`) is three such blocks.
+  `scripts/lift_spu_jobs.py` now rewrites a transfer to a later block of
+  the same image as a `musttail` call (`--chain` applies it to what is
+  already generated). Backward transfers still go through the dispatcher,
+  so every loop passes the point where interrupts and halts are noticed.
+  Job images only; the policy module and the bodies it streams are left as
+  lifted.
+- **Dispatch step.** `spu_task_launch_check` returns early when no
+  diagnostic switch is set and the pc is not 0 (`SPU_SLOW_STEP=1`).
+- **Byte helpers.** Checked against their loop forms over 200,000 random
+  inputs (`scratch/test_spu_helpers.c`), with `spu_shufb` as well.
+
+Two smaller changes for the stalls themselves: the mixer thread runs at
+time-critical priority (`AUDIO_MIX_NORMAL_PRIO=1`), and guest priorities
+below 220, not 200, map to the host's HIGHEST band, which puts the audio
+thread above the group of worker threads at 223 to 256
+(`PS3_PPU_PRIO_BAND=<n>`). Stalls of 14 ms or more in a 150 s run: 212 and
+39 before, 49 and 21 with the band, 9 with both. They still happen and why
+is not found; the mixer's own ticks are never more than 8 ms apart
+(`AUDIO_RATE=1` now prints that), so the delay is on the title's side.
+
+**Result.** Seven menu runs of 120 to 150 s after (2) and the walker changes:
+one underrun in the first, none in the other six. Then, with the cushion at
+8 and everything above, a 330 s run on the menu (`scratch/devrem/soak/`):
+no underrun, no `[audio-gap]` line, and 64 of 65 five-second windows with
+no empty block; the other is the window in which the sound first starts.
+The walker ran 3,186 jobs a second at 0.18 ms each, 58% busy. Eight 20 s
+headless boots: 129 opens each, no arena overrun (`scratch/ab-p36/`).
+
+Not done: nobody has listened to it; it is measured on the menu only, and a
+race has more voices; and the cushion adds about 43 ms of latency on top of
+the device's.
+
 ## Phase 35 - The one-frame-a-second menu, and the stuttering sound (2026-10-14)
 
 Still BCUS98158. Two separate faults, both in the ps3recomp checkout.
