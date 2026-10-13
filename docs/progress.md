@@ -93,6 +93,64 @@ that sample units 4 and up get nothing (the backend binds four units);
 to reach full brightness, which is the title's own fade (see above), not
 checked against RPCS3's timing.
 
+### Later the same day: holes in the archway, a square round a tree
+
+Two more differences from RPCS3, both reported from the menu's background,
+and both fixed (`scratch/devrem/r17/inp_045.png`, `inp_075.png`).
+
+**4. Strips lost two triangles at every batch seam.** The archway had
+quad-shaped holes with sky and buildings showing through. The scenery is
+indexed triangle strips sent 256 indices at a time (`DRAW_INDEX_ARRAY
+prim=6 first=0 count=256`, `first=256 count=256`, ... inside one
+`BEGIN`/`END`), and each batch was assembled as a strip of its own, so the
+two triangles spanning each seam were never made. The run now carries over
+between batches of one `BEGIN`/`END`. The same applies to non-indexed
+strips, fans and polygons: the title's 2D shapes are polygons split the
+same way (`DRAW_ARRAYS prim=10 first=0 count=107`, `first=107 count=92`),
+and a later batch pivoted on its own first vertex instead of the
+polygon's. `STRIP_NOCONT=1` for the old assembly.
+
+**5. The alpha test did nothing, and alpha-to-coverage was not known.** A
+sky-coloured rectangle surrounded the tree at the end of the street. The
+tree is drawn blended, with depth writes, and with alpha-to-coverage on
+(`0x1D7C` = `0xFFFF0011`: the antialiasing control's bit 4) in place of an
+alpha test; the title never enables the alpha test itself (`0x0304` is
+always 0 in the method histogram). Here every pixel of its rectangle went
+into the depth buffer, and what was drawn behind it afterwards was cut
+out. Two parts: alpha-to-coverage is stood in for by a test at one half
+(`RSX_NO_A2C=1`), and the test is now actually made. The per-draw constant
+`rsx_alphatest` was uploaded all along, but the decompiler adopted in this
+tree emits nothing that reads it, so no title's alpha test has discarded
+anything since that decompiler came in. A discard is now added to every
+generated program (`FP_NO_ATEST=1`).
+
+**The dim 2D layer: narrowed, not solved.** Ruled out by measurement:
+
+- *Coverage.* The stencil atlas is binary (0 or 255 in every texel,
+  `r16/frame_00/rt_01100000.bmp`), unit 0 is point-sampled, and glyphs are
+  in the atlas at twice their screen size, so the four taps of the cover
+  program form an exact 2x2 box. The hypothesis recorded above is wrong.
+- *Vertex colour order.* Reading four-byte colours last byte first tints
+  the text (`r15/`); memory order is right.
+- *The scene.* A patch of road seen through the arch averages (28,25,20)
+  here and (25,21,15) in RPCS3. Only the 2D layer is dim.
+
+What the title sends (`VP_POSDBG=120000`, last frames of `r19/`): the
+"2P Battle" label is colour 0.706 at alpha 0.498, drawn once a frame by
+`0x0507F3C1`, whose output colour is the vertex colour unchanged. This
+build shows 90, which is 0.706 x 0.5 x 255. RPCS3 shows 164. "Dealerships"
+is 0.706 at alpha 1: 186 here, 255 there. So this build draws what the
+vertex data and the blend state (source alpha, one minus source alpha) say,
+and RPCS3 shows more than that state can produce in one draw. Across
+elements RPCS3 is about 1.8 times this build until it clips. Not explained.
+One fit, untested: an sRGB encode of both the colour and the alpha (0.706
+to 0.86, 0.5 to 0.735, product 0.63, against RPCS3's 0.643).
+
+**Seen on the way, not fixed.** Texture unit 0 is always point-sampled and
+clamped, and units 1 to 3 always linear and wrapped, whatever the title
+asks for (`rsx_d3d12_backend.c`, the static samplers of the vertex-program
+root signature). The scene's main texture is on unit 0.
+
 `scratch/menu.ps1` is 8 s faster: the agreement scrolls to its end in under
 5 s, so DOWN is held 13 s to 19 s instead of 16 s to 27 s, and CROSS is
 pressed every 3 s.

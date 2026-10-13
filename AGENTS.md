@@ -100,9 +100,17 @@ Each corrects the one before.
   because fragment inputs TEX8 and TEX9 were zero. `0x1D7C` is the
   antialiasing control, not the gamma enable. Switches: `IMM_QUADS_ONLY=1`,
   `RSX_NO_GAMMA=1`.
-- Open from Phase 37: the 2D layer is about 0.6 times as bright as RPCS3's
-  on everything but large text (measured, cause not found); fragment
-  programs get only texture units 0 to 3.
+- Also Phase 37: strips, fans and polygons split over several draw
+  batches of one `BEGIN`/`END` are now continued (`STRIP_NOCONT=1`); the
+  alpha test is now really applied in generated shaders (`FP_NO_ATEST=1`)
+  and alpha-to-coverage is stood in for by a test at one half
+  (`RSX_NO_A2C=1`).
+- Open from Phase 37: the 2D layer is about 0.55 times as bright as
+  RPCS3's. This build draws exactly what the vertex colours and blend
+  state say; what RPCS3 does differently is not found. Coverage, colour
+  byte order and the scene are ruled out. Fragment programs get only
+  texture units 0 to 3, and samplers ignore the title's filter and wrap
+  settings (unit 0 point and clamp, the rest linear and wrap).
 - `RSX_METHHIST=<n>` prints every RSX method sent in the first n, with
   counts and first values: the way to find a register nothing reads.
   `RSX_GAMMADBG=1`, `GCM_REPORTDBG=<n>`. Capture manifests print `gam=` and
