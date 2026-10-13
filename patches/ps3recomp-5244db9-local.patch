@@ -2139,7 +2139,7 @@ index e73a151..dfc3cad 100644
              uint32_t _a3=(uint32_t)ctx->gpr[3], _a4=(uint32_t)ctx->gpr[4], _a5=(uint32_t)ctx->gpr[5];
              ULONGLONG _t0 = GetTickCount64();
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index d857f30..c7583a1 100644
+index d857f30..82c4adf 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
 @@ -149,7 +149,8 @@ static void sys_lwmutex_create(ppu_context* ctx)
@@ -2152,7 +2152,7 @@ index d857f30..c7583a1 100644
  extern "C" { extern volatile long long g_gcm_ref_pub_count;    /* cellGcmSys.c */
               unsigned long long ppu_thread_cpu_us(unsigned tid);   /* sys_ppu_thread.c */
               unsigned ppu_thread_prof_pc(unsigned tid); }
-@@ -159,6 +160,27 @@ static volatile long g_lwm_tab_lock = 0;
+@@ -159,7 +160,42 @@ static volatile long g_lwm_tab_lock = 0;
   * contended block it logs who holds it and for how long; on unlock it flags a
   * long hold. The leaf holder (the one blocked on a non-lwmutex wait) is the
   * convoy root. Default OFF. */
@@ -2178,17 +2178,46 @@ index d857f30..c7583a1 100644
 +                lwm, self, prev, vm_read32(lwm), vm_read32(lwm + 0xC)); }
 +}
  static int lwm_trace(void){ static int v=-1; if(v<0){const char*e=getenv("PS3_LWMUTEX_TRACE"); v=e?1:0;} return v; }
++/* PS3_LWM_TRACE=<guest address>: record every acquire/release for one lock,
++ * to line up allocator metadata writes with their owning guest thread. */
++static uint32_t lwm_trace_target(void){
++    static int ready=0; static uint32_t addr=0;
++    if(!ready){const char*e=getenv("PS3_LWM_TRACE"); addr=e?(uint32_t)strtoul(e,0,16):0; ready=1;}
++    return addr;
++}
++static volatile long lwm_trace_seq=0;
++static void lwm_order(uint32_t addr, uint32_t tid, const char* action){
++    if(addr!=lwm_trace_target() || !addr || tid==1) return;
++    long seq=_InterlockedIncrement(&lwm_trace_seq);
++    if(seq<=4096) fprintf(stderr,"[LWM-ORDER] seq=%ld tid=%u host=%lu %s lwm=0x%08X owner=%u recur=%u\n",
++        seq,tid,GetCurrentThreadId(),action,addr,vm_read32(addr+LWM_OWNER),vm_read32(addr+LWM_RECUR));
++}
  static long long lwm_now_us(void){
  #ifdef _WIN32
-@@ -259,6 +281,7 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+     static LARGE_INTEGER freq={0}; if(!freq.QuadPart) QueryPerformanceFrequency(&freq);
+@@ -228,10 +264,12 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+          * Only the holder ever stamps owner=self, so this check is race-free. */
+         if (vm_read32(lwm + LWM_OWNER) == self && vm_read32(lwm + LWM_RECUR) > 0) {
+             vm_write32(lwm + LWM_RECUR, vm_read32(lwm + LWM_RECUR) + 1);
++            lwm_order(lwm, self, "recursive-acquire");
+             ctx->gpr[3] = 0;
+             return;
+         }
+         if (WaitForSingleObject(s, 0) != WAIT_OBJECT_0) {
++            lwm_order(lwm, self, "contended");
+             /* Contended: log who we're stuck behind (owner stamped at acquire),
+              * then block. Bounded diagnostics for park hunts; uncapped while the
+              * probe window is open (g_nd_inpump). */
+@@ -259,6 +297,8 @@ static void sys_lwmutex_lock(ppu_context* ctx)
          }
      }
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
++    lwm_order(lwm, self, "acquire");
 +    if (lwm_check()) lwm_chk_enter(lwm, self, "lock");
  #endif
      vm_write32(lwm + LWM_OWNER, self);
      vm_write32(lwm + LWM_RECUR, 1);
-@@ -279,6 +302,7 @@ static void sys_lwmutex_trylock(ppu_context* ctx)
+@@ -279,6 +319,7 @@ static void sys_lwmutex_trylock(ppu_context* ctx)
          if (WaitForSingleObject(s, 0) != WAIT_OBJECT_0) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x8001000Bu; return; } // EBUSY
      }
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
@@ -2196,15 +2225,23 @@ index d857f30..c7583a1 100644
  #endif
      vm_write32(lwm + LWM_OWNER, self);
      vm_write32(lwm + LWM_RECUR, 1);
-@@ -296,6 +320,7 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
+@@ -290,12 +331,15 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
+     uint32_t rc = vm_read32(lwm + LWM_RECUR);
+     if (rc > 1) {                       /* recursive hold: count down, keep the lock */
+         vm_write32(lwm + LWM_RECUR, rc - 1);
++        lwm_order(lwm, LWM_SELF(ctx), "recursive-release");
+         ctx->gpr[3] = 0;
+         return;
+     }
      vm_write32(lwm + LWM_RECUR, 0);
      vm_write32(lwm + LWM_OWNER, 0);
++    lwm_order(lwm, LWM_SELF(ctx), "release");
  #ifdef _WIN32
 +    if (lwm_check()) lwm_chk_leave(lwm, LWM_SELF(ctx));
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm);
          if (sl && sl->holder) { long long held = lwm_now_us() - sl->acq_us;
              if (held > 100000) {
-@@ -368,9 +393,11 @@ static void sys_lwcond_wait(ppu_context* ctx)
+@@ -368,9 +412,11 @@ static void sys_lwcond_wait(ppu_context* ctx)
          uint32_t rc  = vm_read32(lwmutex + LWM_RECUR);
          vm_write32(lwmutex + LWM_RECUR, 0);
          vm_write32(lwmutex + LWM_OWNER, 0);

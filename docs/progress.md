@@ -89,12 +89,33 @@ only captures plain PPU stores to that window; it is not proof against vector
 or SPU writes. That batch yielded five complete 129-open boots and one known
 sound-bank fixup failure, not the allocator retry.
 
-**Next.** Capture another allocator retry with a watch on the real allocator
-heads and enough hit capacity to record whether allocator helper calls remove
-their last entries. If a retry occurs, compare the watched stores and per-run
-pointer chain; do not assume the heap address remains fixed across boots.
-Keep the known sound-bank and null-vtable signatures separate; do not count
-every short/incomplete run as the same heap fault.
+**Allocator retry with write and lock traces.** A twelve-run priority-off
+batch reproduced the `0x00B3BBA8` retry once (six full 129-open boots, five
+sound-fixup failures, one allocator retry; `scratch/resume/soakL/`). In that
+retry, the watched allocator heads had been initialized normally. The log
+shows the allocator's own list helpers changing them; by the retry snapshot
+all heads were empty, `+0x50` was `0x200C3380`, and `+0x54` was `0x20000`.
+The memory at `0x200C3380` began `200C3340 204B8380 FFFFFFFF 00000000`.
+These values establish remaining allocator bookkeeping, but do not yet
+establish that this is usable space for the request.
+
+I added `PS3_LWM_TRACE=<guest address>` in the local ps3recomp patch to log
+acquire/release order for one lwmutex. A following six-run batch reproduced
+the allocator retry in run 1 and again sampled all heads empty. Its trace
+(`scratch/resume/soakO/run1.err`) records two acquire/release pairs by guest
+thread 20, interleaved with that thread's writes to the allocator list under
+the lock. The trace cap did not fill. No non-main thread touched that lock
+after those early events; main was the thread repeatedly retrying the 2 KB
+request. This does not show a lock stall or an overlapping list mutation.
+It also does not prove why the free-list entries disappeared or whether the
+`+0x50` region state should satisfy the request. The same batch had three
+sound-fixup failures, one full boot, and one short-progress run ending at
+`lr=0x00B57394` that `bootcheck` did not classify.
+
+**Next.** Resolve how the allocator code uses `+0x50`/`+0x54` when every
+searchable size-class head is empty, and follow the final list removal before
+the retry. Keep the known sound-bank and null-vtable signatures separate; do
+not count every short/incomplete run as the same heap fault.
 
 ## Phase 31 — What the render thread waits for; and every boot now fails (2026-10-13)
 

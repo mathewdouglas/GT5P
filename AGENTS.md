@@ -200,6 +200,9 @@ Each corrects the one before.
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
 mutex with each main-thread sample), `PS3_SYNCLOG=1` (failed locks, with the
 lock object), `PS3_LWM_CHECK=1` (two threads inside one lightweight mutex).
+`PS3_LWM_TRACE=<guest address>` logs acquisition and release order for one
+guest lwmutex (see Phase 32); it filters out main-thread events to preserve
+space for other guest threads.
 For the job manager: `SPURS_PM_TRACE=1` (each policy-module run and how it
 ended), `SPURS_PM_FLOW=1 SPURS_PM_FLOW_ALL=1` (the control-flow trail of a run
 still going after 5 s; add `SPURS_PM_FLOW_FREEZE=<hex pc>` to keep the
