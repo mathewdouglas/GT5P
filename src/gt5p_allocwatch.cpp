@@ -197,6 +197,21 @@ static int g_fl_before;   /* free-list state entering a bracketed call */
 extern "C" uint32_t gt5p_alloc_pre(const char* who, uint32_t a3_,
                                    uint32_t a4, uint32_t a5_)
 {
+    /* Disc-build bump arena trace. func_007D3008(arena, out, size) is used
+     * by the 007F39C0 measure/fill path. Keep this opt-in: that helper is hot. */
+    if (strstr(who, "007D3008") && getenv("GT5P_ARENA_TRACE")) {
+        static unsigned n = 0;
+        if (n++ < 2000) {
+            uint32_t base = vm_read32(a3_);
+            fprintf(stderr, "[d-arena:pre] n=%u arena=%08X base=%08X cur=%08X out=%08X old=%08X size=%08X\n",
+                    n, a3_, base, vm_read32(a3_ + 4), a4,
+                    a4 ? vm_read32(a4) : 0, a5_);
+            fflush(stderr);
+        }
+        static unsigned stacks = 0;
+        if (a5_ >= 0x100 && stacks++ < 8)
+            ppu_guest_callstack("d-arena-large");
+    }
     /* Log every arena reservation, tagged by pass. func_006A4400 runs twice
      * over the same layout: a measuring pass with the arena base still 0 (so
      * it only accumulates the offset) and a filling pass with a real base. If
@@ -732,6 +747,15 @@ extern "C" uint32_t gt5p_alloc_pre(const char* who, uint32_t a3_,
 extern "C" void gt5p_alloc_note(const char* who, uint32_t a3, uint32_t a4,
                                 uint32_t a5, uint32_t ret)
 {
+    if (strstr(who, "007D3008") && getenv("GT5P_ARENA_TRACE")) {
+        static unsigned n = 0;
+        if (n++ < 2000) {
+            fprintf(stderr, "[d-arena:post] n=%u arena=%08X base=%08X cur=%08X out=%08X val=%08X size=%08X ret=%08X\n",
+                    n, a3, vm_read32(a3), vm_read32(a3 + 4), a4,
+                    a4 ? vm_read32(a4) : 0, a5, ret);
+            fflush(stderr);
+        }
+    }
     /* func_006CF080 never assigns its own return value: its epilogue restores
      * registers and returns whatever r3 already held. The only r3-producing
      * call on the path out is func_006CD504, from the 11,762-hit block. If that
@@ -1007,4 +1031,26 @@ extern "C" void gt5p_alloc_note(const char* who, uint32_t a3, uint32_t a4,
 #ifdef _WIN32
     ReleaseSRWLockExclusive(&g_lock);
 #endif
+}
+
+extern "C" void gt5p_alloc_call_note(const char* who, uint64_t tid, uint64_t lr,
+                                     uint32_t a3, uint32_t a4, uint32_t a5,
+                                     uint32_t a6, uint32_t ret)
+{
+    static int enabled = -1;
+    static unsigned count;
+    if (enabled < 0) enabled = getenv("GT5P_ALLOC_CALL_TRACE") ? 1 : 0;
+    if (!enabled || count >= 4096) return;
+    const bool split = strstr(who, "00B3D458") != nullptr;
+    const bool alloc = strstr(who, "00B3D8A0") != nullptr;
+    const bool wrapper = strstr(who, "00B57CD0") != nullptr;
+    if (!split && !alloc && !wrapper) return;
+    if ((alloc || wrapper) && a4 < 0x10000u &&
+        !(alloc && ret >= 0x200B0000u && ret < 0x200C0000u)) return;
+    if (split && a5 < 0x10000u && a5 != 0) return;
+    ++count;
+    fprintf(stderr, "[ALLOC-CALL] %s tid=%llu caller=0x%08llX args=%08X %08X %08X %08X ret=%08X\n",
+            who, (unsigned long long)tid, (unsigned long long)lr,
+            a3, a4, a5, a6, ret);
+    fflush(stderr);
 }
