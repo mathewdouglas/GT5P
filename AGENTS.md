@@ -89,9 +89,23 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 31 of
-[docs/progress.md](docs/progress.md); read 31 down to 19 in that order.
+Details and evidence are in Phases 17 to 33 of
+[docs/progress.md](docs/progress.md); read 33 down to 19 in that order.
 Each corrects the one before.
+
+- **The bad boot is found and fixed (Phase 33).** It was never a heap fault.
+  ps3recomp left a job chain's walker thread alive after
+  `cellSpursShutdownJobChain`, the title re-creates its sound chain at the
+  same address many times, and two walkers then ran one job twice. The extra
+  completion event made a later query return before its job had run; a block
+  sized from that empty answer was overrun, and the overrun wrote floats into
+  the allocator's free list. "Allocation retried for ever", "runaway
+  sound-bank fixup" and at least one unflagged short boot are all this.
+  The entries below about that fault are history; keep them for the record of
+  what was ruled out.
+- To test for it, do not rely on `bootcheck`: run with `GT5P_ARENA_TRACE=1`
+  and look for a fill pass larger than its dry run (`scratch/ab.py` counts
+  them). `SPURS_JG_TRACE=1` prints each guard notify, guard opening and job.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
   last three paths are `BootRoot.gpb` (RPCS3's next step), `AgreementRoot.gpb`
@@ -187,12 +201,16 @@ Each corrects the one before.
   `scripts\ghidra_decomp.ps1 0xADDR ...` runs Ghidra headless on chosen
   functions instead; its first import is slow and unproven. Do not run it
   while booting the title.
-- Next: trace the intermittent 2 KB allocator retry at `lr=0x00B3BBA8`.
-  Follow the heap slot through the outer wrapper to the allocator object;
-  compare all free-list heads and region fields with a good boot, using
-  `PPU_WWATCH` to capture helper writes when the address is valid for that run
-  (Phase 32). Then which per-SPU
-  counter the dealership's
+- The device removal is fixed (Phase 33, last subsection): a render target
+  recreated mid-frame was released while the open command list still used
+  it, and pipelines declared a depth buffer where none was bound. What is
+  left there is a different stop: the dealership shows one new picture (text
+  on solid green) and then no more frames, and the main menu stops answering
+  a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
+  to stdout, not stderr; keep both streams.
+- Next: re-measure the menu and dealership with the Phase 33 fix, since jobs
+  were being run twice all through a boot before it; and confirm the windowed
+  dark-blue boot is gone. Then which per-SPU counter the dealership's
   render thread waits on (Phase 31), the device removal, the missing 3D scene,
   the intermittent slow windowed boot, then the `TV.DAT` install RPCS3 starts
   about 20 s after `BootRoot.gpb`.

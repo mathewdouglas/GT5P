@@ -9,6 +9,189 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 33 - The bad boot: two job-chain walkers answer one request (2026-10-13)
+
+Still BCUS98158. This finds the cause of the Phase 18 / 22 / 32 bad boot. The
+"allocation retried for ever" and "runaway sound-bank fixup" signatures are
+one fault, and it is in ps3recomp's job-chain code, not in the heap.
+
+**The chain of events, each link measured.**
+
+1. *The free list is damaged by a buffer overrun.* During sound start-up the
+   title sizes a block with a dry run and then fills it: `func_007F34F0` is
+   called twice by `func_007F39C0`, first with a bump arena whose base is 0,
+   then with the block it allocated for the size the first call reported.
+   With `GT5P_ARENA_TRACE=1`, every bad boot in `scratch/heap-root-20261013-*`
+   and in the runs below has exactly one pair where the fill pass used more
+   than the dry run measured (most often `0x58` measured, `0x1F4` filled);
+   no good boot has one. The words written past the block are the ones Phase
+   32's evidence found in the free-list node: `0x4240A3D7` and `0xC2C0A3D7`
+   are the floats 48.16 and -96.32.
+2. *The two passes disagree because a text query came back empty once.*
+   `func_007F2F08` asks a callback for a parameter description, counts its
+   lines with `func_007D3580`, and reserves 20 bytes a line. A wrapper on
+   `func_007D3580` (`scratch/instrument_txt.py`, `GT5P_TXT_TRACE=1`) shows the
+   text: `outlevel, F:-96.32:48.16, 0.0, Out Level, dB ...`, 13 lines. In a
+   bad boot the dry run gets an empty string (count 0) and the fill pass gets
+   all 13. Only the main thread makes these calls; it is not a race on the
+   shared text buffer at `[0x015F3710 + 0xB8]`.
+3. *The text comes from an SPU job.* The callback is `func_007F6000`; selector
+   7 sends command `0x2100` to a sound-effect module through
+   `func_007F5E48`, which queues one job on the "soc-job" SPURS job chain,
+   notifies the chain's guard (`0x20046780`) and waits in
+   `sys_event_queue_receive` for the job's completion event
+   (`func_007FE9E0`).
+4. *The wait returned before the job ran.* With `SPURS_JG_TRACE=1` (new, in
+   `cellSpurs.c`) the failing query reads `notify`, then the title's empty
+   read, and only then `job begin`. The event it woke on was a stale one.
+5. *Stale events come from jobs run twice.* The same trace shows `job begin`
+   twice for one notify, and two `open guard` lines for one credit.
+6. *Jobs run twice because the chain has more than one walker.* The title
+   creates the chain, runs it, shuts it down, joins it and creates it again
+   at the same address, 11 to 26 times in a 20 s boot. `cellSpursShutdownJobChain`
+   cleared the chain's `running` flag and left the host thread walking it
+   parked on the guard, where it stays for up to 20 s. The next
+   `cellSpursRunJobChain` saw `running == 0` and started another. The guard's
+   credit was taken with a plain read and subtract, so two walkers could both
+   pass on one notify. Which query that happens on is timing, which is why
+   the fault moved about and why priority scheduling changed its rate.
+
+**The fix** (local ps3recomp, `libs/spurs/cellSpurs.c`): Shutdown now sets a
+stop request that the walker checks in its command loop and while parked on a
+guard, and the walker itself clears `running` when it leaves; Run waits
+briefly for a stopping walker instead of dropping the run; the guard credit is
+taken by compare-and-swap. `SPURS_JC_OLD_SHUTDOWN=1` restores the old
+Shutdown.
+
+**A/B.** Same source otherwise, executables kept as
+`scratch/baseline/gt5p_prefix_t85.exe` and `gt5p_fix_t86.exe`, 20 s headless
+boots with `GT5P_ARENA_TRACE=1 SPURS_JG_TRACE=1`, run by `scratch/ab.py`,
+which counts overruns from the arena trace:
+
+| | boots | with an overrun | reached 128+ `GT.VOL` opens |
+| --- | --- | --- | --- |
+| before the fix | 12 | 4 | 8 |
+| after the fix | 24 | 0 | 24 |
+
+All 24 fixed boots ended at the normal main wait (`lr=0x00B391F4`) with 129
+opens. The trace also counts jobs begun while another was still running:
+22 to 1,309 a boot before the fix, none after (the 4 to 7 the count still
+reports are `job end` lines printed onto the tail of another thread's line).
+Logs: `scratch/ab-ctl-1/`, `scratch/ab-fix-1/`, `scratch/ab-fix-2/`. Earlier
+traced batches on the unfixed build (`scratch/heap-txt-a/`, `-c/`, `-d/`) had
+3 of 6, 4 of 4 and 2 of 6 with an overrun. The four control overruns carried
+three different `bootcheck` readings: two "runaway sound-bank fixup", one
+"allocation retried for ever", and one that `bootcheck` did not flag at all
+(`main_lr=0x00AFD560`, 94 opens). `bootcheck` under-counts this fault; the
+arena trace is the reliable test for it.
+
+**The upstream v0.14.0 taskset change is not involved.** Commit `50c4b36`
+removes three host-side writes into the guest `CellSpursTaskset`, at `+0x00`
+(`initialized`, in `cellSpursDestroyTaskset`), `+0x04` (`taskCount`, in
+`cellSpursCreateTask`) and `+0x08` (`shutdownRequested`, in
+`cellSpursShutdownTaskset`). All three land inside the taskset the title
+passed, so they cannot reach allocator metadata unless the pointer is wrong,
+and this title never calls them: `cellSpursCreateTaskset` prints on every call
+and there is no such line in any log here (12 control boots, the traced
+batches, `scratch/boot.out`). The sound service uses job chains, not tasksets.
+v0.14.0's diff to `cellSpurs.c` does not touch the job-chain or guard code, so
+it does not contain this fix either. Because the removed writes are
+unreachable, no separate v0.14.0 build was made; the checkout stays on
+`5244db9` plus local changes.
+
+**Not established.**
+
+- Whether real hardware can also deliver a stale event here. The reading
+  above only needs one walker per chain, which is what a real chain has.
+- A crash seen once on the unfixed build during this work
+  (`rc=0xC00000FD`, stack overflow, `scratch/heap-txt-d/run1.err`, with an
+  overrun in the same run). Assumed to be downstream of the overrun; not
+  checked.
+- The windowed "dark blue, `draws: 0`" boot (Phase 28) is assumed to be this
+  fault. No windowed boots were run with the fix.
+- 20 s boots only. Longer runs, and the menu and dealership, are untested
+  with the fix; duplicate job runs happened throughout a boot before it, so
+  later behaviour may change too.
+
+Tools left in place: `SPURS_JG_TRACE=1`; `scratch/instrument_txt.py` (wraps
+`func_007D3580` in `generated/`, so it is lost on a re-lift);
+`scratch/ab.py <exe> <outdir> <runs> <secs>`.
+
+### The device removal at the menu and dealership (2026-10-13)
+
+Scripted windowed runs (`scratch/auto.ps1 x -NoBuild -Secs 80`, which holds
+`PAD_HOLD` through the agreement and presses Cross every 4 s), on the
+executable that already has the Phase 33 fix. Logs and captures are in
+`scratch/devrem/`.
+
+**Hypothesis under test:** a render target recreated while the frame's
+command list is open is released at once, and the list then runs on freed
+resources.
+
+**Step 1, before any change.**
+
+- With `D3D12_DBG=1 D3D12_IQ=1` (`s1.err`) the device was not removed in that
+  run, no target was recreated, and there is no message 921. What the debug
+  layer did report, 67 times in the first 80 messages, is error 615:
+  `DrawInstanced: The depth stencil format does not match that specified by
+  the current pipeline state ... (pipeline state = D24_UNORM_S8_UINT, DSV
+  ID3D12Resource* = 0x0000000000000000)`. That is Phase 30's change of
+  binding no depth buffer beside a colour target that is not window-sized:
+  the pipeline still declared one.
+- Three plain runs (`base1` to `base3.err`): one removal, two of the
+  4-second-frame ending. Only the removal run recreated a target, and it did
+  so three times inside one frame, straight before the report:
+  `[RT] recreate slot 8 off=0x2880000 2048x1436 fmt=28 -> 2048x511`,
+  `-> 2048x255`, `-> 2048x127`, then `[D3D12] DEVICE REMOVED (0x887A0006)`.
+  One surface offset is used at four heights in a frame, which looks like a
+  downsample chain. So the hypothesis fits the run that hung, and the debug
+  run could not show 921 because it never recreated anything.
+
+**Step 2, two changes** in ps3recomp `libs/video/rsx_d3d12_backend.c`, on
+branch `gt5p/offrt-deferred-release` of the local checkout (uncommitted there,
+beside the other local changes; `patches/ps3recomp-5244db9-local.patch` is
+refreshed):
+
+- the supplied patch, applied by hand because the file differs locally:
+  replaced targets and their upload buffers are parked and released after the
+  next frame's `wait_for_gpu()`;
+- bit 27 of the pipeline's stencil key now means "no depth buffer bound", and
+  such a pipeline is built with `DSVFormat = UNKNOWN` and depth and stencil
+  off (`PSO_DSV_ALWAYS=1` for the old pipeline). `D3D12_IQ` now prints at
+  most four of each message id.
+
+Results:
+
+- debug layer on (`fix_iq.err`): no errors at all, only warnings 679 and 820;
+- four plain dealership runs (`fix1` to `fix4.err`): three recreated the
+  target (the 60-line print quota was used up, so at least 15 frames each)
+  and none printed `DEVICE REMOVED`. Before the change the device was lost
+  two frames after the first recreation. Stdout, where `wait_for_gpu STUCK`
+  goes, was not kept for those four; it was for `menu2`, which recreated
+  targets and has no `STUCK` or `removed=` line.
+- The dealership now gets further: `fix1/inp_055.png` shows "Acura NSX '91",
+  "Cr.35,000", "ACURA", "Showroom", "Event" on a solid bright green
+  background. Before, the picture froze on the frame before this one.
+
+**The hypothesis held for the removal. The freeze is not over.**
+
+- Dealership: captures are byte-identical from 55 s to the end, the title
+  bar stays at `FPS: 31.00 | draws: 167`, `PERF=120` stops printing, and
+  scripted Right, Right, Left change nothing (`lr.err`, `lr/`). The log has
+  the render thread spinning at `lr=0x00BAA9FC`, Phase 31's wait on the job
+  manager's counters. Read as: the title stops issuing frames. Not checked:
+  whether flips really stop, which needs a timestamped flip count.
+- Main menu (Cross only until the menu is up, then Right at 54 s;
+  `menu.err`, `menu2.err`): the menu does change, `menu/inp_055.png` has the
+  row scrolled and the welcome text gone, with `FPS: 1.9`. Then the window
+  stops answering by 60 s, in 2 runs of 2, with targets recreated and no
+  removal or stuck-fence message in either stream. Cause not looked for.
+- The other ending, a frame every 4 s at `draws: 2048`, is unchanged (2 of
+  the 5 plain dealership runs after the change).
+
+Not done, as asked: the size a persistent target should have when one
+surface is drawn at four heights, and the green background.
+
 ## Phase 32 - The heap failure is intermittent again; unlock was only a snapshot (2026-10-13)
 
 Still BCUS98158. This corrects Phase 31's all-boots-fail reading. The
