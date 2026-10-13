@@ -192,6 +192,140 @@ Results:
 Not done, as asked: the size a persistent target should have when one
 surface is drawn at four heights, and the green background.
 
+### The main menu: window hang, 1.9 frames a second, and the black scene (2026-10-13)
+
+Runs are scripted and windowed; logs and captures in `scratch/devrem/`
+(`mh1` to `mh6`, `bg1`, `cut1` to `cut4`, `attrs`).
+
+**"Window not responding" was the present thread, fixed** in
+`src/gt5p_present.cpp`. `scratch/cpu.ps1` on the hung menu showed the
+`present` thread at 99% CPU. Its loop replays missed 16 ms ticks, up to 240
+at a time, before it pumps window messages; once a tick's work took longer
+than 16 ms the backlog never cleared. The replay now stops after 100 ms.
+`GT5P_PRESENT_PROF=1` prints where that thread's time goes every 5 s.
+
+**1.9 frames a second was the vertex-shader lookup, fixed** in ps3recomp.
+`GT5P_PRESENT_PROF` put all the time in the FIFO walk (`fifo 5.2s` of 5 s),
+`RSX_PROF=1` (new, per-method times) put it in the draw methods at about
+1.3 ms a draw, and `PERF` with two new timers put it in one call:
+`[PERF] record: vs-lookup 5.03s | constants 0.03s`. The lookup hashed the
+microcode store from the program's start to the end of the store, so a
+program's hash changed whenever a neighbour in the store did, most draws
+compiled a shader, and the 16-entry cache was evicted continuously (eviction
+also renumbers the slots that draw records and the pipeline cache hold). The
+hash now stops at the program's END instruction (`VP_HASH_ALL=1` for the old
+extent) and the cache holds 256. After: `[VP] cache: 520000 lookups, 10
+misses, 10 entries`, and the menu holds 23 to 25 frames a second after a
+Right press where it had 1.9. The menu moves: `mh6/inp_060.png` has the
+cursor on "Options". Failed programs are now remembered and reported, though
+none failed here.
+
+**"Stuck after Accept" in these runs was the script.** "Confirmation" takes
+its OK only when the menu load has finished; a script whose last Cross is at
+41 s stays there when the load ends later. Stuck and good runs both have 306
+`GT.VOL` opens. `scratch/auto.ps1`, which keeps pressing, goes through.
+
+**What a main-menu frame is** (`RTT_DUMP=2 RTT_DUMP_MIN=300`, `bg1.err`, 382
+draws):
+
+1. 48 draws building mip chains for six 128x128 surfaces at `0x4D00000`
+   onward. Each level is drawn into the same surface lower down, with the
+   level above bound as a texture by its address inside that surface.
+2. A clear and about 150 draws into `0x1980000`, 1280x720: the 3D scene.
+   Most are 762 vertices, which is a 256-index triangle strip.
+3. One draw copying `0x1980000` to the display (`fp=0xFFFFD41`), one copying
+   it into `0x2880000`, and ten more building that surface's mip chain the
+   same way (this is the target Phase 33 saw recreated at four heights).
+4. Full-screen passes to the display and through `0x57B6B00`, `0x5836B00`,
+   `0x5856B00`, then the stencil-mask text.
+
+**The scene target is black.** `FRAME_CUT_T0=1980000` (new) ends the frame
+straight after the copy in step 3, so the window shows the scene target
+alone: black (`cut1/`, `cut2/`). Still black with the commonest scene shader
+forced to white (`FP_ONE=7460601`, `cut3/`), which says the geometry is not
+landing in the target rather than being shaded black. Unverified: that
+`FP_ONE` took effect for that program.
+
+Found on the way, fixed, and not the cause: vertex attribute type 6, three
+signed fields of 11, 11 and 10 bits in one word, was not decoded at all
+(`[VTXTYPE] UNHANDLED type=6 attr=2`). The scene's meshes carry their
+normals that way. `VP_ATTRS=1` now covers indexed strips; the layouts it
+prints are float positions with sane extents (for example x -48 to 2, y 56
+to 80), packed normals, half-float texture coordinates, and a second
+position and normal stream on attributes 10 and 11, all in main memory.
+
+**Why nothing landed: the backend replaced the title's matrix.** A
+magenta clear of the bound target (`RT_CLEARDBG=2` with the cut, `cut6/`)
+came through as solid magenta, so the copy to the display works and the 137
+scene draws covered no pixel. `vp_record_cb` has a "garbage projection"
+fallback written for another title: when constant 0's x is outside 0 to 8
+and the program reads constants 0 to 3, it overwrites them with a made-up
+projection. This title's matrix is ordinary and starts with -1.47
+(`RSX_DBG_CB=62EAC00`, extended to print constants 0 to 23 and the viewport):
+`c0=(-1.46774 ...  -0.934338)`, `c3=(2.7e-05 0.0837 0.9965 20.7867)`, world
+matrix identity. Stdout had `[VPFB] fallback proj on draw slot 49 (c00=-1.46774
+vs_idx=6)` for exactly the scene's draws. The fallback now fires only for a
+bank that is all zero or not finite (`VP_FIXPROJ_OLD=1` for the old test).
+The scene's vertex program, read with the new `VP_DUMP_DIR=<dir>`, is six
+instructions: position times constants 0 to 3, two outputs passed through.
+
+After that change, with the scene shader forced to white and culling and
+depth off, the scene target is solid white (`cut7/`): the geometry lands
+and covers the whole target.
+
+**The scene target now holds a recognisable scene.** The frame-capture tool
+already in the backend (`RSX_CAP=start:count:stride`, `RSX_CAP_DIR`, plus a
+new `RSX_CAP_MIN=<draws>` to wait for a frame of that size) writes every
+render target of one frame as an image with a manifest of its draws. On the
+382-draw menu frame (`scratch/devrem/cap1/frame_01/`) the scene target was
+textured shards reaching across the screen. Cause: primitive restart. The
+title sets `NV4097_SET_RESTART_INDEX_ENABLE` and a restart index of `0xFFFF`
+(`[RSX] restart index value = 0xFFFF`), and neither method was handled, so
+the restart marker in every strip was fetched as vertex 65535. Indexed
+strips and fans now end the run at that index, and every second strip
+triangle has its first two corners swapped, which the old loop did not do
+and which costs half of each strip under back-face culling
+(`STRIP_OLD=1` for the old loop). With that, `cap3/frame_01/rt_01980000.png`
+shows a street: a lamp post, building fronts, sky between them, and a road
+surface that is plain white.
+
+Checked and not involved: `NV4097_SET_VERTEX_DATA_BASE_OFFSET` and
+`_BASE_INDEX` were not handled either and now are, but this title never sets
+a non-zero value.
+
+**Why the window is still black behind the text** (read from the manifest,
+not yet tested by changing anything). After the scene is copied to the
+display the frame makes three more full-screen draws to the display with
+blending off, and each depends on something the backend does not do:
+
+- `fp=0x057B4D01` samples `0x2100000`, a 2560x720 surface that follows the
+  scene's colour surface in memory with a depth-style channel remap, so
+  most likely the scene's depth buffer, and `0x2880000`, the blurred copy
+  whose mip levels are addressed inside one surface. The backend has neither
+  as a texture.
+- `fp=0x057B5881` and `fp=0x057B6481` sample offset 0 at 1920x1080, which is
+  the display buffer they are drawing to.
+- The scene surface is declared 2560 wide when sampled and 1280 wide when
+  drawn to, which is what a 2-sample antialiased surface looks like. The
+  backend's target is 1280 wide. Whether that distorts anything is not
+  checked.
+
+Also open in the scene itself: much of the target is still black around the
+street, the road is white, and whether the remaining gaps are culling,
+missing draws or textures is not looked at.
+
+Four 20 s headless boots with all of the above: 129 opens each, no arena
+overrun (`scratch/ab-now/`).
+
+Notes for whoever continues:
+
+- The main-menu frame differs with what the script has pressed by then: 382
+  draws on the menu, about 56 while the dealership loads, 577, 167 or 2048 in
+  the dealership. Check the draw count (first line of the manifest) before
+  reading a capture.
+- Captures and shader dumps under `scratch/devrem/` are derived from the
+  title; they stay in `scratch/`.
+
 ## Phase 32 - The heap failure is intermittent again; unlock was only a snapshot (2026-10-13)
 
 Still BCUS98158. This corrects Phase 31's all-boots-fail reading. The

@@ -161,24 +161,39 @@ static DWORD WINAPI present_thread(LPVOID)
             headless ? "skipped -- headless" : rsx_ok ? "OK -- window open" : "FAILED");
     const int drain = rsx_ok || headless;
 
+    /* GT5P_PRESENT_PROF=1: every 5 s, where this thread's time went. */
+    const int prof = getenv("GT5P_PRESENT_PROF") != nullptr;
+    LARGE_INTEGER qf; QueryPerformanceFrequency(&qf);
+    double p_vbl = 0, p_flip = 0, p_pres = 0, p_fifo = 0, p_pump = 0;
+    unsigned p_ticks = 0, p_pres_n = 0;
+    ULONGLONG p_last = GetTickCount64();
+#define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); acc += (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; } while (0)
+
     ULONGLONG next_tick = GetTickCount64();
     for (;;) {
         Sleep(4);
         ULONGLONG now = GetTickCount64();
 
+        /* Catch up on missed ticks, but not for longer than 100 ms at a
+         * time: when one tick's work takes more than its 16 ms the backlog
+         * never clears, and running 240 of them back to back kept this
+         * thread away from the message pump for so long that Windows marked
+         * the window "not responding". */
         int fired = 0;
         while ((long long)(now - next_tick) >= 0 && fired < 240) {
-            cellGcmTickVBlank();
-            cellGcmTickFlip();
-            if (rsx_ok && cellGcm_take_flip_pending())
-                backend_present();
+            PROF_T(p_vbl, cellGcmTickVBlank());
+            PROF_T(p_flip, cellGcmTickFlip());
+            if (rsx_ok && cellGcm_take_flip_pending()) {
+                PROF_T(p_pres, backend_present()); p_pres_n++;
+            }
             if (drain)
-                cellGcm_rsx_process_fifo();
+                PROF_T(p_fifo, cellGcm_rsx_process_fifo());
             next_tick += 16;          /* ~60 Hz */
-            fired++;
+            fired++; p_ticks++;
+            if (GetTickCount64() - now >= 100) { fired = 240; break; }
         }
         if (fired >= 240)
-            next_tick = now;          /* fell far behind -- resync */
+            next_tick = GetTickCount64();   /* fell behind -- resync */
 
         dump_threads();
 
@@ -186,13 +201,23 @@ static DWORD WINAPI present_thread(LPVOID)
          * an RSX label the drain writes, and waiting a full 16 ms per fence
          * paces the guest to single-digit fps. */
         if (drain) {
-            if (cellGcm_take_flip_pending() && rsx_ok)
-                backend_present();
-            cellGcm_rsx_process_fifo();
+            if (cellGcm_take_flip_pending() && rsx_ok) {
+                PROF_T(p_pres, backend_present()); p_pres_n++;
+            }
+            PROF_T(p_fifo, cellGcm_rsx_process_fifo());
         }
         if (rsx_ok) {
-            if (backend_pump() != 0)
+            int closed = 0;
+            PROF_T(p_pump, closed = backend_pump());
+            if (closed != 0)
                 rsx_ok = 0;           /* window closed */
+        }
+        if (prof && GetTickCount64() - p_last >= 5000) {
+            fprintf(stderr, "[present-prof] 5 s: ticks=%u presents=%u | vblank %.2fs flip %.2fs "
+                            "present %.2fs fifo %.2fs pump %.2fs\n",
+                    p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_pump);
+            p_vbl = p_flip = p_pres = p_fifo = p_pump = 0; p_ticks = p_pres_n = 0;
+            p_last = GetTickCount64();
         }
     }
 }
