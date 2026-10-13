@@ -89,9 +89,33 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 33 of
-[docs/progress.md](docs/progress.md); read 33 down to 19 in that order.
+Details and evidence are in Phases 17 to 34 of
+[docs/progress.md](docs/progress.md); read 34 down to 19 in that order.
 Each corrects the one before.
+
+- **The 3D scene shows behind the main menu (Phase 34, 2026-10-14).** A
+  street of half-timbered houses, captioned "Altstadt, Ahrweiler". It takes
+  about 30 s after the menu appears to reach full brightness, and some
+  surfaces stay black; neither is investigated. Eight faults in ps3recomp's
+  D3D12 path were behind the black window; Phase 34 lists them with the
+  switch that undoes each. "Nothing is drawn behind the text" further down
+  is history.
+- **About half of driven boots reach the menu at one frame a second**, with
+  only "Cr.35,000" on screen and `draws: 2048` in the title bar, and stay
+  there. Not new (1 of 4 with the 2026-10-13 build), cause not found;
+  Phase 34 has what is measured and one untested hypothesis. Retry such a
+  boot before reading anything else into it.
+- `scratch/menu.ps1 <dir>` drives a windowed boot to the menu and stays
+  there (`PAD_HOLD_STOP_DRAWS`); `-Late 30000` for a boot slowed by
+  `D3D12_DBG=1`. Earlier timed scripts either stuck on "Confirmation" or
+  pressed Cross once more and left for the dealership before the menu had
+  faded in.
+- `FRAME_CUT_OP=<n>` with `RSX_CAP` shows the display as record `n` left it.
+  `FPK_FP=<hex program>` prints a fragment program's constants as uploaded.
+  `RT_TEXDBG=<n>` prints how each texture over a render target resolved.
+- Fragment-program debug switches that rewrite the shader text
+  (`FP_SHOW`, `FP_IDCOLOR`) look for the text `_po.c0 =`; the decompiler in this
+  tree ends with `float4 _o = h[0]` (or `r[0]`). Check they took effect.
 
 - **The bad boot is found and fixed (Phase 33).** It was never a heap fault.
   ps3recomp left a job chain's walker thread alive after
@@ -208,11 +232,12 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: re-measure the menu and dealership with the Phase 33 fix, since jobs
-  were being run twice all through a boot before it; and confirm the windowed
-  dark-blue boot is gone. Then which per-SPU counter the dealership's
-  render thread waits on (Phase 31), the device removal, the missing 3D scene,
-  the intermittent slow windowed boot, then the `TV.DAT` install RPCS3 starts
+- Next: the menu that comes up at one frame a second (Phase 34), since it
+  takes half of all boots; why the scene is dark and partly black; the
+  dealership, not re-examined since Phase 33 beyond seeing it draw text on
+  black at 25 frames a second without freezing; immediate-mode strips and
+  fans, which are still dropped. Then which per-SPU counter the dealership's
+  render thread waits on (Phase 31), and the `TV.DAT` install RPCS3 starts
   about 20 s after `BootRoot.gpb`.
 
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
@@ -234,7 +259,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in twenty-seven files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in twenty-eight files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

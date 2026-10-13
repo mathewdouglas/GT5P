@@ -9,6 +9,172 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 34 - The scene shows behind the menu (2026-10-14)
+
+Still BCUS98158. Phase 33 ended with the menu's 3D scene drawn into its own
+target and a black window. The window now shows the scene: a street of
+half-timbered houses with flags and sky, captioned "Altstadt, Ahrweiler"
+(`scratch/devrem/final/inp_075.png`; `m12/inp_060.png` earlier in the same
+fade). Some surfaces are black; see the end. All changes are in the
+ps3recomp checkout
+(`libs/video/rsx_d3d12_backend.c`, `rsx_commands.*`, `cellGcmSys.c`,
+`libs/input/cellPad.c`), and each has a switch that restores the old
+behaviour.
+
+The plan going in was "give the later passes the screen and the depth buffer
+as textures". Both were needed, and neither was what kept the window black.
+Five other faults were, found one at a time with a new
+`FRAME_CUT_OP=<n>[,min]`, which ends each frame of at least `min` draws
+after record `n` so that a capture shows the display as that record left it.
+
+**1. Targets were remade several times a frame.** `[RT] recreate` showed
+`0x2880000` going 2048x1436, 511, 255, 127 rows: the title draws to one
+surface under several clip rectangles, and the backend sized the target
+from the clip of each draw, discarding the contents each time. A target now
+only grows (`RT_NO_GROW=1` for the old way).
+
+**2. A texture can point inside a target.** The title keeps a whole mip
+chain in one surface and binds each level by its own address (`0x2E20000`
+is row 720 of `0x2880000`; the six `256x511` cube-face surfaces at
+`0x4D00000` are the same idea). The backend matched textures to targets by
+exact offset only. It now also finds the target whose memory contains the
+address, using the surface pitch and antialias mode recorded with each
+draw, and gives the unit a scale and an origin through `rsx_texscale`
+(`RT_NO_TEXSCALE=1`; `RT_TEXDBG=<n>` prints each resolution once). The same
+scale handles the 2x-antialiased scene surface (`SET_SURFACE_FORMAT`
+`0x3148`, declared 2560 wide as a texture, 1280 wide as a target: scale
+1.0) and the display.
+
+**3. The display as a texture.** `fp=0x057B5501`, `0x057B5881` and
+`0x057B6481` sample a display buffer (offset 0 or `0x880000`, declared
+1920x1080). The backbuffer is snapshotted before such a draw when it has
+changed since the last snapshot. Not verified: whether the scale chosen for
+a normalised 1920x1080 texture over the 1280x720 image (1.5) is right; the
+passes that use it are the bloom ones, and their result has not been looked
+at on its own.
+
+**4. The depth buffer as a texture.** Confirmed by measurement that
+`0x2100000` is a depth surface: `[RTOFF]` prints it as `zeta` for the scene
+target. The backend has one shared depth buffer that it clears at every
+change of target, so it is copied to a typeless texture when the draws
+that used it are over, and `fp=0x057B4D01` reads the copy. The title reads
+depth as an A8R8G8B8 texture (crossbar `0xAA93`), so the generated shader
+rebuilds the three depth bytes from the value. Two mistakes in the first
+version, both measured: the copy was taken after a display draw that had
+the same depth surface bound (so the pass read the display's depth), and
+the size was taken from `0x2880000`, which is drawn with that depth surface
+bound but does not test depth (`[RTTEX] depth surface 0x2100000 drawn with
+target 0x2880000 2048x1436 aa=0`). Only draws that test depth count now,
+and the table of which target a depth surface belongs to is kept across
+frames; after both changes the same line reads `target 0x1980000 1280x720
+aa=3` and the blur follows depth. Which of the two changes was needed is
+not separated.
+
+**5. Immediate-mode vertices kept only their position.** With all of the
+above the display was still black after the scene's first copy to it.
+`VP_ATTRS` on that pass (`fp=0x0FFFFD41`) showed the scene's vertex arrays
+still enabled (`a0` three floats, `a2` type 6): the quad is not drawn from
+arrays. Phase 25 added immediate mode for positions only, and every vertex
+took the other attribute registers as they stood at `END`, so a whole quad
+had one texture coordinate and sampled one texel, the black corner of the
+scene. Each emitted vertex now carries all sixteen registers
+(`IMM_OLD=1`). `SET_VERTEX_DATA3F_M`, `4UB_M` and attribute 0 through
+`4F_M` are handled as well. Still dropped, and now reported once each:
+immediate-mode triangle strips (4 vertices) and fans (6 vertices).
+
+**6. Fragment programs returned the wrong register.** After (5) the window
+was white. The decompiler was called with no shader-control word and
+guessed the output register; for these programs it returned `r0` where the
+result is in `h0`. `fp=0x057B5881` computes display plus three bloom
+levels into `h0` and the shader returned only its last bloom sample;
+`0x057B4D01` returned an unnormalised sum of six samples. The title's
+control word is `0x2008400` (`[RSXSC]`, bit `0x40` clear: 16-bit exports,
+`h0`), the draw record already carried that bit, and the pipeline key
+already included it. It is now passed (`FP_CTRL_AUTO=1` to guess again).
+This is also why the road in Phase 33's scene capture was plain white: it
+was a raw texture sample, not the program's result.
+
+**7. Fragment constants were frozen at first compile.** With the right
+register the scene target went black (`m2/`: 0 of 3,600 sampled pixels
+non-black). The scene materials end in a multiply by an inline constant
+that the title patches every frame through `cellGcmInlineTransfer`
+(`[GCM2D] inline write`), a brightness that starts at 0 when the menu fades
+in (`FPK_FP=7460741` prints it: 0, then `7.5e-06`, rising to 0.22 by 70 s).
+The pipeline cache is keyed on the program's code without its constants and
+the constants are uploaded per draw, but the decompiler adopted in this
+tree prints them into the shader as numbers unless its buffered form is
+asked for. So every program kept the values it was first compiled with,
+here a brightness of 0. The buffered form is now used, with one
+declaration for the per-draw slot (`FP_CONSTBUF=0` for literals).
+
+**8. Mip levels stacked in one surface.** With (1) to (7) the scene showed,
+with several offset copies of itself over it (`m7/inp_070.png`).
+`0x057B4D01` is a depth-of-field pass: it samples the blurred surface with
+`SampleLevel` at a level computed from depth, and the backend's target has
+one level. `SampleLevel` on such a unit now goes to a small function that
+picks the level's rectangle in the surface and blends two levels. Related:
+the passes that build each level sample the surface they are drawing to,
+which D3D12 does not allow; they now sample a copy taken just before the
+draw (`RT_NO_SELFCOPY=1`).
+
+**What is still wrong with the picture.** The scene takes about 30 s to
+reach full brightness after the menu appears (the constant in (7) is 0.22
+at 70 s; at 60 s most of the picture is still near black, at 75 s it is
+lit). Whether the real title fades that slowly is not known; one
+hypothesis is that it reads back the 1x1 level of the blur surface to set
+exposure, and guest memory behind a target is never written. Once lit,
+some surfaces stay black, for example the building on the right of
+`final/inp_075.png`. Not investigated; several scene programs sample cube
+maps whose faces are built in the `0x4D00000` surfaces, which is one place
+to look. The D3D12 debug layer was on for two boots that reached only the
+slow state below and printed nothing; the scene passes have not been run
+under it.
+
+Four 20 s headless boots with all of this: 129 opens each, no arena
+overrun (`scratch/ab-p34/`).
+
+**A menu that comes up at one frame a second.** After "Confirmation" about
+half of all boots show only "Cr.35,000" at about 1 frame a second with the
+title bar at `draws: 2048`, and stay that way to the end of the run (up to
+95 s). Measured:
+
+- The capture of such a frame (`n2/frame_00/manifest.txt`) holds ten guest
+  frames in one batch (ten clears of the scene target, 80 draws to each
+  cube face where a frame has 8) and no draw to the scene target. 2048 is
+  the backend's record limit, so more than that was submitted.
+- The title calls flip more often in this state, not less: 4,966
+  `SetPrepareFlip` lines in a 98 s run against about 3,500 in a good one.
+- It is not the FIFO's catch-up path (one flip per drain is abandoned past
+  64 KB of backlog): `GCM_CATCHUP_DBG=1` printed nothing in two such boots.
+- It is not today's texture work: 5 of 6 boots with `RT_NO_TEXSCALE=1`, 1
+  of 4 with `RT_NO_SELFCOPY=1`.
+- It is not new today: 1 of 4 boots of yesterday's saved build
+  (`scratch/baseline/gt5p_fix_t86.exe`) ended at `draws: 2048` too.
+  Phase 33's note listing 2048 as a dealership draw count was this.
+- Counted over today's driven boots after the script was fixed, with mixed
+  switches: 18 slow, 13 good. In the four old-style runs where the time of
+  the accepted press can be read, the two slow ones were the two whose
+  "Confirmation" went away latest (after 45 s, against 37 s and 41 s).
+
+Hypothesis, not tested: in this state the title is still loading the scene
+and submits cheap frames at 60 a second without waiting; the backend cannot
+draw them that fast, the frames pile into one batch, each present then
+takes most of a second, and the present thread, which also delivers the
+vblank and flip ticks and bounds its catch-up at 100 ms, hands the title a
+fraction of the ticks it is owed. If the loader counts those, the load
+stretches by the same factor. What decides which way a boot goes is not
+known.
+
+**A test script that stays on the menu.** `PAD_HOLD` presses are timed, and
+the load behind "Confirmation" varies by seconds, so a script either stuck
+on the dialog or pressed Cross once more and left for the dealership. Every
+"black menu" capture before `m7` was a menu still fading in, about to be
+left. `PAD_HOLD_STOP_DRAWS=<ms>,<m>` makes the scripted pad let go once a
+frame of under `m` draws seen after `ms` (the dialog) is replaced by a
+different draw count. `scratch/menu.ps1 <dir>` uses it. Draw counts seen on
+the menu: 221 on its first frame, 381 with the options up, 198 to 247 once
+only the caption is left.
+
 ## Phase 33 - The bad boot: two job-chain walkers answer one request (2026-10-13)
 
 Still BCUS98158. This finds the cause of the Phase 18 / 22 / 32 bad boot. The
