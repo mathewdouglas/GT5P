@@ -9,6 +9,114 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 35 - The one-frame-a-second menu, and the stuttering sound (2026-10-14)
+
+Still BCUS98158. Two separate faults, both in the ps3recomp checkout.
+
+### The menu at one frame a second
+
+Phase 34 left this with a hypothesis about the title outrunning the
+backend. It was wrong. With `GT5P_PRESENT_PROF=1 GCM_FLIPCOUNT=1` on a slow
+boot (`scratch/devrem/fs5/`): the title flips 60 times a second, the present
+thread calls the backend's present 62 times a second, and those calls take
+0.00 s out of every 5 s. They return without drawing.
+
+`rsx_d3d12_backend_present` starts with `if (s_clear_presents > 0) return;`.
+The backend has a second way to end a frame, on a clear of the display
+(`d3d12_clear`), and once that has presented a single frame the flip-driven
+present is switched off for the rest of the run. This title clears the
+display a few times on the way into the main menu and then never again: the
+menu redraws the whole screen each frame. Whether one of those clears
+counts as a frame boundary depends on the order a clear and a flip arrive
+in, which is the race. When one does, nothing presents until the record
+list reaches its 2,048 limit, which is the "ten guest frames in one batch"
+of Phase 34. Each guest frame in that batch is the ordinary 221-draw menu
+frame; the menu had been running normally underneath.
+
+Now the flip-driven present comes back once four flips have passed without
+a clear-driven present (`RSX_CLEAR_PRESENT_STICKY=1` for the old
+behaviour). Result: 8 of 8 driven boots reach the menu at 31 frames a
+second (`cp1` to `cp8`), against 18 slow in 31 before. With the switch
+set on the final build, 1 of 5 boots was slow again (`st1` to `st5`): the
+old behaviour still produces it, though less often than the 18 in 31, and
+the later sound changes moved the timing of that race, so the two rates
+are not comparable.
+
+Six 20 s headless boots with everything in this phase: 129 opens each, no
+arena overrun (`scratch/ab-p35/`).
+
+The user's observation that the music differs in the slow state is not
+explained by this and was not looked into; the title may simply pick its
+menu music at random.
+
+### The stuttering sound
+
+`AUDIO_RATE=1` counts the blocks the mixer plays that are entirely empty.
+On the menu, with music playing: 40 to 49% (`au1/`). The mixer was on time
+(187.5 blocks a second, none dropped); the title was supplying about half
+the blocks. Per-thread CPU (`scratch/cpu.ps1`): main thread 93%, the job
+chain walker `spurs-jc` 81%, the title's own audio thread 1%.
+
+The sound mixer is the job chain at `0x20046600` (Phase 33's chain). New
+`SPURS_JC_STATS=1`: 1,700 jobs a second at 0.47 ms each, the walker 82%
+busy, where full rate is about 3,190 (17 jobs for each 5.33 ms block). A
+new sampler, `SPURS_JC_SAMPLE=<chain>`, prints where the walker's host
+thread is once a millisecond; `scratch/maplook.py` resolves it against a
+linker map (`-DCMAKE_EXE_LINKER_FLAGS=/MAP:gt5p.map`). What it showed, and
+what was done, in the order measured:
+
+| Change | ms per job | jobs/s | empty blocks |
+| --- | --- | --- | --- |
+| start | 0.47 | 1,700 | 40 to 49% |
+| job staging built in place; fingerprint remembered | 0.43 | 1,900 | 40% |
+| SSE4.1 for lifted SPU code; context kept per thread | 0.37 | 2,100 | 31 to 34% |
+| `fmaf` computed in double | 0.30 | 2,500 | 20 to 22% |
+| walker woken by the guard notify | 0.28 | 3,190 | 2 to 5% |
+| mixer reads two blocks behind | 0.28 | 3,190 | 0 to 1.7% |
+
+- **Staging.** Each job allocated and zeroed a 256 KB local store, copied
+  it into the context, and copied it out again afterwards, and the whole
+  job binary was hashed byte by byte to find its lifted code. The working
+  set is now built in the context, the copy-out happens only when the job
+  posted a mailbox value (its one reader is the printf service), and the
+  hash is remembered per binary.
+- **`spu_shufb`** was 16% of the walker's samples: its vector form is
+  behind `__SSE4_1__`, which nothing defined, so the byte loop ran.
+  `CMakeLists.txt` now compiles the lifted SPU sources with `-msse4.1`.
+- **Context clearing.** One context per host thread, kept between jobs,
+  clearing only the span the previous job was given
+  (`SPURS_JOB_FULLCLEAR=1` clears all of it).
+- **`fmaf`.** Without `-mfma` the compiler calls the C library's software
+  `fmaf`, four times per SPU multiply-add. Half the walker's samples were
+  outside the executable, most of them this. Now a multiply and add in
+  double, rounded once (`SPU_FMA_LIBM` to compile the old form). Not
+  bit-exact with a fused result in the rare case where the double sum is
+  exactly halfway between two floats.
+- **Guard wake-up.** The walker waited for its guard with `Sleep(1)`,
+  which returns one to two milliseconds late, once per audio block. It now
+  waits on an event the notify sets (`SPURS_JG_SLEEP=1`).
+- **Read lag.** With the job rate at full the ring map (`AUDIO_PEAK=1`)
+  still showed data one and two blocks behind the reader: blocks finished
+  just too late, read as silence, then heard a ring lap later. The mixer
+  now reads `AUDIO_READ_LAG` blocks (default 2, about 11 ms) behind the
+  index it publishes.
+
+Also changed: the mixer paces one block per 5.33 ms on the clock with an
+80 ms device buffer instead of two blocks per 10 ms device period
+(`AUDIO_PACE_DEVICE=1`). That was the first theory and made no measurable
+difference by itself (45% before and after); it is kept because the bursts
+were real. The walker thread runs at above-normal priority
+(`SPURS_JC_NORMAL_PRIO=1`).
+
+Left: the walker is at about 90% of a core on the menu, so anything with
+more voices than the menu will fall behind again. The per-step cost of the
+SPU dispatch loop (`spu_task_launch_check` and what it calls, about a
+sixth of the walker's time) is untouched. The remaining empty blocks come
+sixteen at a time, one ring's worth, a few seconds apart; not investigated.
+Nobody has listened to the result yet; these are counts, not ears. The
+menu itself runs at 31 frames a second with the main thread at 93% of a
+core, where the console runs it at 60.
+
 ## Phase 34 - The scene shows behind the menu (2026-10-14)
 
 Still BCUS98158. Phase 33 ended with the menu's 3D scene drawn into its own

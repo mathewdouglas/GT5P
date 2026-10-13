@@ -79,6 +79,13 @@ if(GT5P_ENABLE_SPU)
     # the include to these TUs so the huge PPU chunks keep their cached command.
     set_source_files_properties(${GT5P_SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu")
+    # SSE4.1 for the lifted SPU code only. Its helpers (spu_shufb above all)
+    # have a vector form behind __SSE4_1__ and fall back to a byte loop without
+    # it; that loop was a sixth of the sound job thread. Any CPU with a D3D12
+    # GPU has it.
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        set_source_files_properties(${GT5P_SPU_LIFTED} PROPERTIES COMPILE_OPTIONS "-msse4.1")
+    endif()
 else()
     set(GT5P_SPU_SOURCES "")
 endif()

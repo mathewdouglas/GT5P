@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 34 of
-[docs/progress.md](docs/progress.md); read 34 down to 19 in that order.
+Details and evidence are in Phases 17 to 35 of
+[docs/progress.md](docs/progress.md); read 35 down to 19 in that order.
 Each corrects the one before.
 
 - **The 3D scene shows behind the main menu (Phase 34, 2026-10-14).** A
@@ -100,11 +100,20 @@ Each corrects the one before.
   D3D12 path were behind the black window; Phase 34 lists them with the
   switch that undoes each. "Nothing is drawn behind the text" further down
   is history.
-- **About half of driven boots reach the menu at one frame a second**, with
-  only "Cr.35,000" on screen and `draws: 2048` in the title bar, and stay
-  there. Not new (1 of 4 with the 2026-10-13 build), cause not found;
-  Phase 34 has what is measured and one untested hypothesis. Retry such a
-  boot before reading anything else into it.
+- **The one-frame-a-second menu is fixed (Phase 35).** The backend stopped
+  presenting on flips for good once a single display clear had ended a
+  frame, and this title stops clearing the display at the menu. 8 of 8
+  boots good afterwards. A title bar stuck at `draws: 2048` means frames
+  are piling up unpresented, not that the title is slow.
+- **Sound (Phase 35).** The menu music had 40 to 49% of its blocks empty
+  because the sound mixer's job chain ran at half speed; now 0 to 1.7%.
+  `AUDIO_RATE=1` prints the empty-block share, `SPURS_JC_STATS=1` the job
+  rate (3,190 a second is full rate on the menu), `SPURS_JC_SAMPLE=<chain>`
+  with `scratch/maplook.py` and a `/MAP` link shows where the walker's time
+  goes. The walker is at about 90% of a core on the menu, so heavier scenes
+  will stutter again. Counts only; nobody has listened yet.
+- The menu runs at 31 frames a second with the main thread at 93% of a
+  core. The console runs it at 60.
 - `scratch/menu.ps1 <dir>` drives a windowed boot to the menu and stays
   there (`PAD_HOLD_STOP_DRAWS`); `-Late 30000` for a boot slowed by
   `D3D12_DBG=1`. Earlier timed scripts either stuck on "Confirmation" or
@@ -232,8 +241,8 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the menu that comes up at one frame a second (Phase 34), since it
-  takes half of all boots; why the scene is dark and partly black; the
+- Next: why some scene surfaces are black; headroom for the sound job
+  walker and the main thread (Phase 35); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
   black at 25 frames a second without freezing; immediate-mode strips and
   fans, which are still dropped. Then which per-SPU counter the dealership's
@@ -259,7 +268,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in twenty-eight files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in thirty-one files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
