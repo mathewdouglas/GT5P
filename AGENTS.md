@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 29 of
-[docs/progress.md](docs/progress.md); read 29 down to 19 in that order.
+Details and evidence are in Phases 17 to 31 of
+[docs/progress.md](docs/progress.md); read 31 down to 19 in that order.
 Each corrects the one before.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
@@ -126,10 +126,15 @@ Each corrects the one before.
   scene scripts, a character and motions). "Confirmation" takes its OK only
   once that load has finished. Then comes the main menu, and Cross on it
   enters Dealerships ("ACURA"); text only on black in both (Phase 28).
-- The dealership holds but is not usable: about 8 s a frame, spent by the
-  title waiting for SPU work, and none of the 3D scene is visible (Phase 29).
-  The device removal Phase 28 stopped at was failed pipelines; the backend
-  now carries sixteen texture units a draw, not four.
+- The dealership is not usable. A good boot ends there one of two ways,
+  about evenly (Phase 30): a frame every 4 s, with the job manager's policy
+  module walking its command list without end on the SPURS kernel thread; or
+  a device removal (`DXGI_ERROR_DEVICE_HUNG`) on the first frame that adds the
+  scene's post-processing targets, after which the window is frozen at
+  `draws: 167`. Neither cause is found; Phase 30 lists what is ruled out.
+  None of the 3D scene is visible in either.
+- `scratch/cpu.ps1` drives to the dealership and prints per-thread CPU with
+  the threads named. Use it before guessing which side is slow.
 - A windowed run whose title shows well under 1 frame a second: look for
   `PSO FAIL` in the log before anything else, and run with `D3D12_DBG=1` to
   get the reason printed beside it.
@@ -173,9 +178,23 @@ Each corrects the one before.
 - A new job body shows up as `[spu-smc] microstep ... handing to the
   interpreter`. Do not trust the interpreter with it: dump it with
   `SPU_DUMP_OVL`, add it to `wws_job_bodies` and re-lift.
-- Next: the SPU job the dealership waits on, the heap fault behind failed
-  boots, the missing 3D scene and background, the
-  intermittent slow windowed boot, then the `TV.DAT` install RPCS3 starts
+- Phase 31's all-boots-fail observation was superseded on 2026-10-13:
+  later runs again showed mixed outcomes (Phase 32 in `docs/progress.md`). A
+  six-run, 20-second headless soak had three normal 129-open boots and three
+  known-bad signatures; a second soak had one suspicious low-progress run.
+  The 2 KB allocator failure is still unexplained.
+- REA cannot open the executable (64-bit PowerPC ELF is "unsupported").
+  `scripts\ghidra_decomp.ps1 0xADDR ...` runs Ghidra headless on chosen
+  functions instead; its first import is slow and unproven. Do not run it
+  while booting the title.
+- Next: trace the intermittent 2 KB allocator retry at `lr=0x00B3BBA8`.
+  Follow the heap slot through the outer wrapper to the allocator object;
+  compare all free-list heads and region fields with a good boot, using
+  `PPU_WWATCH` to capture helper writes when the address is valid for that run
+  (Phase 32). Then which per-SPU
+  counter the dealership's
+  render thread waits on (Phase 31), the device removal, the missing 3D scene,
+  the intermittent slow windowed boot, then the `TV.DAT` install RPCS3 starts
   about 20 s after `BootRoot.gpb`.
 
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
@@ -194,7 +213,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in twenty-four files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in twenty-seven files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

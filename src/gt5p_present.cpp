@@ -67,6 +67,7 @@ int  cellGcm_take_flip_pending(void);
 
 static DWORD WINAPI present_thread(LPVOID)
 {
+    fprintf(stderr, "[hostthread] present hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "Gran Turismo 5 Prologue (ps3recomp)";
 

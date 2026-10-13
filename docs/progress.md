@@ -9,6 +9,210 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 32 - The heap failure is intermittent again; unlock was only a snapshot (2026-10-13)
+
+Still BCUS98158. This corrects Phase 31's all-boots-fail reading. The
+executable had not changed between these measurements.
+
+**Boot outcomes.** A windowed run at 06:32 reached the readable Online User
+Agreement. A 40-second headless run stalled in the already-known
+`func_0067E930` null-vtable path. In a six-run, 20-second headless soak, three
+runs reached 129 `GT.VOL` opens / 27 paths and the normal main wait at
+`lr=0x00B391F4`; the other three were classified as one 2 KB allocator retry
+(`lr=0x00B3BBA8`) and two sound-bank fixup loops (`lr=0x007A9BE4` and
+`0x00B56EDC`). A second six-run soak had five runs with normal/near-complete
+progress and one suspicious low-progress run. These are small samples, not a
+stable failure rate. Logs: `scratch/resume/soakA/`, `soakB/`, and the
+windowed capture `scratch/inp.err` / `scratch/inp_020.png`.
+
+**The apparent unlock stall.** In the suspicious second-soak run, a main-thread
+snapshot showed `func_00B3D8A0` (heap allocator) calling the `sys_lwmutex_unlock`
+stub at `0x00B57338`, with LR `0x00B57348`; the heap pointer slot at
+`0x012918D0` held `0x016F81A0`, so it was not a null heap. A later 20-second
+run with `PS3_HLE_TRACE=200000 PS3_SCTRACE=1` generated repeated calls to NID
+`0x1BC200F4` (including calls from LR `0x00B57348`) and ended at the normal
+main wait, `lr=0x00B391F4`. Thus the snapshot does **not** show unlock stuck;
+the allocator can leave that call. The traced run is at `scratch/boot.err` and
+was timing-instrumented, so it does not answer what makes the occasional
+2 KB allocation return empty.
+
+**A repeated allocator failure.** A third six-run, 20-second headless soak
+again produced three complete 129-open boots and three known-bad runs: one
+2 KB allocator retry and two sound-bank fixup loops. The failed allocation
+run (`scratch/resume/soakC/run4.err`) was sampled repeatedly at
+`lr=0x00B3BBA8` with request size `r3=0x7D0`, alignment `r5=0x10`, and the
+heap pointer slot still set to `0x016F81A0`. The heap descriptor's first word
+was `0x016F89B0`; that block begins `01268820 20000000 2ADFFF80 20000000`.
+This rules out a missing heap pointer but does not yet decode the free-list or
+explain why this request is rejected. The snapshot also reports mutex id 89
+owned by main; it does not identify that as the allocator's lock.
+
+**The Phase 22 mutex divergence was a false lead.** I re-compared its saved
+`scratch/good.err` and `scratch/bad.err` HLE traces using only arguments each
+lwmutex API consumes: `r3/r4` for `sys_lwmutex_lock`, and `r3` for unlock.
+Every one of the bad trace's 1,167 heap-mutex calls matches the corresponding
+good call. The earlier ?different at lock 1,131? came from `r5`/other
+caller-clobbered register values, which those APIs ignore. This corrects
+Phase 22: the traces do not establish a changed heap-lock sequence or a mutex
+fault. The logs omit thread IDs, so they still cannot rule out different
+interleavings between PPU threads.
+
+**Corrected allocator object and free-list capture.** The earlier `+0x28`
+read above came from the outer heap wrapper at `0x016F81A0`, not the allocator,
+and must not be treated as a size-bin reading. The wrapper's first word points
+to allocator object `0x016F89B0`; its `+0x58` lock matches the lock address
+`0x016F8A08` seen in the syscall trace. The `GT5P_PEEK` grammar now supports
+`slot@@offset` to follow both pointers. At the exact `0x00B3BBA8` retry in
+`scratch/resume/soakI/run5.err`, request `0x7D0`, alignment `0x10`, all 16
+free-list heads at allocator offsets `+0x10..+0x4C` were zero. In successful
+`scratch/resume/soakH/run1.err`, the same heads held live list nodes. The
+allocator's `+0x50`/`+0x54` fields are used as region bookkeeping by the split
+and insertion routines; they are not bin heads. This establishes that the
+failed allocation sampled an empty set of free lists, but does not show how
+they became empty or whether another allocator invariant was involved. A
+priority-off six-run soak reproduced this once (two other sound-fixup
+failures, three complete boots); it is not a stable rate.
+
+**Mutex comparison.** The Phase 22 saved good/bad traces still match on every
+consumed heap-mutex argument for all 1,167 calls; their missing thread IDs
+leave interleaving differences untested. Logs: `scratch/good.err`,
+`scratch/bad.err`, and allocator captures in `scratch/resume/soakH/` and
+`soakI/`.
+
+**Allocator write watch.** A priority-off six-run soak with `PPU_WWATCH`
+covering the actual allocator heads (run logs in `scratch/resume/soakK/`) saw
+the allocator initialize the 16 heads at `+0x10..+0x4C` to zero. During a good
+boot, later writes into watched heads came from the allocator's own list
+helpers: `0x00B3D158` unlinks a node and `0x00B3D1E8` inserts one. The watch
+address was fixed at `0x016F89C0` and remained valid for these runs, but it
+only captures plain PPU stores to that window; it is not proof against vector
+or SPU writes. That batch yielded five complete 129-open boots and one known
+sound-bank fixup failure, not the allocator retry.
+
+**Next.** Capture another allocator retry with a watch on the real allocator
+heads and enough hit capacity to record whether allocator helper calls remove
+their last entries. If a retry occurs, compare the watched stores and per-run
+pointer chain; do not assume the heap address remains fixed across boots.
+Keep the known sound-bank and null-vtable signatures separate; do not count
+every short/incomplete run as the same heap fault.
+
+## Phase 31 — What the render thread waits for; and every boot now fails (2026-10-13)
+
+Still BCUS98158.
+
+**The render thread's wait, read from the code.** `func_00BA97B0(this, q)`,
+called with `q = 3` from `0x00BAA9F8`, works on the shared structure at
+`[this]` (`0x0139C900`, workload 4's data). For queue `q` it takes the
+16-byte row at `+0x40 + 16*q`. The first halfword is how far the title has
+published the queue's command list; it then counts on through the list at
+`[+0x30 + 4*q]` to the first empty entry to get a target. The next seven
+halfwords of the row are compared one by one and the smallest kept, and the
+loop repeats until that smallest value reaches the target. So each queue has
+seven per-SPU progress counters, and the title waits for every one of them.
+A lane that never advances its counter holds the frame for ever, or until
+whatever releases it every 4 s. Which counter lags in the dealership is the
+next measurement. `GT5P_PEEK=0x0139C940,0x0139C960` shows the rows, but see
+below: no boot has got that far since.
+
+**Tools.** REA cannot open this executable: `open_binary` answers
+"unsupported ELF architecture" for 64-bit PowerPC. `scripts/ghidra_decomp.ps1`
+and `scripts/ghidra/DecompAt.java` drive Ghidra headless instead, importing
+without auto-analysis and decompiling only the addresses asked for, into
+`analysis/ghidra/out/`. Not yet proven: the first import ran 25 minutes
+without finishing and was stopped. Do not run it beside the title; with it
+running, seven boots in seven stalled.
+
+**Every boot fails now.** From about 01:40, with the executable built at
+23:34 that had been booting about one time in two: 16 windowed boots in 16
+stall at `draws: 0`, 3 to 4 frames a second, and three headless boots are
+called "runaway sound-bank fixup" by `bootcheck`. The machine is idle (20%
+CPU, 13.5 GB of commit free), nothing under `gamedata/` or `input/` has
+changed, and Ghidra is no longer running. Not explained.
+
+One real defect found while looking, and not the cause: on Windows
+`sys_time_get_current_time` returned the performance counter, which is time
+since the PC was started (12.6 days here), where the POSIX branch of the same
+function returns wall-clock time. It now returns wall-clock time
+(`PS3_TIME_UPTIME=1` for the old value). Six boots with it and four without
+all stalled.
+
+This is the Phase 22 heap fault at a rate of 1 in 1, which is the first time
+it has been reproducible on demand. That makes it the thing to work on: it
+blocks everything else, and a fault that happens every time can be traced
+where one that happened 1 time in 52 could not.
+
+## Phase 30 — The four-second frame: located in the job manager's command interpreter, not fixed (2026-10-12)
+
+Still BCUS98158, in the dealership. Phase 29 said "about 8 s a frame"; the
+title's own counter is steadier and says 0.24 to 0.25 frames a second, a
+frame every 4.0 to 4.1 s, in every slow run. A run now ends one of three ways
+at this point, roughly evenly: this slow state, a device removal (below), or
+a failed boot.
+
+**Where the time goes.** `scratch/cpu.ps1` samples per-thread CPU over 12 s
+and names the threads (runtime threads now log `[hostthread] <kind>
+hosttid=`):
+
+| Thread | Share of one core |
+| --- | --- |
+| SPURS kernel thread of the main instance | 99 to 100% |
+| guest render thread, spinning at `0x00BAA9FC` | 74 to 99% |
+| guest "Main Thread" of the online layer | 72 to 100% |
+| nine `spurs-jc` job-chain threads | 5 to 9% each |
+
+`SPURS_PM_FLOW=1 SPURS_PM_FLOW_ALL=1` on the kernel thread: one policy-module
+run on workload 4 that does not end, 180 million control transfers and then
+224 million two seconds later, cycling `01CB8 01DDC 01DF8 01ED4 02318 01B9C
+02DF8 02E18 02E38 02E60`. In the lifted module `0x1B9C` is the head of a
+command interpreter: it reads 8-byte commands through a pointer, skips zero
+words, takes an opcode field through a table at `0x15B0`, and returns on
+opcode 28. `0x1CB8` is one command's handler, and it falls through to "next
+command" when a register is zero. So the module is walking a job command list
+again and again without finding a command it may run. It is busy-waiting, not
+working: a normal run on this workload is 35 to 2,224 transfers.
+
+**What it is waiting for is not found.** Two things tried, both measured,
+neither the answer:
+
+- Two guest threads spin at once, and guest threads are confined to two
+  cores. `PS3_PPU_PRIO_SCHED=0`: the same 0.24, with three threads at 100%.
+  Not starvation.
+- The title makes five "Wws_Job" workloads on its five-SPU instance, each
+  with a contention of 1, one lane per SPU; the runtime runs them in turn on
+  one thread. `SPURS_LANES=1` (new, off by default) gives each SPU its own
+  kernel thread. The same 0.24 and 0.25. Not that either, or not alone.
+
+The frame time being the same to within 0.1 s in every run reads like a
+timeout that releases the wait, not like work finishing. Neither of the
+backend's 2 s GPU waits fires (`STUCK` is never printed). What times out is
+not found. Next: let the flow trace run to the end of one such module run and
+read what the last transfers before it returns are, and what the render
+thread's loop at `0x00BAA9FC` compares against.
+
+**The device removal, again.** It was not cured by Phase 29; it had only not
+recurred in three runs. It happens in about one good boot in two, as the
+dealership's first frames arrive, and the run then shows a frozen window at
+`draws: 167`. The backend now keeps summaries of the last four frames and
+prints them on removal. The frame in flight is the first to add four render
+targets (`0x2880000`, `0x57B6B00`, `0x5836B00`, `0x5856B00`) and five
+fragment programs drawn as single quads, one of them writing three targets.
+`FP_DUMP_DIR=<dir>` (new) writes every program compiled; none of these has a
+loop. Ruled out by test: the vertex-program dispatch bound
+(`RSX_VP_LOOP_MAX=64`), and binding the window-sized depth buffer beside
+targets of another size (now not done; `RT_DSV_ALWAYS=1` restores it). Also
+measured: no offscreen target is destroyed and remade in these runs (`[RT]`
+lines, new, print none), so that is not it. Cause not found.
+
+**The same shader bug in the open.** Three of the dumped programs compute
+their result into the half-precision register file and the decompiler returns
+the full-precision one (`float4 _o = r[0]` after the last write went to
+`h[0]`). Not a hang, but those passes will output the wrong thing once they
+do run. Not fixed.
+
+Diagnostics added: `scratch/cpu.ps1`, `[hostthread]` lines, `SPURS_LANES`,
+`FP_DUMP_DIR`, `RT_DSV_ALWAYS`, `[RT] recreate` and `[RT] evict`, the
+four-frame device-removed report.
+
 ## Phase 29 — The device removal was failed pipelines: four texture units where the RSX has sixteen (2026-10-12)
 
 Still BCUS98158. Phase 28 stopped at a removed GPU device as the first 3D
