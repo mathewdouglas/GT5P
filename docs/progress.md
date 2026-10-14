@@ -61,6 +61,62 @@ behaviour is the same as before (mask 3), so no before-soak was run. Sound was
 not listened to. Conclusion: no frame-rate gain from pinning; the job
 manager's lanes (Phase 43) remain the critical path.
 
+### 44.2 SPU-side overhead in the job manager's lanes (no frame-rate gain)
+
+The prompt this part started from aimed at the per-job async thread path in
+`spu_workload.c` (thread per job, a print per dispatch, `spu_coh_forget_range`
+and the lock-line lock). That path does not run on the dealership: two full
+runs logged no `dispatch HIT (async)` line, and `spu_coh_forget_range` is only
+called from it. The samples Phase 43 labelled `spu_coh_forget_range` are
+`spu_coh_is_reserved`, the next function: maplook names the nearest symbol at
+or before an address. "SPU job chain 63%" is `spurs-jc`, not the lanes.
+
+Measured instead, on the lanes (`GT5P_SAMPLE=all` now keeps a separate table
+for the lane threads, `cpu=lanes`; `scratch/lanecat.py` sums maplook output
+into categories):
+
+| Share of lane samples | |
+| --- | --- |
+| 51% | the job body's lifted code (`b01376080`; top `0xF8C0`, a 149-line SIMD loop of shuffles, selects, float compares and conversions) |
+| 19% | branch dispatch (`spu_indirect_branch`, `spu_lookup`, the drain step) |
+| 14.5% | channel reads, about half decrementer reads (`QueryPerformanceCounter` per `rdch $ch8`) in the polling loop at `0x4554`-`0x462C` |
+| 5% | MFC/DMA |
+| about 0 | atomics, coherency |
+
+So about 80% of lane time is computation; the lanes are compute-bound.
+
+Changes (ps3recomp, each with a way back):
+
+- `spu_lookup` (spu_channels.c): a per-thread memo of (address, image) to
+  function. The registry only grows and the first match wins, so a hit stays
+  right; misses are not cached. `SPU_LOOKUP_CACHE=0` turns it off. Lookup
+  samples halved (40 to 19), indirect-branch samples 52 to 33.
+- `spu_fi` called `ldexpf` twice per element (eight C-library calls per
+  instruction; `fi` follows every reciprocal estimate), and the four integer
+  conversions called `exp2`. Now exact powers of two built from their bits
+  (spu_helpers.h; `SPU_LIBM_SCALE` at build time restores the calls).
+  `scratch/test_pow2.c`: 10,024,512 comparisons against `ldexpf`/`exp2`, every
+  exponent the instructions can produce plus 2,000,000 whole `fi`
+  instructions, 0 differ. About 4.5% of lane samples were these calls.
+- `getenv` is cached per call site in `spu_channels.c` and `spu_drain.c` too.
+
+Result, `scratch/perf.ps1`, which now also reports the average presents per
+second over the window (`GT5P_PRESENT_PROF`), more stable than one title-bar
+reading: baseline exe 17.5 fps (17.5, 17.5, 17.3), this build 17.6 and 17.4
+(a third run was ended early when the window was closed on the menu). **No
+gain.** Lane CPU stayed at 3.2 cores. Soak, `python scripts/soak.py 10 40`:
+0 bad boots of 10, every run 152 opens. Sound was not listened to; the
+changes are bit-exact by test (scale factors) or return the same function
+(lookup).
+
+Why: no single waste is left. Most of the lanes' time is the lifted SPU code,
+and the lifter keeps all 128 registers in `ctx->gpr[]`, so every instruction
+loads and stores 16-byte values in memory. Also the process uses about 6.4 of
+12 logical CPUs, roughly one busy thread per physical core on this 6-core
+part, so moving work between threads gains little. What would move it
+(untested): register allocation in the SPU lifter (locals per function so the
+compiler keeps values in registers), then perf-2's inline PPU memory access.
+
 ## Phase 43 - Dealership frame rate: 7.4 to 17.5 fps, and the title's own ceiling is about 20 (2026-10-14)
 
 Measured on the Car Dealer page with the Showroom panel open, windowed,

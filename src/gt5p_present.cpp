@@ -332,10 +332,12 @@ static DWORD WINAPI sampler_all_thread(LPVOID)
 {
     const unsigned long long base = (unsigned long long)GetModuleHandleW(NULL);
     const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
-    struct T { DWORD tid; HANDLE h; unsigned long long cpu; int seen; };
+    struct T { DWORD tid; HANDLE h; unsigned long long cpu; int seen, lane; };
     static T th[1024]; int nth = 0;
-    static struct { unsigned long long rva; unsigned n; } b[16384];
-    unsigned nb = 0, total = 0; int round = 0;
+    /* Table 0: every thread but the lanes; table 1: the job manager's lanes. */
+    struct B { unsigned long long rva; unsigned n; };
+    static B bt[2][16384];
+    unsigned nbt[2] = { 0, 0 }, tot[2] = { 0, 0 }; int round = 0;
     ULONGLONG t0 = GetTickCount64(), tl = 0;
     for (;;) {
         Sleep(1);
@@ -353,7 +355,7 @@ static DWORD WINAPI sampler_all_thread(LPVOID)
                     if (k == nth && nth < 1024) {
                         HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
                                               THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
-                        if (h) { th[nth].tid = te.th32ThreadID; th[nth].h = h;
+                        if (h) { th[nth].tid = te.th32ThreadID; th[nth].h = h; th[nth].lane = 0;
                                  th[nth].cpu = thread_cpu_100ns(h); th[nth].seen = 1; nth++; }
                     }
                 } while (Thread32Next(snap, &te));
@@ -370,7 +372,11 @@ static DWORD WINAPI sampler_all_thread(LPVOID)
             HANDLE h = (HANDLE)InterlockedExchangePointer((PVOID volatile*)&s_lane_ring[lane_taken & 1023], NULL);
             lane_taken++;
             if (!h) continue;
-            th[nth].tid = GetThreadId(h); th[nth].h = h; th[nth].cpu = 0; th[nth].seen = 1; nth++;
+            const DWORD tid = GetThreadId(h);
+            int k = 0;
+            for (; k < nth; k++) if (th[k].tid == tid) break;
+            if (k < nth) { th[k].lane = 1; CloseHandle(h); continue; }
+            th[nth].tid = tid; th[nth].h = h; th[nth].cpu = 0; th[nth].seen = 1; th[nth].lane = 1; nth++;
         }
         for (int i = 0; i < nth; i++) {
             const unsigned long long c = thread_cpu_100ns(th[i].h);
@@ -378,15 +384,19 @@ static DWORD WINAPI sampler_all_thread(LPVOID)
             th[i].cpu = c;
             unsigned long long rva;
             if (!sample_rip(th[i].h, base, &rva)) continue;
+            const int t = th[i].lane;
+            B* b = bt[t]; unsigned& nb = nbt[t];
             unsigned k = 0;
             for (; k < nb; k++) if (b[k].rva == rva) { b[k].n++; break; }
             if (k == nb && nb < 16384) { b[k].rva = rva; b[k].n = 1; nb++; }
-            total++;
+            tot[t]++;
         }
         if (GetTickCount64() - t0 < 10000) continue;
-        fprintf(stderr, "[ps-sample] round=%d tid=0 cpu=all %u samples, %u buckets, base 0x%llX\n",
-                round, total, nb, base);
-        for (int r = 0; r < 80; r++) {
+        for (int t = 0; t < 2; t++) {
+        B* b = bt[t]; unsigned nb = nbt[t];
+        fprintf(stderr, "[ps-sample] round=%d tid=%d cpu=%s %u samples, %u buckets, base 0x%llX\n",
+                round, t, t ? "lanes" : "rest", tot[t], nb, base);
+        for (int r = 0; r < 150; r++) {
             unsigned best = 0;
             for (unsigned q = 1; q < nb; q++) if (b[q].n > b[best].n) best = q;
             if (!nb || !b[best].n) break;
@@ -403,7 +413,8 @@ static DWORD WINAPI sampler_all_thread(LPVOID)
                 fprintf(stderr, "[ps-sample]   +0x%llX  %u\n", b[best].rva, b[best].n);
             b[best].n = 0;
         }
-        nb = 0; total = 0; round++;
+        }
+        nbt[0] = nbt[1] = 0; tot[0] = tot[1] = 0; round++;
         t0 = GetTickCount64();
     }
 }
