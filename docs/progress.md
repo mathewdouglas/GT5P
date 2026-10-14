@@ -103,11 +103,34 @@ switch that undoes it:
   constants. `RSX_TEX0_PROBE=<AARRGGBB>` (an experiment that writes guest
   memory) was how this was found.
 
+- **sRGB decode on units 4-15** (`RSX_GAMMA_HI=0`). The environment cube's
+  address register asks for decode on read (bits 20-22 = 7), but the decode
+  was only recorded for units 0-3, so the reflection read about twice too
+  bright and buried the paint: both cars looked like mirror chrome. Units
+  4-15 are now a second key word (`s_pso_ghi`) in the pipeline cache.
+
+How the paint was traced, for the next material problem. `FP_IDCOLOR=3`
+paints every program that samples unit 13, 14 or 15 a flat colour and logs
+`[FPID] fp=... rgb=...`; sampling the screenshot and matching the sRGB-encoded
+logged colours identified the body (`0x05D3E001`) and rims (`0x05D40541`,
+`0x05EFBC01`) exactly. `FP_SHOW=<expr>` with `FP_TEX_FP=<hex>` then showed
+the paint ramp lookup (`r[1]`, unit 0 at row `k5.x`: correct red) and the
+vertex colour (`input.col0`; `VP_ATTRS_RAW=3:<n>` shows the raw bytes, grey
+`60..9F` with `FF`, i.e. baked occlusion). The paint is lighting x a colour
+ramp + specular x `col0.x` + environment x Fresnel x `col0.y`. `FP_SHOW` and
+`FP_IDCOLOR` now also find this decompiler's `float4 _o = ` and
+`float4 _o0 = ` outputs; they did nothing before.
+
 Before: the silver car drew black, glass and roofs a pink-white smear. After:
-silver and black paint read as such, reflections are real. Not yet compared
-with RPCS3 at the same moment; the cars may still be too bright. Still
-different from RPCS3: plain grey wheels, and no reflection of the cars in the
-floor. Also seen: the 16x16 tables on units 11 and 15 have the unnormalised
+Formula Red and Sebring Silver read as on RPCS3, with reflections in
+proportion (the red is perhaps a little less saturated). Still different from
+RPCS3: the rims. Their program (lighting x the 128x128 DXT3 rim texture on
+unit 0) draws only a solid grey disc with a dark hub; the spokes are not cut
+out by alpha (the program outputs a constant alpha), so they are geometry that
+is not drawn or not visible. No failed pipeline, skipped primitive or
+unsupported format is logged; `CULL_OFF=1` turns culling off everywhere and
+only shows the sky dome's inside, so culling is untested. Also missing: the
+reflection of the cars in the floor. Also seen: the 16x16 tables on units 11 and 15 have the unnormalised
 coordinate bit set, which the backend only honours on units 0-3, and units
 4-15 use the fixed sampler bank rather than the title's filter and wrap.
 

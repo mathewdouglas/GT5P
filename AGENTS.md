@@ -123,7 +123,9 @@ Each corrects the one before.
   fps. **A dealership stall now hits about 1 run in 3** (lanes spin at ~1 fps,
   or presents stop); the pre-session exe never did. Not found yet; see 46.3.
   Car materials: cube maps on units 4-15 (`RSX_CUBE_HI=0`), cubes whose faces
-  are render targets (`RSX_CUBE_RT=0`), constant remaps (`RSX_REMAP_CONST=0`);
+  are render targets (`RSX_CUBE_RT=0`), constant remaps (`RSX_REMAP_CONST=0`),
+  sRGB decode on units 4-15 (`RSX_GAMMA_HI=0`); `FP_IDCOLOR=3` and `FP_SHOW`
+  trace a material (46.4); the rims are still missing;
   `RSX_TEXUNITDBG=<n>` lists every bound unit of the first n programs.
   **F3 in the game window shows a live profiler** (`GT5P_PROFVIEW=1` shows
   it at start, `=0` disables it): fps, frame intervals by vblank count, the
