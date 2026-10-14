@@ -9,6 +9,58 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 44 - Performance follow-ups (2026-10-15)
+
+Each part is one change, measured the Phase 43 way: Car Dealer page with the
+Showroom panel open, windowed, `PS3_VERBOSE=0`, warm shader cache.
+`scratch/perf.ps1 -Tag <t> -N 3 [NAME=VALUE ...]` repeats it N times: the
+title-bar fps at 85 s, then 15 s of CPU (process total, and threads that
+exited, which are the job manager's lanes). Medians of three runs. The
+baseline exe is in `scratch/baseline/`.
+
+Baseline, re-measured this session: **17.0 fps** (17.44, 17.0, 16.73);
+process 6.4 cores, of which 3.2 in lanes; present 83%, main 77%, `PDI:1` 77%,
+`spurs-jc` 69%.
+
+### 44.1 Where the guest PPU threads run
+
+`PS3_PPU_PRIO_SCHED=2` (set by `src/main.cpp`) pins every guest PPU thread to
+mask 3. `scratch/topo.c` (GetLogicalProcessorInformationEx) on this machine
+(i5-12400F, 6 cores, 12 threads, no efficiency cores): core 0 is logical CPUs
+0 and 1, core 1 is 2 and 3, and so on. So mask 3 is both hardware threads of
+one physical core, as suspected.
+
+| Mask | fps (3 runs) | Median |
+| --- | --- | --- |
+| 3 (legacy, both threads of core 0), new build | 17.0, 17.19, 17.19 | 17.2 |
+| Topology: first CPU of cores 1 and 2 (CPUs 2, 4) | 16.49, 16.0, 16.24 | 16.2 |
+| Both threads of core 1 (`PS3_PPU_CORES=C`) | 16.25, 16.0, 17.72 | 16.3 |
+| Unpinned (`PS3_PPU_PRIO_SCHED=0`) | 15.52, 15.5, 16.0 | 15.5 |
+| Mask 3 + present thread and lanes off CPUs 0-1 (`PS3_HOST_AVOID_PPU=1`) | 17.19, 17.46, 18.0 | 17.5 |
+
+Unpinned the main thread rises to 98% of a core and the frame rate falls:
+more CPU, fewer frames. Separate cores are slower than one shared core.
+Hypothesis, not tested: `PDI:1` mostly polls a queue the main thread and the
+jobs update, and on one core the two share L1/L2, so the hand-offs are
+cheaper; spinning on a separate core may also take memory bandwidth.
+
+Kept (ps3recomp `runtime/syscalls/sys_ppu_thread.c`, `src/gt5p_present.cpp`):
+
+- `PS3_PPU_CORES=<hex mask>` picks the CPUs; `PS3_PPU_CORES=topo` chooses by
+  topology (first logical CPU of n different physical cores, core 0 skipped
+  on 3+ cores, performance cores first, group 0). The default stays mask 3,
+  because it measured fastest. One line at the first pinned thread:
+  `[sched] guest PPU threads on logical CPUs 0,1 ...`.
+- `PS3_HOST_AVOID_PPU=1` (off by default): the present thread and every
+  job-manager lane get the process mask minus the PPU CPUs (0xFFC here). The
+  gain is within the run-to-run spread, so it is not the default.
+
+Soak on the default build: `python scripts/soak.py 10 40`, **0 bad boots of
+10**, every run 152 `GT.VOL` opens and about 1,640 flips. The default
+behaviour is the same as before (mask 3), so no before-soak was run. Sound was
+not listened to. Conclusion: no frame-rate gain from pinning; the job
+manager's lanes (Phase 43) remain the critical path.
+
 ## Phase 43 - Dealership frame rate: 7.4 to 17.5 fps, and the title's own ceiling is about 20 (2026-10-14)
 
 Measured on the Car Dealer page with the Showroom panel open, windowed,

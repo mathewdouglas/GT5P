@@ -288,6 +288,36 @@ static DWORD WINAPI sampler_thread(LPVOID p)
 extern "C" void (*g_spurs_lane_start_hook)(void);
 static HANDLE s_lane_ring[1024];
 static volatile LONG s_lane_ring_n = 0;
+/* PS3_HOST_AVOID_PPU=1: the present thread and the job manager's lanes are
+ * kept off the logical CPUs the guest PPU threads are pinned to
+ * (sys_ppu_thread.c, PS3_PPU_PRIO_SCHED / PS3_PPU_CORES), so they do not take
+ * time from them. An experiment (Phase 44). */
+extern "C" DWORD_PTR ppu_sched_mask(void);
+static DWORD_PTR host_avoid_mask(void)
+{
+    static int on = -1; static DWORD_PTR m = 0;
+    if (on < 0) {
+        on = getenv("PS3_HOST_AVOID_PPU") ? 1 : 0;
+        if (on) {
+            DWORD_PTR pm = 0, sm = 0;
+            GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm);
+            DWORD_PTR ppu = ppu_sched_mask();
+            if (!ppu) ppu = 3;   /* the default, before any guest thread set it */
+            m = pm & ~ppu;
+            fprintf(stderr, "[sched] PS3_HOST_AVOID_PPU: present thread and lanes on mask 0x%llX\n",
+                    (unsigned long long)m);
+        }
+    }
+    return on ? m : 0;
+}
+static void sampler_lane_hook(void);
+static int s_sampler_lanes = 0;
+static void lane_start_hook(void)
+{
+    DWORD_PTR m = host_avoid_mask();
+    if (m) SetThreadAffinityMask(GetCurrentThread(), m);
+    if (s_sampler_lanes) sampler_lane_hook();
+}
 static void sampler_lane_hook(void)
 {
     HANDLE h = NULL;
@@ -383,7 +413,8 @@ extern "C" void gt5p_start_sampler(void)
     const char* e = getenv("GT5P_SAMPLE");
     if (!e) return;
     if (!strcmp(e, "all")) {
-        g_spurs_lane_start_hook = sampler_lane_hook;
+        s_sampler_lanes = 1;
+        g_spurs_lane_start_hook = lane_start_hook;
         CreateThread(NULL, 0, sampler_all_thread, NULL, 0, NULL);
         return;
     }
@@ -395,6 +426,10 @@ static DWORD WINAPI present_thread(LPVOID)
 {
     fprintf(stderr, "[hostthread] present hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
     gt5p_start_sampler();
+    if (host_avoid_mask()) {
+        SetThreadAffinityMask(GetCurrentThread(), host_avoid_mask());
+        g_spurs_lane_start_hook = lane_start_hook;
+    }
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "Gran Turismo 5 Prologue (ps3recomp)";
 

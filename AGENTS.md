@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 43 of
-[docs/progress.md](docs/progress.md); read 43 down to 19 in that order.
+Details and evidence are in Phases 17 to 44 of
+[docs/progress.md](docs/progress.md); read 44 down to 19 in that order.
 Each corrects the one before.
 
 - **A save exists now, so the title boots straight to the main menu**
@@ -115,7 +115,12 @@ Each corrects the one before.
   the walker for ring space. Their lanes are threads made per dispatch, so a
   per-thread CPU table misses about 3 cores: use `scratch/cpu3.ps1` and
   `GT5P_SAMPLE=all` (or `GT5P_SAMPLE=4` for the busiest live threads), then
-  `scratch/maplook.py build/gt5p.map <log>`.
+  `scratch/maplook.py build/gt5p.map <log>`. `scratch/perf.ps1 -Tag <t> -N 3`
+  repeats the Phase 43 measurement and prints the median (Phase 44).
+- Guest PPU threads stay on mask 3 (both hardware threads of core 0): it
+  measured faster than two separate cores or no pinning (Phase 44.1).
+  `PS3_PPU_CORES=<hex>|topo` to change it, `PS3_HOST_AVOID_PPU=1` keeps the
+  present thread and lanes off those CPUs (within noise).
   Switches that undo the speed-ups: `RSX_VFAST=0` (`=check` compares),
   `VM_SLOW=1`, `HLE_ROUTE_MEMO=0`; `getenv` is cached per call site in hot
   files (`include/ps3emu/getenv_cache.h`, ps3recomp), so a switch must be
