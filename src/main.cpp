@@ -732,6 +732,18 @@ int main(int argc, char* argv[])
     static char out_buf[1 << 16], err_buf[1 << 16];
     setvbuf(stdout, out_buf, _IOFBF, sizeof out_buf);
     setvbuf(stderr, err_buf, _IOFBF, sizeof err_buf);
+    /* A run that is killed, as the test scripts stop one, loses whatever is
+     * still in those buffers: up to 64 KB, which hid everything the title
+     * logged after choosing a manufacturer (Phase 41). Flush both every
+     * GT5P_FLUSH_MS (default 1000; 0 turns it off). */
+    {
+        const char* fe = getenv("GT5P_FLUSH_MS");
+        static DWORD flush_ms = fe ? (DWORD)strtoul(fe, nullptr, 10) : 1000;
+        if (flush_ms)
+            CreateThread(nullptr, 0, [](LPVOID) -> DWORD {
+                for (;;) { Sleep(flush_ms); fflush(stdout); fflush(stderr); }
+            }, nullptr, 0, nullptr);
+    }
 
     printf("=== Gran Turismo 5 Prologue Recompiled ===\n");
     printf("Built with ps3recomp | %llu lifted functions\n\n",

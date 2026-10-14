@@ -9,6 +9,55 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 41 - The dealership loads what RPCS3 loads; a lost log tail and a form encoder (2026-10-14)
+
+Phase 40 said the title "opens no more files after `DealerTopRoot.gpb`". That
+was wrong. `src/main.cpp` gives stdout and stderr 64 KB buffers, and the test
+scripts end a run with `Stop-Process -Force`, so the last 64 KB of output was
+never written: everything after choosing a manufacturer. A thread now flushes
+both streams every second (`GT5P_FLUSH_MS`, default 1000, 0 turns it off).
+
+With the tail kept, a run that picks Acura (`scratch\inp.ps1 90`, the
+Phase 39 `PAD_HOLD`) reads, after `DealerTopRoot.gpb`: `TopMenuTemplate.gpb`,
+scene script `s0079`, `DLSGadgetRoot.gpb`, character `mb14`, motions
+`m0105` to `m0112`, scripts `s0078`, then `s0081` and `s0080`. An RPCS3 log of
+the same steps (Acura, waited for the showroom) has the same list up to
+`m0110`. The only difference: RPCS3 also stats
+`/dev_hdd1/grim/cache/contents/%2Fnews%2F%2Fus%2Froot.xml` twice right after
+`TopMenuTemplate.gpb`. Our build never does. The window still shows only the
+Acura logo at 90 s, at about 10 frames a second. So the dealership is not
+waiting on a file; what it waits on is still open.
+
+Found on the way: four cache paths came out with a trailing `=`
+(`serverlist2_us.xml=`, `tv2_us_14.xml=`, `tv2_us_root.xml=`,
+`tv_0_448916194.pam=`). ps3recomp's `cellHttpUtilFormUrlEncode` took
+`(out, size, key, value, written)` and wrote `key=value`; the SDK's takes one
+string, `(out, size, in, inSize, required)`. The length was read as a pointer to
+an empty value. It now encodes one string (space to `+`, unreserved bytes
+kept, the rest `%XX`, terminated; `required` counts the terminator). The paths
+now match RPCS3's.
+
+RPCS3 finds those files because its hard disk holds the game's own install
+(`dev_hdd0/game/BCUS98158/USRDIR/grim/file/contents`, 1,003 files, 2 GB:
+`tv2_*.xml`, `.img`, `.pam` movies). Ours has none. Two tests, with copies
+under `gamedata/` (ignored):
+
+- All 1,003 files: at boot the title reads `tv2_us_14.xml`, loads
+  `MovieRoot.gpb` and opens `tv_50_519336755.pam`. ps3recomp's `cellPamf`
+  reads it as "0 streams" (version `0041`). Then a call goes through a NULL
+  function pointer from `func_0099CAA0+0x608` many times, and the run ends at
+  15 s on an access violation in `func_0099CAA0`. Not investigated: the movie
+  path is separate from the dealership.
+- Only the 28 `.xml` files: boot as before, and the dealership is the same
+  logo at 90 s. The news files are not what it waits for.
+
+The copies are in `gamedata/contents_aside`; the `contents` folder is empty
+again, as before this phase.
+
+Next, still: why the dealership draws only its environment and reflection
+passes. A hypothesis, not tested: it waits for a per-frame result (a report,
+a label or an SPU job's flag) that never arrives, rather than for data.
+
 ## Phase 40 - Dealership frames flow; the game then sits on the logo (2026-10-14)
 
 Continues Phase 39. After choosing a manufacturer the title now renders about

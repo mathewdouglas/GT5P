@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 40 of
-[docs/progress.md](docs/progress.md); read 40 down to 19 in that order.
+Details and evidence are in Phases 17 to 41 of
+[docs/progress.md](docs/progress.md); read 41 down to 19 in that order.
 Each corrects the one before.
 
 - **A save exists now, so the title boots straight to the main menu**
@@ -102,8 +102,13 @@ Each corrects the one before.
   (Phases 39-40).** The render jobs now run on five virtual SPUs, their
   blocks in the display list are waited for (`0xFFFFFFFF` = not filled yet)
   and drawn, and frames continue at about 10 a second. The title then draws
-  only its environment and reflection passes and opens no more files after
-  `DealerTopRoot.gpb`. Next: compare with RPCS3's file sequence at this point.
+  only its environment and reflection passes. It loads the same files as
+  RPCS3 (Phase 41), so it is not waiting on data; what it waits on is open.
+- Logs: stdout and stderr are flushed every second (`GT5P_FLUSH_MS`), so a
+  killed run keeps its tail. Before Phase 41 the last 64 KB was lost.
+- The game's TV/news files (RPCS3's `grim/file/contents`, 2 GB) are not in
+  `gamedata/`. With them the title plays a PAMF movie at boot, and the run
+  crashes in `func_0099CAA0` (Phase 41).
 - Antialiasing: a target that asks for it is drawn multisampled, shaded per
   sample, and resolved when read (`RSX_MSAA=<n>`, default 4, 1 turns it off;
   `RSX_SSAA=0` shades per pixel).
@@ -303,7 +308,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: what the dealership waits for after `DealerTopRoot.gpb` (Phase 40); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: what the dealership waits for once its files are loaded (Phase 41); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

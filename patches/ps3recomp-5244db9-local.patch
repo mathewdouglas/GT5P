@@ -612,7 +612,7 @@ index f2b4c11..e7723e4 100644
  }
  
 diff --git a/libs/network/cellHttpUtil.c b/libs/network/cellHttpUtil.c
-index 2c557f4..ccaebd6 100644
+index 2c557f4..c890d64 100644
 --- a/libs/network/cellHttpUtil.c
 +++ b/libs/network/cellHttpUtil.c
 @@ -38,167 +38,140 @@ static int is_unreserved(u8 c)
@@ -889,8 +889,85 @@ index 2c557f4..ccaebd6 100644
      return CELL_OK;
  }
  
+@@ -301,43 +274,45 @@ s32 cellHttpUtilUnescapeUri(u8* out, u32 outSize,
+  * Form URL encoding
+  * -----------------------------------------------------------------------*/
+ 
++/* The SDK's form encoder takes ONE string and its length:
++ * (out, size, in, inSize, required). This used to be a key/value encoder
++ * writing "key=value", so the length was read as a pointer to the value and
++ * Gran Turismo 5 Prologue's cache file names came back as
++ * "serverlist2_us.xml=" (GT5P docs/progress.md, Phase 41). Space becomes
++ * '+', the unreserved set passes, the rest is %XX; the output is terminated.
++ * required (when given) is the size needed, terminator included. */
+ s32 cellHttpUtilFormUrlEncode(char* out, u32 outSize,
+-                               const char* key, const char* value, u32* written)
++                               const char* in, u32 inSize, u32* required)
+ {
+-    if (!out || !key || !value)
++    out = GUEST_PTR(out, char*);
++    in  = GUEST_PTR(in, const char*);
++    if (!in)
+         return (s32)CELL_HTTP_UTIL_ERROR_INVALID_PARAM;
+ 
+-    out   = GUEST_PTR(out, char*);
+-    key   = GUEST_PTR(key, const char*);
+-    value = GUEST_PTR(value, const char*);
+-
+-    u32 key_esc_len = outSize;
+-    u32 pos = 0;
+-
+-    /* Encode key */
+-    s32 rc = http_escape_uri_host(out, outSize, (const u8*)key,
+-                                    (u32)strlen(key), &key_esc_len);
+-    if (rc != CELL_OK) return rc;
+-    pos = key_esc_len;
+-
+-    /* = */
+-    if (pos >= outSize)
++    u32 need = 0;
++    for (u32 i = 0; i < inSize && in[i]; i++)
++        need += (is_unreserved((u8)in[i]) || in[i] == ' ') ? 1u : 3u;
++    if (required)
++        vm_write32((u32)(uintptr_t)required, need + 1);
++    if (!out)
++        return CELL_OK;
++    if (need + 1 > outSize)
+         return (s32)CELL_HTTP_UTIL_ERROR_NO_BUFFER;
+-    out[pos++] = '=';
+-
+-    /* Encode value */
+-    u32 val_esc_len = outSize - pos;
+-    rc = http_escape_uri_host(out + pos, outSize - pos, (const u8*)value,
+-                                (u32)strlen(value), &val_esc_len);
+-    if (rc != CELL_OK) return rc;
+-    pos += val_esc_len;
+-
+-    if (pos < outSize)
+-        out[pos] = '\0';
+-
+-    if (written)
+-        vm_write32((u32)(uintptr_t)written, (u32)pos);
+ 
++    u32 pos = 0;
++    for (u32 i = 0; i < inSize && in[i]; i++) {
++        u8 c = (u8)in[i];
++        if (c == ' ') {
++            out[pos++] = '+';
++        } else if (is_unreserved(c)) {
++            out[pos++] = (char)c;
++        } else {
++            out[pos++] = '%';
++            out[pos++] = s_hex[(c >> 4) & 0xF];
++            out[pos++] = s_hex[c & 0xF];
++        }
++    }
++    out[pos] = '\0';
+     return CELL_OK;
+ }
+ 
 diff --git a/libs/network/cellHttpUtil.h b/libs/network/cellHttpUtil.h
-index a0d6dce..43e2678 100644
+index a0d6dce..1f36e9b 100644
 --- a/libs/network/cellHttpUtil.h
 +++ b/libs/network/cellHttpUtil.h
 @@ -27,16 +27,10 @@ extern "C" {
@@ -914,6 +991,15 @@ index a0d6dce..43e2678 100644
  
  /* ---------------------------------------------------------------------------
   * URL parsing
+@@ -61,7 +55,7 @@ s32 cellHttpUtilUnescapeUri(u8* out, u32 outSize,
+  * -----------------------------------------------------------------------*/
+ 
+ s32 cellHttpUtilFormUrlEncode(char* out, u32 outSize,
+-                               const char* key, const char* value, u32* written);
++                               const char* in, u32 inSize, u32* required);
+ 
+ /* Base64 encode/decode (used for HTTP Basic auth) */
+ s32 cellHttpUtilBase64Encode(char* out, u32 outSize,
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
 index 688ff04..15feba1 100644
 --- a/libs/spurs/cellSpurs.c
