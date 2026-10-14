@@ -125,7 +125,9 @@ Each corrects the one before.
   Car materials: cube maps on units 4-15 (`RSX_CUBE_HI=0`), cubes whose faces
   are render targets (`RSX_CUBE_RT=0`), constant remaps (`RSX_REMAP_CONST=0`),
   sRGB decode on units 4-15 (`RSX_GAMMA_HI=0`); `FP_IDCOLOR=3` and `FP_SHOW`
-  trace a material (46.4); the rims are still missing;
+  trace a material (46.4); depth test follows the title (`RSX_DEPTH_STATE=0`);
+  the rims are never sent by the title (46.5, SPU job lead); frame captures
+  that ignore desktop windows: `CELLMARK_DUMP*` (46.5);
   `RSX_TEXUNITDBG=<n>` lists every bound unit of the first n programs.
   **F3 in the game window shows a live profiler** (`GT5P_PROFVIEW=1` shows
   it at start, `=0` disables it): fps, frame intervals by vblank count, the

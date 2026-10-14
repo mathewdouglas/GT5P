@@ -130,7 +130,41 @@ out by alpha (the program outputs a constant alpha), so they are geometry that
 is not drawn or not visible. No failed pipeline, skipped primitive or
 unsupported format is logged; `CULL_OFF=1` turns culling off everywhere and
 only shows the sky dome's inside, so culling is untested. Also missing: the
-reflection of the cars in the floor. Also seen: the 16x16 tables on units 11 and 15 have the unnormalised
+reflection of the cars in the floor.
+
+### 46.5 The rims are never drawn; depth state now follows the title
+
+- **The disc in each wheel is the brake rotor.** `RSX_TEXDUMP=<hex offset>`
+  (new) wrote the program's unit-0 texture (128x128 DXT3) to `scratch/`;
+  decoded (`scratch/dxt.py`) it is a grey rotor with a dark centre, exactly
+  what is drawn. The five-spoke rim in front of it is missing.
+- **Not hidden.** `DEPTH_OFF=1` shows the whole car through itself (chassis,
+  interior, all four wheels from both sides) and still no rims. `CULL_OFF_FP`
+  (new: culling off for listed programs) changes nothing.
+- **Not dropped by the backend.** `RSX_DROPDBG=1` (new) counts, per fragment
+  program and primitive, draw callbacks against vertices emitted: nothing has
+  calls without vertices. `RSX_UNKNOWN=1` (new) counts methods no handler
+  knows: no draw method among them (no `INLINE_ARRAY`); the unhandled ones are
+  state (texture-coordinate control `0x0B40`-`0x0B64`, vertex cache
+  invalidates `0x1710`/`0x1714`, polygon offset `0x0A68`/`0x0A78`/`0x0A7C`,
+  back-face stencil `0x034C`-`0x0378`, window offset `0x02B8`, `0x1D88`).
+- So the title never sends the rim draws. Its render lists are built by SPU
+  jobs; at the page job image 4 (`j307E5DC7`) keeps handing code at LS
+  `0x1DC0`, `0x1EA4`, `0x1EE0` to the interpreter (`[spu-smc] microstep`), which
+  AGENTS.md says not to trust. Hypothesis, not tested: a job that should emit
+  the rims misbehaves there, or its culling drops them.
+- **Depth state** (`RSX_DEPTH_STATE=0` undoes it). Every pipeline tested
+  `LESS_EQUAL` and wrote depth whatever the title set; it now uses the title's
+  compare and write mask (bits 28-31 of the stencil key word), and a disabled
+  test is `ALWAYS` without writes. The page looks the same. This was
+  suspected for the rims and is not their cause, but it was wrong either way.
+- Frame captures for comparisons: `CELLMARK_DUMP=<n> CELLMARK_DUMP_MINDRAWS=1700
+  CELLMARK_DUMP_EVERY=<k> CELLMARK_DUMP_DIR=<dir>/` writes what the renderer
+  presented; desktop screenshots pick up whatever window is on top.
+- Still open from an outside review, not checked: shadow-map compare on
+  sampling (possibly the black spikes on the rear deck), black tail-light
+  lenses, the floor reflection, units 4-15's filter/wrap and unnormalised
+  coordinates. Also seen: the 16x16 tables on units 11 and 15 have the unnormalised
 coordinate bit set, which the backend only honours on units 0-3, and units
 4-15 use the fixed sampler bank rather than the title's filter and wrap.
 
