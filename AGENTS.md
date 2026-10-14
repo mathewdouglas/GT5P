@@ -110,8 +110,12 @@ Each corrects the one before.
   Phases 39-41 describe the logo-only stage it replaces.
 - **Dealership frame rate (Phase 43): 17.5 fps, up from 7.4.** The title's
   own threads cap it at about 20 (`RSX_VTX_SKIP=1` drops every draw and still
-  only reaches 20): main, `PDI:1` and the SPU job chain, not the backend.
-  Profile with `GT5P_SAMPLE=4` and `scratch/maplook.py build/gt5p.map <log>`.
+  only reaches 20). The critical path is the job manager's SPU render jobs
+  (one lane per workload, `SPURS_READY_LANES=0`, gives 6.8 fps), which wait on
+  the walker for ring space. Their lanes are threads made per dispatch, so a
+  per-thread CPU table misses about 3 cores: use `scratch/cpu3.ps1` and
+  `GT5P_SAMPLE=all` (or `GT5P_SAMPLE=4` for the busiest live threads), then
+  `scratch/maplook.py build/gt5p.map <log>`.
   Switches that undo the speed-ups: `RSX_VFAST=0` (`=check` compares),
   `VM_SLOW=1`, `HLE_ROUTE_MEMO=0`; `getenv` is cached per call site in hot
   files (`include/ps3emu/getenv_cache.h`, ps3recomp), so a switch must be
@@ -325,7 +329,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the guest-side ceiling of about 20 fps on the dealership (Phase 43: what `func_00BA97B0` on `PDI:1` does, and RPCS3's import rate for comparison), then the backend's vertex work (25 ms a frame); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the dealership's 17.5 fps (Phase 43: SPU job execution speed, then a cheaper walker, then inline PPU memory access); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

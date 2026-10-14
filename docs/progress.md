@@ -78,10 +78,53 @@ Where it stands at 17.5 fps:
   Whether `PDI:1` is computing or polling is not known; next is to read
   `func_00BA97B0` in Ghidra and compare its import rate per frame with
   RPCS3's log.
-- Seen once, not reproduced in two later runs: after 15 s at 16.5 fps the
-  presents stopped (0 in 5 s) with three `spurs-pm-worker` threads at 76%
-  each.
+- Seen in 2 of about 10 runs: the frame rate falls to about 1 fps, with three
+  job-manager lanes at 99% each in the job body's polling loop
+  (`b01376080` at `0x4554`-`0x462C`, Phase 38: transfer, wait, compare,
+  delay). Cause not found. Hypothesis to test first: Phase 42 raised
+  `SPU_DMA_REPEAT_MS` from 5 s to 120 s, so a poll that used to be cut off
+  after 5 s now runs for two minutes.
 - The page renders as before (checked by capture).
+
+### Later in Phase 43: the job manager is the critical path
+
+- **Hidden CPU.** The job manager's lanes are threads created for each
+  dispatch (2,455 in 75 s) and live for milliseconds, so a per-thread CPU
+  table misses them. Over 15 s the process used 97 s of CPU and 48.6 s of it
+  was in threads that had already exited: about 3.2 cores of lanes.
+  `scratch/cpu3.ps1` prints process, live and exited CPU.
+  `GT5P_SAMPLE=all` samples the whole process, and lanes register themselves
+  through `g_spurs_lane_start_hook` (cellSpurs.c) so they are sampled for
+  their whole life.
+- **One lane per workload** (`SPURS_READY_LANES=0`): 6.8 fps with the SPURS
+  kernel thread at 97%. Normally both job-manager workloads (wid 0 and 1)
+  run on 5 lanes, their maxContention (`SPURS_KERN_STAT=1`). The jobs'
+  throughput sets the frame rate: about 150 ms of CPU a frame.
+- So the frame is a pipeline: SPU render jobs write command lists into
+  per-SPU rings, the present thread's walker drains them (36 ms a frame,
+  mostly vertex expansion), and jobs wait for ring space while it is behind.
+  That is why freeing the backend only lifts the ceiling to 20 fps.
+- In the lanes, the job body's own code (`b01376080`, top at `0xF8C0`) and
+  the SPU runtime (channel waits in `spu_rdch`, MFC, branch dispatch,
+  `spu__pshufb_tab`) take about equal shares; the polling loop at `0x462C`
+  is a small part. The profile is flat: no single function left above about
+  5% of the process.
+- Two unconditional prints were removed from the lanes' path:
+  `[mfc-list] RESUME-ELEMS` (six `fprintf` calls per resume, about 8,000 a
+  second; now `MFC_LIST_DBG=1`) and `[spurs-pm] poll` (about 1,000 a second;
+  now `SPURS_PM_TRACE=1`). The log went from about 270,000 lines to 4,270 in
+  a run. No measurable frame-rate change.
+
+What would raise it further, largest first (none tried):
+
+1. Faster SPU job execution: the lifted SPU code and the runtime under it
+   (channel and MFC emulation, branch dispatch), since that is the critical
+   path at 5 lanes a workload.
+2. A cheaper walker: draw indexed from the unique vertices (strips and
+   lists are expanded to about 980,000 vertices a frame now) or decode
+   vertices on the GPU, so the rings drain sooner.
+3. Inline fast paths for lifted PPU loads and stores (the header the lifter
+   emits; rebuilds all ten chunks), for the main thread.
 
 ## Phase 42 - The Car Dealer page draws: the backend was dropping most of each frame (2026-10-14)
 

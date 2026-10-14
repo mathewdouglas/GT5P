@@ -278,10 +278,115 @@ static DWORD WINAPI sampler_thread(LPVOID p)
     }
 }
 
+/* GT5P_SAMPLE=all: one table for the whole process. Threads are re-listed
+ * every 250 ms and each is sampled about once a millisecond while it has used
+ * CPU since its last sample, so short-lived threads (the job manager's lanes,
+ * created for each dispatch) are counted too. Every 10 s the 80 busiest
+ * buckets, in the same format, with round=N tid=0. */
+/* Lane threads announce themselves (cellSpurs.c's g_spurs_lane_start_hook):
+ * the sampler takes each handle from this ring on its next pass. */
+extern "C" void (*g_spurs_lane_start_hook)(void);
+static HANDLE s_lane_ring[1024];
+static volatile LONG s_lane_ring_n = 0;
+static void sampler_lane_hook(void)
+{
+    HANDLE h = NULL;
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h,
+                         0, FALSE, DUPLICATE_SAME_ACCESS)) return;
+    LONG k = InterlockedIncrement(&s_lane_ring_n) - 1;
+    HANDLE old = (HANDLE)InterlockedExchangePointer((PVOID volatile*)&s_lane_ring[k & 1023], h);
+    if (old) CloseHandle(old);   /* the sampler fell 1,024 behind; drop the oldest */
+}
+
+static DWORD WINAPI sampler_all_thread(LPVOID)
+{
+    const unsigned long long base = (unsigned long long)GetModuleHandleW(NULL);
+    const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    struct T { DWORD tid; HANDLE h; unsigned long long cpu; int seen; };
+    static T th[1024]; int nth = 0;
+    static struct { unsigned long long rva; unsigned n; } b[16384];
+    unsigned nb = 0, total = 0; int round = 0;
+    ULONGLONG t0 = GetTickCount64(), tl = 0;
+    for (;;) {
+        Sleep(1);
+        const ULONGLONG now = GetTickCount64();
+        if (now - tl >= 250) {
+            tl = now;
+            for (int i = 0; i < nth; i++) th[i].seen = 0;
+            HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            THREADENTRY32 te; te.dwSize = sizeof te;
+            if (snap != INVALID_HANDLE_VALUE) {
+                if (Thread32First(snap, &te)) do {
+                    if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
+                    int k = 0;
+                    for (; k < nth; k++) if (th[k].tid == te.th32ThreadID) { th[k].seen = 1; break; }
+                    if (k == nth && nth < 1024) {
+                        HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT |
+                                              THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+                        if (h) { th[nth].tid = te.th32ThreadID; th[nth].h = h;
+                                 th[nth].cpu = thread_cpu_100ns(h); th[nth].seen = 1; nth++; }
+                    }
+                } while (Thread32Next(snap, &te));
+                CloseHandle(snap);
+            }
+            for (int i = 0; i < nth; ) {
+                if (!th[i].seen || WaitForSingleObject(th[i].h, 0) == WAIT_OBJECT_0) {
+                    CloseHandle(th[i].h); th[i] = th[--nth]; continue; }
+                i++;
+            }
+        }
+        static LONG lane_taken = 0;
+        while (lane_taken < s_lane_ring_n && nth < 1024) {
+            HANDLE h = (HANDLE)InterlockedExchangePointer((PVOID volatile*)&s_lane_ring[lane_taken & 1023], NULL);
+            lane_taken++;
+            if (!h) continue;
+            th[nth].tid = GetThreadId(h); th[nth].h = h; th[nth].cpu = 0; th[nth].seen = 1; nth++;
+        }
+        for (int i = 0; i < nth; i++) {
+            const unsigned long long c = thread_cpu_100ns(th[i].h);
+            if (c == th[i].cpu) continue;          /* idle since the last look */
+            th[i].cpu = c;
+            unsigned long long rva;
+            if (!sample_rip(th[i].h, base, &rva)) continue;
+            unsigned k = 0;
+            for (; k < nb; k++) if (b[k].rva == rva) { b[k].n++; break; }
+            if (k == nb && nb < 16384) { b[k].rva = rva; b[k].n = 1; nb++; }
+            total++;
+        }
+        if (GetTickCount64() - t0 < 10000) continue;
+        fprintf(stderr, "[ps-sample] round=%d tid=0 cpu=all %u samples, %u buckets, base 0x%llX\n",
+                round, total, nb, base);
+        for (int r = 0; r < 80; r++) {
+            unsigned best = 0;
+            for (unsigned q = 1; q < nb; q++) if (b[q].n > b[best].n) best = q;
+            if (!nb || !b[best].n) break;
+            HMODULE hm = NULL; char mn[MAX_PATH] = "";
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCSTR)(base + (b[best].rva & ~1ull)), &hm) &&
+                hm && (unsigned long long)hm != base) {
+                GetModuleFileNameA(hm, mn, sizeof mn);
+                const char* sl = strrchr(mn, '\\');
+                fprintf(stderr, "[ps-sample]   %s+0x%llX  %u\n", sl ? sl + 1 : mn,
+                        base + b[best].rva - (unsigned long long)hm, b[best].n);
+            } else
+                fprintf(stderr, "[ps-sample]   +0x%llX  %u\n", b[best].rva, b[best].n);
+            b[best].n = 0;
+        }
+        nb = 0; total = 0; round++;
+        t0 = GetTickCount64();
+    }
+}
+
 extern "C" void gt5p_start_sampler(void)
 {
     const char* e = getenv("GT5P_SAMPLE");
     if (!e) return;
+    if (!strcmp(e, "all")) {
+        g_spurs_lane_start_hook = sampler_lane_hook;
+        CreateThread(NULL, 0, sampler_all_thread, NULL, 0, NULL);
+        return;
+    }
     int n = atoi(e); if (n <= 0) n = 4; if (n > 8) n = 8;
     CreateThread(NULL, 0, sampler_thread, (LPVOID)(uintptr_t)n, 0, NULL);
 }
