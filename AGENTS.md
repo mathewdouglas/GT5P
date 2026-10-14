@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 39 of
-[docs/progress.md](docs/progress.md); read 39 down to 19 in that order.
+Details and evidence are in Phases 17 to 40 of
+[docs/progress.md](docs/progress.md); read 40 down to 19 in that order.
 Each corrects the one before.
 
 - **A save exists now, so the title boots straight to the main menu**
@@ -98,16 +98,15 @@ Each corrects the one before.
   agreement that is no longer shown; with the save, drive the dealership
   with `scratch\inp.ps1 90 "PAD_HOLD=28000-28300:CROSS,34000-34300:CROSS,46000-46300:CROSS"`.
   Move `gamedata/dev_hdd0` aside to get the first-boot screens back.
-- **Choosing a manufacturer still shows the logo on black (Phase 39).**
-  Four faults behind it are fixed: jobs run before `cellSpursReadyCountStore`
-  (`SPURS_READY_GATE=1`, now set by `src/main.cpp`), the interrupt handler's
-  register save scribbling over the job's stack (`stqa` decode), a
-  `maxContention` of 1 for every workload, and one host thread for all
-  workloads. Open: the second frame's jobs fill their output rings and wait
-  on RSX labels `0x48`-`0x51` that nothing moves. Next: how job output is
-  linked into the RSX stream.
-- Antialiasing: a target that asks for it is drawn multisampled and resolved
-  when read (`RSX_MSAA=<n>`, default 4; 1 turns it off).
+- **Choosing a manufacturer: frames run, the picture stays the logo
+  (Phases 39-40).** The render jobs now run on five virtual SPUs, their
+  blocks in the display list are waited for (`0xFFFFFFFF` = not filled yet)
+  and drawn, and frames continue at about 10 a second. The title then draws
+  only its environment and reflection passes and opens no more files after
+  `DealerTopRoot.gpb`. Next: compare with RPCS3's file sequence at this point.
+- Antialiasing: a target that asks for it is drawn multisampled, shaded per
+  sample, and resolved when read (`RSX_MSAA=<n>`, default 4, 1 turns it off;
+  `RSX_SSAA=0` shades per pixel).
 - Controllers: `SDL2.dll` beside the exe is loaded at run time and reads
   every controller (DualSense included); `scripts/get_sdl2.ps1` fetches it
   into `third_party/` (gitignored) and the build copies it. Without it,
@@ -304,7 +303,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dealership's ring labels (Phase 39); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: what the dealership waits for after `DealerTopRoot.gpb` (Phase 40); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

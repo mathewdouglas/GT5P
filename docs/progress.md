@@ -9,6 +9,57 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 40 - Dealership frames flow; the game then sits on the logo (2026-10-14)
+
+Continues Phase 39. After choosing a manufacturer the title now renders about
+10 frames a second, about 700 draws each, for as long as it is left running
+(120 s measured, 727 frames, no stalled job). The picture is still the
+manufacturer's logo on black. Three changes got it there:
+
+1. **The FIFO waits at a block an SPU job has not filled yet.** The title's
+   display list (`0x294xxxxx`-`0x299xxxxx`) carries a block per object for
+   the render jobs to fill in. Until a job does, the block starts with
+   `0xFFFFFFFF`. The walker decoded that as a method (0x1FFC, 2047 arguments)
+   and skipped the block and whatever followed. It now stops the pass there
+   and reads the word again on the next (`GCM_FFFF_PARK=0` for the old
+   behaviour). `GCM_BLOCKDBG=<n>` shows a block before and after it is
+   filled. A filled block is an ordinary indexed draw: vertex array offsets
+   into the 5 MB output ring (`0x1680`-`0x168C`), an index array
+   (`0x181C`/`0x1820`), `BEGIN` triangles, `DRAW_INDEX_ARRAY`, `END`, and the
+   label update the jobs wait on (`0x1D6C` = `0x480`+, `0x1D74` = put).
+   That label is what was never written in Phase 39, so the jobs waited for
+   ring space for ever.
+2. **Virtual SPUs that leave a job list at once are sent back in.** Most
+   frames, one or two of the five lanes read the list's row while another
+   lane had it marked closed between two updates (traced with
+   `SPU_WATCHLSA=D00 SPU_WATCHLSA_EA=...`: those lanes fetched the list line
+   for index 0xFFFF). The module then leaves and takes one off the ready
+   count. With three or four lanes the per-SPU rings overflow. While other
+   lanes are still working, a lane whose run lasted under 2 ms gets the count
+   back and runs again (`SPURS_LANE_RETRY=0`: no retry). Lanes also start
+   3 ms apart (`SPURS_LANE_STAGGER_MS`).
+3. **Antialiasing reworked.** The dealership grid was reported still jagged.
+   It was multisampled (`[RT] slot 6 ... drawn with 4 samples`), but the
+   steps left were inside surfaces (the highlights on the bevelled floor
+   tiles), which multisampling does not touch. On a multisampled target the
+   fragment program now runs once per sample (`sample` interpolation on its
+   inputs; `RSX_SSAA=0` for once per pixel). Edges and highlights are smooth
+   in the capture.
+
+**Where it stops now (measured).** A frame captured on the logo screen
+(`RSX_CAP=1700:1:1 RSX_CAP_MIN=600`) has 630 draws into the six 256x511
+targets at `0x4D00000`-`0x4F7EC00`, 71 into the scene target at 640x360,
+then a clear of the scene target, and nothing to the display buffer. Those
+draws include the SPU-built blocks, so the job pipeline works. The title is
+not issuing its main view or its 2D layer. The last files it opened are
+`DealerTopTransition.gpb` and `DealerTopRoot.gpb`, then nothing more from
+`GT.VOL`. Hypothesis, untested: it is waiting to load the car or the
+showroom, and the request never completes. The next measurement is RPCS3's
+file sequence after choosing a manufacturer, to see what it opens next.
+
+Not regressed: 3 of 3 headless boots full (`scratch/ab-p39c`); the main
+menu and the dealership grid draw as before.
+
 ## Phase 39 - The dealership's render jobs: four faults fixed, not drawing yet (2026-10-14)
 
 Choosing a manufacturer still shows the logo on black. The stall of Phase 38
