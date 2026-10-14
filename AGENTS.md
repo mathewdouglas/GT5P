@@ -103,9 +103,9 @@ Each corrects the one before.
   backend had been dropping about 4,000 of each frame's 4,300 draws: its
   per-frame vertex and draw caps were too small (`FRAME_BUDGET=<frame>`
   shows requested against kept). Fragment programs over 4 KB and with more
-  than 64 constants are handled now. Open: about 15 s of an unanswering
-  window on first entry while shaders compile, then about 5 frames a
-  second. Phases 39-41 describe the logo-only stage it replaces.
+  than 64 constants are handled now. Compiled shaders are kept in
+  `shadercache/` (gitignored), so only a first-ever entry stalls (about
+  9 s). Open: about 5 frames a second. Phases 39-41 describe the logo-only stage it replaces.
 - `GCM_FTRACE=<flip>,<n>`: every command header the FIFO walker decodes
   between `SetPrepareFlip` calls, with its first argument. This title writes
   no flip words, so frame boundaries come from those calls.

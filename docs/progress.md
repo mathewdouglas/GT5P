@@ -64,11 +64,27 @@ Measured: three windowed runs with `scratch\inp.ps1 ... PAD_HOLD=...` all
 reached the page. The disc-mode `gamedata/` (no install) was used for the
 last of them.
 
+**Later the same day: the entry stall and the dips.**
+
+- The dips to 1 to 2 fps were recompiles. Some showroom programs have about
+  140 inline constants, still over the slot. Those constants were printed
+  into the shader text, and they change as the cars turn (one is a rotation
+  matrix), so each change was a new 37 KB compile. The slot now holds 256
+  (`FP_CB_CONSTS`).
+- Compiled shaders are kept on disk (`shadercache/`, gitignored;
+  `RSX_SHADER_CACHE=<dir>`, `0` turns it off).
+- `RSX_FP_OPT=skip|0|2|3` made no difference to compile time (the compiler
+  front end is the cost).
+- Two windowed runs: the first entry stalled 9 s once while the cache filled.
+  The second had no stall and no compiles, and held about 5 frames a second.
+- `FP_HLSL_DUMP=<program>[,<dir>]` writes every text compiled for one
+  program.
+
 Open:
 
-- About 15 s with the window not answering on first entry, while shaders
-  compile on the thread that replays frames and owns the window.
-- About 5 frames a second on the page, sometimes 1 to 2.
+- About 5 frames a second on the page.
+- On a machine with an empty cache, about 9 s of an unanswering window on
+  first entry.
 - The fallback when a pixel shader cannot be decompiled still runs a
   built-in shader. Nothing in the showroom hits it now.
 

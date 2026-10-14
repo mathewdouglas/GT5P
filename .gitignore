@@ -72,6 +72,9 @@ build.*/
 # Per-machine notes and the guest hard disk the port writes at run time
 AGENTS.local.md
 gamedata/
+# Compiled shaders the D3D12 backend keeps between runs (RSX_SHADER_CACHE);
+# derived from the title's own programs
+shadercache/
 
 # More game files. The disc layout brings kinds the PSN package did not, and
 # extensions are listed in both cases because git matches case exactly on
