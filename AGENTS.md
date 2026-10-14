@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 42 of
-[docs/progress.md](docs/progress.md); read 42 down to 19 in that order.
+Details and evidence are in Phases 17 to 43 of
+[docs/progress.md](docs/progress.md); read 43 down to 19 in that order.
 Each corrects the one before.
 
 - **A save exists now, so the title boots straight to the main menu**
@@ -106,8 +106,16 @@ Each corrects the one before.
   than 64 constants are handled now. Compiled shaders are kept in
   `shadercache/` (gitignored), so only a first-ever entry stalls (about
   9 s). Generic vertices are stored with only
-  the attributes the program reads (`RSX_VTX_MASK=0` for all 16). Open:
-  about 7 frames a second on the page. Phases 39-41 describe the logo-only stage it replaces.
+  the attributes the program reads (`RSX_VTX_MASK=0` for all 16).
+  Phases 39-41 describe the logo-only stage it replaces.
+- **Dealership frame rate (Phase 43): 17.5 fps, up from 7.4.** The title's
+  own threads cap it at about 20 (`RSX_VTX_SKIP=1` drops every draw and still
+  only reaches 20): main, `PDI:1` and the SPU job chain, not the backend.
+  Profile with `GT5P_SAMPLE=4` and `scratch/maplook.py build/gt5p.map <log>`.
+  Switches that undo the speed-ups: `RSX_VFAST=0` (`=check` compares),
+  `VM_SLOW=1`, `HLE_ROUTE_MEMO=0`; `getenv` is cached per call site in hot
+  files (`include/ps3emu/getenv_cache.h`, ps3recomp), so a switch must be
+  set before launch.
 - `GCM_FTRACE=<flip>,<n>`: every command header the FIFO walker decodes
   between `SetPrepareFlip` calls, with its first argument. This title writes
   no flip words, so frame boundaries come from those calls.
@@ -317,7 +325,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dealership's 15 s first-entry freeze (shader compiles on the window thread) and its 7 frames a second (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the guest-side ceiling of about 20 fps on the dealership (Phase 43: what `func_00BA97B0` on `PDI:1` does, and RPCS3's import rate for comparison), then the backend's vertex work (25 ms a frame); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
@@ -345,7 +353,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-five files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in thirty-seven files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

@@ -9,6 +9,80 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 43 - Dealership frame rate: 7.4 to 17.5 fps, and the title's own ceiling is about 20 (2026-10-14)
+
+Measured on the Car Dealer page with the Showroom panel open, windowed,
+`PS3_VERBOSE=0`, warm shader cache, `scratch/cpu2.ps1 -At 85` (the save's
+button timings; per-thread CPU over a window). Before: 7.4 fps.
+
+Tools added:
+
+- `GT5P_SAMPLE=<n>` (`src/gt5p_present.cpp`): a sampling profiler for the n
+  busiest threads, re-chosen every 10 s by CPU used. Samples in a DLL are
+  unwound to their first caller in the executable, so CRT and driver time is
+  charged to whoever called it. `scratch/maplook.py build/gt5p.map <log>`
+  names the buckets per thread. One sample is about 2.3 ms of wall time when
+  four threads are sampled.
+- `GT5P_PRESENT_PROF=1` (existed): the present thread's split. At 7.4 fps it
+  was 105 ms a frame walking the FIFO (which includes all vertex assembly)
+  and 22 ms in the D3D12 replay.
+- `RSX_VTX_SKIP=1`: drop every vertex upload. Nothing draws but every frame
+  flips, which gives the frame rate the title reaches when the backend costs
+  nothing.
+
+What was slow, in the order found, and the fix (all in ps3recomp; the patch
+is refreshed):
+
+1. **`getenv` per draw.** The backend and the FIFO walker test dozens of
+   debug switches per draw with a bare `getenv`. On Windows each call takes
+   the CRT environment lock and scans the environment: 32% of the present
+   thread in `ucrtbase` plus 14% in `ntdll`. New `include/ps3emu/getenv_cache.h`
+   caches each literal lookup per call site; included by
+   `rsx_d3d12_backend.c`, `cellGcmSys.c`, `rsx_commands.c` and `ppu_hle.cpp`.
+   7.4 to about 11 fps.
+2. **Vertex fetch.** `rsx_fetch_attrib` re-derived the debug switches, the
+   frequency rule, the context DMA and the 1 MB page for every attribute of
+   every vertex, and strips and fans expanded to lists fetched each vertex
+   about three times. `read_vp_vertex` now builds a plan per upload and keeps
+   a 1,024-entry cache of fetched vertices for the length of the upload
+   (`RSX_VFAST=0` for the old path; `RSX_VFAST=check` fetches both ways and
+   reports differences: 2,000,000 vertices checked, 0 differ). 11 to 16.7 fps.
+3. **Guest memory accessors.** Every lifted load and store runs through the
+   extern `vm_read*`/`vm_write*` in `ppu_loader.cpp`, and each ran a dozen
+   diagnostic checks first (watch windows, spin detectors, the read
+   histogram, thread-local bookkeeping): about 90% of the `PDI:1` thread.
+   They now take a fast path unless a switch those checks read is set
+   (`VM_SLOW=1` forces the full path; `PPU_HOTREAD=1` keeps the spin
+   detectors). Bounds, null reports, raw SPU registers, SPU reservation
+   coherency and the GCM ref poll are kept. 16.7 to 17.3 fps.
+4. **`ppu_gcm_pump` on every HLE call** did three interlocked operations on
+   shared lines with nothing pending: 21% of the main thread. It now returns
+   on a plain read when nothing is pending.
+5. **NID routing.** Each HLE call made three linear searches (PRX exports,
+   context handlers, the whole NID table): about 40% of `PDI:1`. Memoised per
+   thread, checked against each registry's size and a new export-registry
+   generation (`HLE_ROUTE_MEMO=0` to search). It removed the cost but not a
+   frame: 17.5 fps.
+
+Where it stands at 17.5 fps:
+
+- Present thread about 80%: of a 57 ms frame, about 25 ms is vertex work
+  (`read_vp_vertex`, `vp_stage_commit`), 5 ms D3D12 calls, and about 12 ms
+  idle with nothing to walk.
+- With `RSX_VTX_SKIP=1` the title reaches **about 20 fps** with the present
+  thread at 8%. The main thread (86%), `PDI:1` (85%) and the SPU job chain
+  (63%) are the ceiling, not the backend. Reaching 30 needs those about 1.5
+  times faster. Their samples are now spread over lifted functions
+  (`func_00BA97B0` on `PDI:1`; `func_0091312C`, `func_0092CD68` on main),
+  `lv2_syscall`, the mutex calls and SPU coherency (`spu_coh_forget_range`).
+  Whether `PDI:1` is computing or polling is not known; next is to read
+  `func_00BA97B0` in Ghidra and compare its import rate per frame with
+  RPCS3's log.
+- Seen once, not reproduced in two later runs: after 15 s at 16.5 fps the
+  presents stopped (0 in 5 s) with three `spurs-pm-worker` threads at 76%
+  each.
+- The page renders as before (checked by capture).
+
 ## Phase 42 - The Car Dealer page draws: the backend was dropping most of each frame (2026-10-14)
 
 Choosing a manufacturer now shows the Car Dealer page as on RPCS3: the cars

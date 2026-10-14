@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include "ppu_context.h"
 #include "sys_ppu_thread.h"
@@ -146,9 +147,149 @@ static int backend_pump(void)
                       : rsx_d3d12_backend_pump_messages();
 }
 
+/* GT5P_SAMPLE=<n>: a sampling profiler for the n busiest threads (default 4,
+ * at most 8). Every 10 s it reports, for each thread it sampled, the 60
+ * busiest 256-byte code buckets as offsets from the executable's base, then
+ * picks the threads that used the most CPU in that round to sample next. A
+ * sample in a DLL is charged to its first caller in the executable (bit 0
+ * set), so time in the CRT or the driver shows up under the function that
+ * called it. `scratch/maplook.py build/gt5p.map <log>` names the buckets; the
+ * thread ids match the [hostthread] and [THREAD] lines. Lifted guest code is
+ * in the executable, so a guest thread's buckets are func_XXXXXXXX names. */
+static int sample_rip(HANDLE th, unsigned long long base, unsigned long long* rva)
+{
+    if (SuspendThread(th) == (DWORD)-1) return 0;
+    CONTEXT c; memset(&c, 0, sizeof c); c.ContextFlags = CONTEXT_FULL;
+    BOOL ok = GetThreadContext(th, &c);
+    unsigned long long tag = 0;
+    if (ok && (c.Rip < base || c.Rip >= base + 0x10000000ull)) {
+        for (int f = 0; f < 24; f++) {
+            DWORD64 ib = 0;
+            PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(c.Rip, &ib, NULL);
+            if (!rf) { c.Rip = *(DWORD64*)c.Rsp; c.Rsp += 8; }
+            else { void* hd = NULL; DWORD64 ef = 0;
+                   RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, rf, &c, &hd, &ef, NULL); }
+            if (c.Rip >= base && c.Rip < base + 0x10000000ull) { tag = 1; break; }
+            if (!c.Rip) break;
+        }
+    }
+    ResumeThread(th);
+    if (!ok) return 0;
+    *rva = ((c.Rip - base) & ~0xFFull) | tag;
+    return 1;
+}
+
+static unsigned long long thread_cpu_100ns(HANDLE th)
+{
+    FILETIME a, b, k, u;
+    if (!GetThreadTimes(th, &a, &b, &k, &u)) return 0;
+    return (((unsigned long long)k.dwHighDateTime << 32) | k.dwLowDateTime) +
+           (((unsigned long long)u.dwHighDateTime << 32) | u.dwLowDateTime);
+}
+
+struct SampThread {
+    DWORD tid; HANDLE h; unsigned long long cpu0;
+    struct { unsigned long long rva; unsigned n; } b[4096];
+    unsigned nb, total;
+};
+struct ThreadCpu { DWORD tid; unsigned long long cpu, d; };
+
+static DWORD WINAPI sampler_thread(LPVOID p)
+{
+    const int want = (int)(uintptr_t)p;
+    const unsigned long long base = (unsigned long long)GetModuleHandleW(NULL);
+    const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    static SampThread s[8];
+    static ThreadCpu prev[1024], cur[1024];
+    int ns = 0, nprev = 0, round = 0;
+    ULONGLONG t0 = GetTickCount64();
+    for (;;) {
+        Sleep(1);
+        for (int i = 0; i < ns; i++) {
+            unsigned long long rva;
+            if (!sample_rip(s[i].h, base, &rva)) continue;
+            unsigned k = 0;
+            for (; k < s[i].nb; k++) if (s[i].b[k].rva == rva) { s[i].b[k].n++; break; }
+            if (k == s[i].nb && s[i].nb < 4096) { s[i].b[k].rva = rva; s[i].b[k].n = 1; s[i].nb++; }
+            s[i].total++;
+        }
+        const ULONGLONG now = GetTickCount64();
+        if (now - t0 < (round ? 10000u : 3000u)) continue;
+        const double secs = (double)(now - t0) / 1000.0;
+        for (int i = 0; i < ns; i++) {
+            SampThread* t = &s[i];
+            const double pct = 100.0 * (double)(thread_cpu_100ns(t->h) - t->cpu0) / 1e7 / secs;
+            fprintf(stderr, "[ps-sample] round=%d tid=%lu cpu=%.0f%% %u samples, %u buckets, base 0x%llX\n",
+                    round, (unsigned long)t->tid, pct, t->total, t->nb, base);
+            for (int r = 0; r < 60; r++) {
+                unsigned best = 0;
+                for (unsigned q = 1; q < t->nb; q++) if (t->b[q].n > t->b[best].n) best = q;
+                if (!t->nb || !t->b[best].n) break;
+                HMODULE hm = NULL; char mn[MAX_PATH] = "";
+                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       (LPCSTR)(base + (t->b[best].rva & ~1ull)), &hm) &&
+                    hm && (unsigned long long)hm != base) {
+                    GetModuleFileNameA(hm, mn, sizeof mn);
+                    const char* sl = strrchr(mn, '\\');
+                    fprintf(stderr, "[ps-sample]   %s+0x%llX  %u\n", sl ? sl + 1 : mn,
+                            base + t->b[best].rva - (unsigned long long)hm, t->b[best].n);
+                } else
+                    fprintf(stderr, "[ps-sample]   +0x%llX  %u\n", t->b[best].rva, t->b[best].n);
+                t->b[best].n = 0;
+            }
+            CloseHandle(t->h);
+        }
+        /* The next round samples the threads that used the most CPU in this one. */
+        int ncur = 0;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        THREADENTRY32 te; te.dwSize = sizeof te;
+        if (snap != INVALID_HANDLE_VALUE) {
+            if (Thread32First(snap, &te)) do {
+                if (te.th32OwnerProcessID != pid || te.th32ThreadID == me || ncur >= 1024) continue;
+                HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+                if (!h) continue;
+                cur[ncur].tid = te.th32ThreadID; cur[ncur].cpu = thread_cpu_100ns(h);
+                CloseHandle(h);
+                cur[ncur].d = 0;
+                for (int j = 0; j < nprev; j++)
+                    if (prev[j].tid == cur[ncur].tid) { cur[ncur].d = cur[ncur].cpu - prev[j].cpu; break; }
+                ncur++;
+            } while (Thread32Next(snap, &te));
+            CloseHandle(snap);
+        }
+        memcpy(prev, cur, sizeof(cur[0]) * (size_t)ncur); nprev = ncur;
+        ns = 0;
+        for (int pick = 0; pick < want; pick++) {
+            int best = -1;
+            for (int j = 0; j < ncur; j++)
+                if (cur[j].d && (best < 0 || cur[j].d > cur[best].d)) best = j;
+            if (best < 0) break;
+            HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                                  FALSE, cur[best].tid);
+            if (h) {
+                s[ns].tid = cur[best].tid; s[ns].h = h; s[ns].cpu0 = thread_cpu_100ns(h);
+                s[ns].nb = 0; s[ns].total = 0; ns++;
+            }
+            cur[best].d = 0;
+        }
+        round++;
+        t0 = GetTickCount64();
+    }
+}
+
+extern "C" void gt5p_start_sampler(void)
+{
+    const char* e = getenv("GT5P_SAMPLE");
+    if (!e) return;
+    int n = atoi(e); if (n <= 0) n = 4; if (n > 8) n = 8;
+    CreateThread(NULL, 0, sampler_thread, (LPVOID)(uintptr_t)n, 0, NULL);
+}
+
 static DWORD WINAPI present_thread(LPVOID)
 {
     fprintf(stderr, "[hostthread] present hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
+    gt5p_start_sampler();
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "Gran Turismo 5 Prologue (ps3recomp)";
 
