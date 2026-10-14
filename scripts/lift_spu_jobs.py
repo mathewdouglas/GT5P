@@ -17,6 +17,7 @@ mismatch is silent (the job logs `dispatch MISS` and does nothing).
 The WWS job manager policy module is different: it is embedded in EMAIN.ELF at
 a known address, so its fingerprint is computed in-process instead of baked in.
 """
+import os
 import re
 import subprocess
 import sys
@@ -42,6 +43,11 @@ NAME_RE = re.compile(r"^spujob_([0-9A-Fa-f]{16})_(\d+)\.bin$")
 # lands in unrelated code. Jobs are position independent and stay at 0.
 PM_LOAD_BASE = 0xA00
 
+# Guest registers kept in C locals inside each lifted function (the lifter's
+# --regcache), off unless SPU_REGCACHE=1: on GT5P's hot render loop it measured
+# 0.85-0.97x (Phase 45; about 70 live registers do not fit in 16 XMM ones).
+REGCACHE = os.environ.get("SPU_REGCACHE", "0") == "1"
+
 
 def run(*args):
     r = subprocess.run([sys.executable, *map(str, args)],
@@ -59,7 +65,8 @@ def lift(blob, prefix, outdir, base=0, extra=None):
     n_funcs = re.search(r"Detected ([\d,]+) function", out)
     run(TOOLS / "spu_lifter.py", blob, "--base", hex(base), "--functions", funcs,
         "--symbol-prefix", prefix, "--output", outdir, "--source-name", "spu_recomp.c",
-        *(["--extra-funcs", extra] if extra else []))
+        *(["--extra-funcs", extra] if extra else []),
+        *(["--regcache"] if REGCACHE else []))
     return int(n_funcs.group(1).replace(",", "")) if n_funcs else 0
 
 
@@ -80,8 +87,11 @@ def pic_continuations(raw, lsa):
 
 
 FUNC_RE = re.compile(r"^void (\w+_spu_func_)([0-9A-F]{8})\(spu_context\* ctx\) \{")
+# With the register cache a transfer first stores the registers it changed,
+# "{ ctx->gpr[5] = r5; ... ctx->pc = ...". Those stores are kept.
 XFER_RE = re.compile(
-    r"\{ ctx->pc = (0x[0-9A-Fa-f]+); g_spu_trampoline_fn = (\w+_spu_func_([0-9A-F]{8})); return; \}")
+    r"\{ ((?:ctx->gpr\[\d+\] = r\d+; )*)ctx->pc = (0x[0-9A-Fa-f]+); "
+    r"g_spu_trampoline_fn = (\w+_spu_func_([0-9A-F]{8})); return; \}")
 
 
 def chain_forward(outdir):
@@ -105,11 +115,11 @@ def chain_forward(outdir):
         elif cur is not None and "spu_link(" not in line:
             def sub(x):
                 nonlocal n
-                if int(x.group(3), 16) <= cur:
+                if int(x.group(4), 16) <= cur:
                     return x.group(0)
                 n += 1
-                return ("{ ctx->pc = %s; __attribute__((musttail)) return %s(ctx); }"
-                        % (x.group(1), x.group(2)))
+                return ("{ %sctx->pc = %s; __attribute__((musttail)) return %s(ctx); }"
+                        % (x.group(1), x.group(2), x.group(3)))
             line = XFER_RE.sub(sub, line)
         out.append(line)
     src.write_text("\n".join(out), encoding="utf-8", newline="\n")

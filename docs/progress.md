@@ -9,6 +9,120 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 45 - SPU register cache, and the present thread is the bottleneck (2026-10-15)
+
+Measured as in Phase 44 (`scratch/perf.ps1`), two runs per setting unless
+stated.
+
+### 45.1 SPU register cache: correct, not faster
+
+ps3recomp `tools/spu_lifter.py --regcache` keeps each lifted function's guest
+registers in C locals. `ctx->gpr[]` is stored only where something else can
+read it: every exit (return, transfer, stop, halt; only registers changed
+since the last sync) and around every runtime or lifted call (stored before,
+all reloaded after, since stop handlers, the interpreter and callees write
+registers). `scripts/lift_spu_jobs.py` passes it only with `SPU_REGCACHE=1`;
+the default lift is byte-for-byte what it was (checked with `diff -r`).
+
+The hottest lane function, `b01376080` `0xF8C0` (13% of lane samples), is a
+143-instruction loop over about 70 registers. Measured on it alone with
+`scratch/rc/bench.c`, which runs the old and new versions on the same random
+register and local-store state (64 passes per call) and compares every
+register lane and local-store word:
+
+- 1,000 trials, **0 differ**. 14 NaN lanes carry a different payload: x86
+  keeps the first operand's NaN and the compiler may swap a commutative add's
+  operands. SPU single precision has no NaNs, so both are equally wrong there.
+- Speed **0.85x to 0.97x** of the old code. About 70 live 128-bit values do
+  not fit in 16 XMM registers; the compiler spills 858 times, so the loads and
+  stores move from the context to the stack, plus entry and exit copies.
+  Loads and stores to `ctx` were cheap all along (L1, store forwarding).
+- In the game: 16.4 fps in one run against 17.5.
+
+Kept, off. Not worth revisiting without more host registers (AVX-512 has 32).
+
+### 45.2 SPU helpers: shufb without byte swaps, constant rotate masks
+
+The time in that loop is in the helpers. Changes in ps3recomp
+`runtime/spu/spu_helpers.h`:
+
+- `spu_shufb` (31 per pass): SPU byte P is host byte `P ^ 3` and the control
+  sits at the same host positions as the result, so the four swapping
+  `pshufb`s go: index `C ^ 3`, bit 4 of C picks b, bit 7 marks the special
+  selectors whose value is a table lookup on the high nibble. 9 instructions
+  instead of about 17. `SPU_SHUFB_SWAP` restores the old one.
+- The byte rotate/shift masks are a compile-time table, not one built on
+  first use (a check on every rotate). `SPU_BYTETAB_RUNTIME` restores it.
+
+Checked against the byte-loop references: 3.28 million cases (every control
+byte value in every position, all shift counts), 0 differ
+(`scratch/rc/test_shuf.c`). The hot loop: **1.07x to 1.08x**, results
+identical over 1,000 trials. Too small to move the frame rate on its own.
+
+### 45.3 The present thread is the serial limit
+
+The frame-rate pattern pointed past the SPU code: 62 fps on the
+confirmation screen, 31 on the menu, 20 at the dealership with every draw
+dropped, 17.5 with them; and Phase 44 cut 7% of the lanes' work for no gain.
+
+`src/gt5p_present.cpp`'s one thread ticks vblank and flips, walks the FIFO
+(which does the vertex expansion), presents, and pumps window messages, then
+sleeps 4 ms. Its `GT5P_PRESENT_PROF` lines at the dealership, per 5 s: FIFO
+3.33 s, present 0.83 s, about 87 presents. So per frame about 37 ms of FIFO
+walk plus 9 ms of present, roughly 46 ms on one thread, a ceiling near 21 fps.
+
+| Setting | fps |
+| --- | --- |
+| Default (present waits for vsync, 4 ms sleep) | 18.3 (one other run stalled, the Phase 43 three-lane stall) |
+| `RSX_PRESENT_SYNC=0` (new: present does not wait for vsync) | 18.0, 17.6 |
+| `GT5P_PRESENT_SLEEP=1` (new: outer sleep in ms) | 18.7, 18.6 |
+| `GT5P_PRESENT_SLEEP=0` | 18.7, 19.8; present thread at 99% |
+
+Present time is the same 0.83 s with or without vsync, so it is the backend's
+own submission, not a vblank wait. Sampled with `GT5P_SAMPLE=4` and no sleep
+(4,423 samples of the present thread): `read_vp_vertex` **39%**, the message
+pump 12% (it spins without the sleep), `render_frame_body` 9%,
+`vp_stage_commit` 7%, FIFO decode itself about 5%.
+
+So the Phase 43 conclusion that the SPU lanes are the critical path was
+wrong: one lane per workload making it slower shows the lanes *can* become
+the limit, not that they are it now. The limit is the present thread, two
+fifths of it CPU vertex expansion, with the title's `PDI:1` (79%) and main
+thread (73%) close behind. Hypothesis, not yet measured: that is why
+`RSX_VTX_SKIP=1` only reaches 20, those two threads capping it once the
+vertex work is gone. If it holds, past 20 needs both
+the vertex work off (or spread beyond) the present thread and cheaper guest
+PPU threads.
+
+Defaults are unchanged; both switches are measurement aids for now.
+
+### 45.4 Live profiler view (`GT5P_PROFVIEW`, F3)
+
+`src/gt5p_profview.cpp`: a GDI window owned by the game window and kept over
+its top-left corner, click-through, redrawn ten times a second. F3 (with the
+game focused) shows and hides it; `GT5P_PROFVIEW=1` shows it from the start;
+`GT5P_PROFVIEW=0` starts nothing. Not created headless. It shows:
+
+- fps, average and worst frame over the last second;
+- the last 220 frame intervals, coloured by how many 60 Hz vblanks each took
+  (green 1, yellow 2, orange 3, red 4 or more), guide lines at 60/30/20 fps;
+- the present thread's time per frame, stacked: FIFO walk, present, message
+  pump, the rest (sleep and idle). The present thread passes running totals to
+  `gt5p_pv_frame()` after each present;
+- CPU per thread over the last second, from a thread snapshot, named by the
+  guest's thread name or the host thread description. Host threads now name
+  themselves (`ps3_name_thread`, ps3recomp `include/ps3emu/thread_name.h`,
+  called where they print `[hostthread]`). The job lanes exit within the
+  second, so they are the process total minus the live threads.
+
+At the dealership it shows what 45.3 found, and one more thing: frame
+intervals are only ever about 50 or 66 ms. The present thread's work is about
+46.5 ms a frame (FIFO 37.2, present 9.3), and a flip completes on the next
+16 ms vblank tick, so a frame takes 3 or 4 vblanks: 17.9 fps. A console in
+vsync mode quantises the same way. So cutting the present thread's work pays
+off in steps: below about 33 ms a frame reaches 30 fps; anything short of
+that changes little.
+
 ## Phase 44 - Performance follow-ups (2026-10-15)
 
 Each part is one change, measured the Phase 43 way: Car Dealer page with the

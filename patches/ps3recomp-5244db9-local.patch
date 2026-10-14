@@ -28,6 +28,29 @@ index 0000000..36e18e0
 +    ps3_ge_r_; }))
 +#endif
 +#endif
+diff --git a/include/ps3emu/thread_name.h b/include/ps3emu/thread_name.h
+new file mode 100644
+index 0000000..25e3db3
+--- /dev/null
++++ b/include/ps3emu/thread_name.h
+@@ -0,0 +1,17 @@
++/* Name the calling host thread, for debuggers and profilers (GetThreadDescription).
++ * SetThreadDescription is Windows 10 1607 and later, so it is looked up rather
++ * than linked; elsewhere this does nothing. */
++#pragma once
++#ifdef _WIN32
++#include <windows.h>
++static inline void ps3_name_thread(const wchar_t* name)
++{
++    typedef HRESULT (WINAPI *SetDesc)(HANDLE, PCWSTR);
++    static SetDesc set = (SetDesc)-1;
++    if (set == (SetDesc)-1)
++        set = (SetDesc)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription");
++    if (set) set(GetCurrentThread(), name);
++}
++#else
++static inline void ps3_name_thread(const wchar_t* name) { (void)name; }
++#endif
 diff --git a/libs/audio/cellAudio.c b/libs/audio/cellAudio.c
 index b51fb7c..2785dcb 100644
 --- a/libs/audio/cellAudio.c
@@ -1031,18 +1054,19 @@ index a0d6dce..1f36e9b 100644
  /* Base64 encode/decode (used for HTTP Basic auth) */
  s32 cellHttpUtilBase64Encode(char* out, u32 outSize,
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 688ff04..e7d75f6 100644
+index 688ff04..4e98402 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
-@@ -10,6 +10,7 @@
+@@ -10,6 +10,8 @@
   */
  
  #include "cellSpurs.h"
++#include "ps3emu/thread_name.h"
 +#include "../../runtime/ppu/ppu_context.h"   /* g_active_ctx: stack arguments */
  #include "../../runtime/platform/win32_compat.h"
  #include "../../runtime/ps3_log.h"
  #include "spu_workload.h"   /* SPU image -> lifted-entry dispatch (runtime/spu) */
-@@ -448,6 +449,19 @@ static struct SpursInst* spurs_inst_find(u32 ea)
+@@ -448,6 +450,19 @@ static struct SpursInst* spurs_inst_find(u32 ea)
  
  static DWORD WINAPI spurs_kernel_thread(LPVOID p);
  
@@ -1062,7 +1086,7 @@ index 688ff04..e7d75f6 100644
  static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
  {
      struct SpursInst* si = spurs_inst_find(spurs_ea);
-@@ -471,7 +485,14 @@ static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
+@@ -471,7 +486,14 @@ static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
  
      if (!si->kernel_live) {
          si->kernel_live = 1;
@@ -1078,7 +1102,7 @@ index 688ff04..e7d75f6 100644
      }
      printf("[cellSpurs] Initialize \"%s\" ea=0x%08X nSpus=%u (real BE instance + kernel poll)\n",
             si->prefix, spurs_ea, si->nspus);
-@@ -679,14 +700,55 @@ static void spurs_cancel_attached_queues(u32 spurs_ea)
+@@ -679,14 +701,55 @@ static void spurs_cancel_attached_queues(u32 spurs_ea)
   * so the lv2 delivery path had nowhere to look and dropped the event -- and
   * with it the ack the SPU then blocks on in SPU_RdInMbox. Havok's SPU task
   * stalls on the first physics step that way (port 2), and the PPU step waits
@@ -1137,7 +1161,7 @@ index 688ff04..e7d75f6 100644
  s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
                                   s32 isDynamic)
  {
-@@ -714,18 +776,21 @@ s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
+@@ -714,18 +777,21 @@ s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
       * and hand it back. This used to write 0 either way, so every attach
       * landed on port 0 and the SPU's real port number routed nowhere. */
      u32 p = *port_h;
@@ -1163,7 +1187,7 @@ index 688ff04..e7d75f6 100644
      printf("[cellSpurs] AttachLv2EventQueue(queue=%u) port=%u%s\n", queue, p,
             isDynamic ? " (dynamic)" : "");
      return CELL_OK;
-@@ -734,7 +799,7 @@ s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
+@@ -734,7 +800,7 @@ s32 cellSpursAttachLv2EventQueue(CellSpurs* spurs, u32 queue, u8* port,
  s32 cellSpursDetachLv2EventQueue(CellSpurs* spurs, u8 port)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1172,7 +1196,7 @@ index 688ff04..e7d75f6 100644
      printf("[cellSpurs] DetachLv2EventQueue(port=%u)\n", port);
      return CELL_OK;
  }
-@@ -1403,7 +1468,17 @@ s32 _cellSpursWorkloadAttributeInitialize(u64 attr_ea, u32 revision, u32 sdkVers
+@@ -1403,7 +1469,17 @@ s32 _cellSpursWorkloadAttributeInitialize(u64 attr_ea, u32 revision, u32 sdkVers
          *(vm_base + (u32)attr_ea + WKATTR_PRIORITY + i) =
              prio_ea ? *(vm_base + (u32)prio_ea + i) : 0;
      vm_write32((u32)attr_ea + WKATTR_MIN_CONT, minContention);
@@ -1191,7 +1215,7 @@ index 688ff04..e7d75f6 100644
      vm_write32((u32)attr_ea + WKATTR_NAME_CLASS, 0);
      vm_write32((u32)attr_ea + WKATTR_NAME_INST,  0);
      vm_write32((u32)attr_ea + WKATTR_HOOK,     0);
-@@ -1511,28 +1586,163 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1511,28 +1587,165 @@ static WklPm* spurs_resolve_pm(u32 wid)
   * then busy-waits at the cross-SPU barrier for lane 1, which the sequential
   * loop can never advance (SPU 1 hasn't run). Concurrency is required, not an
   * optimization: SPU 0's barrier poll observes SPU 1's atomic lane update live. */
@@ -1245,6 +1269,7 @@ index 688ff04..e7d75f6 100644
  static DWORD WINAPI spurs_pm_worker(LPVOID p)
  {
 +    fprintf(stderr, "[hostthread] spurs-pm-worker hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
++    ps3_name_thread(L"spurs-pm-worker");
 +    if (g_spurs_lane_start_hook) g_spurs_lane_start_hook();
  #ifdef _WIN32
      { ULONG g = 256 * 1024; SetThreadStackGuarantee(&g); }
@@ -1349,6 +1374,7 @@ index 688ff04..e7d75f6 100644
 +      if (getenv("SPURS_KERN_STAT") && InterlockedExchange(&once, 1) == 0)
 +          CreateThread(NULL, 0, spurs_kstat_thread, NULL, 0, NULL); }
 +    fprintf(stderr, "[hostthread] spurs-kernel hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
++    ps3_name_thread(L"spurs-kernel");
  #ifdef _WIN32
      { ULONG g = 256 * 1024; SetThreadStackGuarantee(&g); }  /* let SO reach the reporter */
  #endif
@@ -1358,7 +1384,7 @@ index 688ff04..e7d75f6 100644
      static volatile long s_pm_off = -1;
      if (s_pm_off < 0) s_pm_off = getenv("PS3_NO_SPURS_PM") ? 1 : 0;
  
-@@ -1605,6 +1815,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1605,6 +1818,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
              if (!(enabled & (0x80000000u >> wid))) continue;
              if (*(vm_base + ea + SPURS_WKL_STATE1 + wid) != 2) continue;
              if (!s_workloads[wid].in_use || s_workloads[wid].spurs_ea != ea) continue;
@@ -1366,7 +1392,7 @@ index 688ff04..e7d75f6 100644
  
              /* A SPURS policy module is a PERSISTENT SPU program. The real kernel
               * schedules an ENABLED, runnable workload onto an SPU and the module
-@@ -1626,7 +1837,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1626,7 +1840,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
              volatile u8* rdy = vm_base + ea + SPURS_WKL_READY1 + wid;
              u32 sig = vm_read32(ea + SPURS_WKL_SIGNAL1) >> 16;    /* be u16 @0x70 */
              int kicked = (*rdy != 0) || ((sig & (0x8000u >> wid)) != 0);
@@ -1385,7 +1411,7 @@ index 688ff04..e7d75f6 100644
              if (sig & (0x8000u >> wid))
                  vm_write32(ea + SPURS_WKL_SIGNAL1,
                             (vm_read32(ea + SPURS_WKL_SIGNAL1) & ~((0x8000u >> wid) << 16)));
-@@ -1694,12 +1915,43 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1694,12 +1918,43 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                if (s_fs == -2) { const char* e = getenv("SPURS_FORCE_SPUS");
                  s_fs = e ? atoi(e) : -1; }
                if (s_fs > 0) maxcont = (u8)(s_fs > 6 ? 6 : s_fs); }
@@ -1429,7 +1455,7 @@ index 688ff04..e7d75f6 100644
                  } else {
                      /* Run the workload's virtual SPUs CONCURRENTLY (see
                       * spurs_pm_worker): each lane advances in parallel so the
-@@ -1712,6 +1964,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1712,6 +1967,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                          wa[nth].pm = pm; wa[nth].pm_size = sz;
                          wa[nth].arg = arg; wa[nth].wid = wid; wa[nth].ea = ea;
                          wa[nth].spu_num = sn;
@@ -1437,7 +1463,7 @@ index 688ff04..e7d75f6 100644
                          th[nth] = CreateThread(NULL, 1u << 20, spurs_pm_worker, &wa[nth], 0, NULL);
                      }
                      spu_run_policy_module(r->fn, r->image_id, pm, sz, arg, wid, ea, 0);
-@@ -2159,6 +2412,7 @@ static struct {
+@@ -2159,6 +2415,7 @@ static struct {
      u16 max_grab;
      int run_count;
      volatile long running;   /* 1 while a host thread walks this chain */
@@ -1445,7 +1471,7 @@ index 688ff04..e7d75f6 100644
  } s_jobchains[MAX_JOBCHAINS];
  
  static void jc_dump_commands(const char* tag, u32 ea, int max_words)
-@@ -2386,11 +2640,22 @@ static struct {
+@@ -2386,11 +2643,22 @@ static struct {
      u32 ea;          /* guest CellSpursJobGuard address (128-byte aligned) */
      u32 count;       /* notifications still outstanding                    */
      u32 reset;       /* value to restore when autoReset is set             */
@@ -1469,7 +1495,7 @@ index 688ff04..e7d75f6 100644
  static int jg_find(u32 ea)
  {
      for (int i = 0; i < MAX_JOBGUARDS; i++)
-@@ -2447,9 +2712,26 @@ s32 cellSpursJobGuardNotify(u64 guard_ea)
+@@ -2447,9 +2715,26 @@ s32 cellSpursJobGuardNotify(u64 guard_ea)
       * OBSERVED zero, which threw away any notify that arrived while the job
       * was still running -- the title notified 6 times and the chain completed
       * 2 laps, so the thread waiting on the other 4 completions never woke. */
@@ -1499,7 +1525,7 @@ index 688ff04..e7d75f6 100644
        s_jobguards[i].count = remaining;
        vm_write32(ea, remaining); }
      { static int _n = 0;
-@@ -2474,22 +2756,49 @@ s32 cellSpursJobGuardReset(u64 guard_ea)
+@@ -2474,22 +2759,49 @@ s32 cellSpursJobGuardReset(u64 guard_ea)
   * chain then gives up this pass rather than spinning the walker thread
   * forever). An unknown guard opens immediately -- a chain guarded by something
   * we never saw initialised must not deadlock the walker. */
@@ -1554,7 +1580,7 @@ index 688ff04..e7d75f6 100644
  #else
          usleep(1000);
  #endif
-@@ -2527,6 +2836,16 @@ static u64 spurs_event_data3_probe(void)
+@@ -2527,6 +2839,16 @@ static u64 spurs_event_data3_probe(void)
      return (u64)(unsigned)v;
  }
  
@@ -1571,7 +1597,7 @@ index 688ff04..e7d75f6 100644
  static void jc_signal_done(u32 jc_ea, int job_index)
  {
      /* Carry the job's mailbox answer in the completion event. On hardware the
-@@ -2541,6 +2860,9 @@ static void jc_signal_done(u32 jc_ea, int job_index)
+@@ -2541,6 +2863,9 @@ static void jc_signal_done(u32 jc_ea, int job_index)
       * so a data2 pinned at 0 never ends that loop -- with the chain's lwmutex
       * held, which blocks the main thread's teardown behind it. A chain-level
       * signal (job_index < 0) sends 0. */
@@ -1581,7 +1607,7 @@ index 688ff04..e7d75f6 100644
      u64 d2 = (u64)(unsigned)(job_index < 0 ? 0 : job_index);
      u64 mbox = 0, d3 = 0;
      (void)spurs_event_data3_probe();   /* prime d3_probe_valid */
-@@ -2582,10 +2904,83 @@ static void jc_signal_done(u32 jc_ea, int job_index)
+@@ -2582,10 +2907,83 @@ static void jc_signal_done(u32 jc_ea, int job_index)
      }
  }
  
@@ -1666,7 +1692,7 @@ index 688ff04..e7d75f6 100644
      /* Bound IDLE steps, not total steps. A SPURS job chain is frequently a
       * SERVICE LOOP -- guard, job, sync, next, repeat -- and is meant to run for
       * the lifetime of the subsystem. A flat cap on total commands therefore
-@@ -2596,14 +2991,48 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2596,14 +2994,48 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
      int idle = 0;
      for (;; idle++) {
          if (idle > 4096) break;
@@ -1716,7 +1742,7 @@ index 688ff04..e7d75f6 100644
              idle = 0;                    /* real work: the chain is healthy */
              /* Signal per JOB, not per lap. The application waits once for each
               * unit of work it queued -- this title notified the guard 7 times
-@@ -2619,7 +3048,7 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2619,7 +3051,7 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
          if (op == 7) {
              if (ext == (7 | (15 << 3))) {                     /* END */
                  printf("[cellSpurs] chain 0x%08X: END after %d job(s)\n", jc_ea, jobs);
@@ -1725,7 +1751,7 @@ index 688ff04..e7d75f6 100644
                  return;
              }
              if (ext == (7 | (14 << 3))) {                     /* RET */
-@@ -2633,7 +3062,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2633,7 +3065,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
          }
          if (op == 7 && ext == (7 | (1 << 3))) {           /* GUARD */
              u32 g_ea = (u32)(cmd & ~127ull);
@@ -1735,15 +1761,16 @@ index 688ff04..e7d75f6 100644
              pc += 8; continue;
          }
          /* NOP(0) / SYNC+LWSYNC(2, one virtual SPU: nothing to wait for) /
-@@ -2647,6 +3077,7 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2647,6 +3080,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
  
  static DWORD WINAPI jc_thread(LPVOID p)
  {
 +    fprintf(stderr, "[hostthread] spurs-jc hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
++    ps3_name_thread(L"spurs-jc");
      int slot = (int)(intptr_t)p;
      /* TIMING PROBE (SPURS_JC_DELAY=ms): the real jm2 chain walker is async and
       * picks up jobs as the PPU appends them + fills their descriptors. Our walk
-@@ -2656,7 +3087,8 @@ static DWORD WINAPI jc_thread(LPVOID p)
+@@ -2656,7 +3091,8 @@ static DWORD WINAPI jc_thread(LPVOID p)
      { const char* d = getenv("SPURS_JC_DELAY");
        if (d && *d) Sleep((unsigned)atoi(d)); }
      jc_execute(s_jobchains[slot].entry_ea, s_jobchains[slot].jc_ea,
@@ -1753,7 +1780,7 @@ index 688ff04..e7d75f6 100644
      s_jobchains[slot].running = 0;
      /* Tell the application the chain is done. Without this the walk finishes
       * in silence and a thread waiting on the attached queue never runs again. */
-@@ -2691,8 +3123,13 @@ static s32 jc_start(u64 jc_ea, const char* who)
+@@ -2691,8 +3127,13 @@ static s32 jc_start(u64 jc_ea, const char* who)
              jc_dump_commands(who, s_jobchains[i].entry_ea, 16);
          }
          if (s_off || !s_jobchains[i].entry_ea) return CELL_OK;
@@ -1767,7 +1794,7 @@ index 688ff04..e7d75f6 100644
              HANDLE th = CreateThread(NULL, 1u << 20, jc_thread, (LPVOID)(intptr_t)i, 0, NULL);
              if (th) CloseHandle(th);
              else s_jobchains[i].running = 0;
-@@ -2727,7 +3164,14 @@ s32 cellSpursShutdownJobChain(u64 jc_ea)
+@@ -2727,7 +3168,14 @@ s32 cellSpursShutdownJobChain(u64 jc_ea)
      if (_n++ < 8) printf("[cellSpurs] ShutdownJobChain(jc=0x%08X)\n", (u32)jc_ea);
      for (int i = 0; i < MAX_JOBCHAINS; i++) {
          if (s_jobchains[i].jc_ea == (u32)jc_ea) {
@@ -2386,7 +2413,7 @@ index 4a791bb..fce1959 100644
      /* Texture */
      void (*bind_texture)(void* userdata, u32 unit, const rsx_texture_state* tex);
 diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
-index 68929ed..0aecd08 100644
+index 68929ed..7187601 100644
 --- a/libs/video/rsx_d3d12_backend.c
 +++ b/libs/video/rsx_d3d12_backend.c
 @@ -25,6 +25,7 @@
@@ -4856,7 +4883,22 @@ index 68929ed..0aecd08 100644
                  rsx_capture_frame(fi, s_dbg_last_draws, s_cap_done);
                  s_cap_done++;
              }
-@@ -5175,9 +6775,36 @@ static void d3d12_present(void* ud, u32 buffer_id)
+@@ -5067,8 +6667,13 @@ skip_dump_consider: ;
+       } }
+ 
+     /* Present */
++    /* RSX_PRESENT_SYNC=<n>: the sync interval. 1 (the default) waits for the
++     * host's vblank, which blocks the calling thread -- in GT5P that thread also
++     * walks the FIFO. 0 queues the frame and returns. */
++    static int s_psync = -1;
++    if (s_psync < 0) { const char* e = getenv("RSX_PRESENT_SYNC"); s_psync = e ? atoi(e) : 1; }
+     if (s_present_this_frame)
+-        s_d3d.swap_chain->lpVtbl->Present(s_d3d.swap_chain, 1, 0); /* vsync */   /* skipped for an offscreen-only batch */
++        s_d3d.swap_chain->lpVtbl->Present(s_d3d.swap_chain, (UINT)s_psync, 0);   /* skipped for an offscreen-only batch */
+ 
+     move_to_next_frame();
+ 
+@@ -5175,9 +6780,36 @@ static void d3d12_present(void* ud, u32 buffer_id)
  static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
  {
      (void)ud;
@@ -4895,7 +4937,7 @@ index 68929ed..0aecd08 100644
  
      /* Convert RSX ARGB u32 to float[4] RGBA */
      float cc[4];
-@@ -5207,6 +6834,7 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+@@ -5207,6 +6839,7 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
              dr->rt_off = rt; memcpy(dr->rt_mrt, mrt, sizeof(mrt));
              dr->rt_w = rt_w; dr->rt_h = rt_h;
              dr->rt_fmt = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->surface_format : 0;
@@ -4903,7 +4945,7 @@ index 68929ed..0aecd08 100644
              memcpy(dr->cc, cc, sizeof(cc));
          }
          return;
-@@ -5277,6 +6905,8 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+@@ -5277,6 +6910,8 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
                     s_d3d.draw_count);
          render_frame();
          s_clear_presents++;
@@ -4912,7 +4954,7 @@ index 68929ed..0aecd08 100644
      }
      s_dbg_clears_since_present++;
      s_d3d.draw_count   = 0;
-@@ -5430,9 +7060,247 @@ void rsx_vtx_pos_dbg(const rsx_state* state, const float* v, u32 n);
+@@ -5430,9 +7065,247 @@ void rsx_vtx_pos_dbg(const rsx_state* state, const float* v, u32 n);
  /* Fill all 16 attribute slots for one vertex. The per-attribute work lives in
   * rsx_vertex_fetch.c so the Metal and null backends read guest vertices the
   * same way this one does, rather than each porting the logic again. */
@@ -5160,7 +5202,7 @@ index 68929ed..0aecd08 100644
          rsx_fetch_attrib(state, i, vi, out16[i].v);
          if (i == 0) {
              const rsx_vertex_attrib* a = &state->vertex_attribs[0];
-@@ -5568,18 +7436,47 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5568,18 +7441,47 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
  {
      extern uint8_t* vm_base;
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
@@ -5212,7 +5254,7 @@ index 68929ed..0aecd08 100644
          /* quad -> two triangles (perimeter winding) */
          static const int idx[6] = {0,1,2, 0,2,3};
          for (int t = 0; t < 6; t++) { memcpy(&out[o*16], c[idx[t]], sizeof(c[0])); o++; }
-@@ -5591,7 +7488,7 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5591,7 +7493,7 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
                      c[k][8].v[0],c[k][8].v[1]);
                fclose(f); } } }
      }
@@ -5221,7 +5263,7 @@ index 68929ed..0aecd08 100644
      return o;
  }
  
-@@ -5602,16 +7499,16 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5602,16 +7504,16 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
      extern uint8_t* vm_base;
      s_req_verts += count; s_req_draws++;
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
@@ -5242,7 +5284,7 @@ index 68929ed..0aecd08 100644
      { double _tv = perf_on() ? perf_now() : 0.0;
        for (u32 k = 0; k < count; k++)
            read_vp_vertex(state, first + k, &out[k*16]);
-@@ -5655,7 +7552,7 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5655,7 +7557,7 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
                  out[k*16+2].v[0],out[k*16+2].v[1],out[k*16+2].v[2],
                  out[k*16+9].v[0],out[k*16+9].v[1],out[k*16+9].v[2],out[k*16+9].v[3]);
            fclose(f); } } }
@@ -5251,7 +5293,7 @@ index 68929ed..0aecd08 100644
      return count;
  }
  
-@@ -5668,24 +7565,41 @@ static u32 upload_strip_vp(const rsx_state* state, u32 first, u32 count, int fan
+@@ -5668,24 +7570,41 @@ static u32 upload_strip_vp(const rsx_state* state, u32 first, u32 count, int fan
  {
      extern uint8_t* vm_base;
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
@@ -5304,7 +5346,7 @@ index 68929ed..0aecd08 100644
      return o;
  }
  
-@@ -5701,10 +7615,10 @@ static u32 read_guest_index(const rsx_state* st, u32 k)
+@@ -5701,10 +7620,10 @@ static u32 read_guest_index(const rsx_state* st, u32 k)
      const u8* p = vm_base + base;
      if (((st->index_array_dma >> 4) & 0xF) == 1) {
          p += (u64)k * 2;
@@ -5317,7 +5359,7 @@ index 68929ed..0aecd08 100644
  }
  
  /* Indexed variants of the VP-path uploads. */
-@@ -5714,10 +7628,10 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5714,10 +7633,10 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
      if (!state->vertex_attribs[0].enabled) return 0;
      u32 quads = count / 4;
@@ -5331,7 +5373,7 @@ index 68929ed..0aecd08 100644
      u32 o = 0;
      for (u32 q = 0; q < quads; q++) {
          VPSlot c[4][16];
-@@ -5744,7 +7658,7 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5744,7 +7663,7 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
                  fclose(f);
              } } }
      }
@@ -5340,7 +5382,7 @@ index 68929ed..0aecd08 100644
      return o;
  }
  
-@@ -5755,14 +7669,14 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5755,14 +7674,14 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
      if (!state->vertex_attribs[0].enabled) return 0;
      vp_attrs_dbg(state);
@@ -5358,7 +5400,7 @@ index 68929ed..0aecd08 100644
      { double _tv = perf_on() ? perf_now() : 0.0;
        for (u32 k = 0; k < count; k++)
            read_vp_vertex(state, read_guest_index(state, first + k), &out[k*16]);
-@@ -5957,7 +7871,7 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5957,7 +7876,7 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
                  read_guest_index(state, first+2),
                  a0->offset, vbase, nz, a0->stride, a0->size, a0->type,
                  out[0].v[0], out[0].v[1], out[0].v[2], 10); } }
@@ -5367,7 +5409,7 @@ index 68929ed..0aecd08 100644
      return count;
  }
  
-@@ -5967,26 +7881,95 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5967,26 +7886,95 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
   * octopus tentacles -- are indexed strips. */
  static u32 upload_strip_vp_indexed(const rsx_state* state, u32 first, u32 count, int fan)
  {
@@ -5474,7 +5516,7 @@ index 68929ed..0aecd08 100644
  static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
  {
      /* RSX_LIVE_FEED_DBG=1: pair with the [feed] method counts so "the FIFO
-@@ -6026,6 +8009,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6026,6 +8014,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
              if (emitted && s_d3d.draw_count < MAX_DRAWS) {
                  D3D12DrawRecord* dr = &s_d3d.draws[s_d3d.draw_count];
                  dr->vb_byte_offset = rec;
@@ -5482,7 +5524,7 @@ index 68929ed..0aecd08 100644
                  dr->vertex_count   = emitted;
                  dr->topology       = RSX_TOPOLOGY_TRIANGLES;
                  dr->textured       = s_d3d.tex_bound;
-@@ -6036,6 +8020,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6036,6 +8025,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  dr->cull = rsx_cull_key(s_d3d.current_rsx_state);
          dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
              dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
@@ -5491,7 +5533,7 @@ index 68929ed..0aecd08 100644
                  dr->cmask = 0xF;
                  if (s_d3d.current_rsx_state) {
                      u32 _cm = s_d3d.current_rsx_state->color_mask;
-@@ -6046,10 +8032,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6046,10 +8037,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  }
                  dr->alpha_ctl = 0;
                  if (s_d3d.current_rsx_state)
@@ -5504,7 +5546,7 @@ index 68929ed..0aecd08 100644
                      dr->tex[_u].off = s_d3d.cur_texs[_u].off;
                      dr->tex[_u].raw = s_d3d.cur_texs[_u].raw;
                      dr->tex[_u].w   = s_d3d.cur_texs[_u].w;
-@@ -6062,7 +8046,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6062,7 +8051,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                      dr->tex_rt[_u]  = -1;
                  }
                  dr->tex_slot = -1;
@@ -5513,7 +5555,7 @@ index 68929ed..0aecd08 100644
                  dr->is_clear = 0;
                  dr->blend = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->blend_enable : 1;
                  dr->blend_key = rsx_blend_key(s_d3d.current_rsx_state, dr->blend);
-@@ -6073,7 +8057,9 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6073,7 +8062,9 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                          fprintf(stderr, "[BLEND] enable=%d key=0x%X%c",
                                  dr->blend, dr->blend_key, 10); } }
                  dr->rt_off = current_rt_off(&dr->rt_w, &dr->rt_h, dr->rt_mrt);
@@ -5523,7 +5565,7 @@ index 68929ed..0aecd08 100644
                  if (s_d3d.current_rsx_state) {
                      dr->vp_x = s_d3d.current_rsx_state->viewport_x;
                      dr->vp_y = s_d3d.current_rsx_state->viewport_y;
-@@ -6081,7 +8067,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6081,7 +8072,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                      dr->vp_h = s_d3d.current_rsx_state->viewport_h;
                  } else { dr->vp_x = dr->vp_y = dr->vp_w = dr->vp_h = 0; }
                  dr->cb_slot = s_d3d.draw_count;
@@ -5532,7 +5574,7 @@ index 68929ed..0aecd08 100644
                  s_d3d.draw_count++;
              }
              return;
-@@ -6113,14 +8099,19 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6113,14 +8104,19 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
       * zero pixels (it also uploads to vp_vb, leaving the fixed-function vb empty).
       * Geometry already in clip space with no VP -- flOw's injected scene -- must
       * go down the fixed-function passthrough below instead. */
@@ -5554,7 +5596,7 @@ index 68929ed..0aecd08 100644
          /* RSX splits one primitive stream across several DRAW_ARRAYS entries
           * inside a single BEGIN/END (each carries at most 256 vertices), and the
           * hardware concatenates them before assembling primitives. Recording a
-@@ -6139,7 +8130,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6139,7 +8135,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  pv->fp_addr == fpnow && primitive == RSX_PRIMITIVE_TRIANGLES &&
                  pv->begin_epoch == (s_d3d.current_rsx_state
                                      ? s_d3d.current_rsx_state->begin_epoch : 0) &&
@@ -5563,7 +5605,7 @@ index 68929ed..0aecd08 100644
                  pv->vertex_count += emitted;
                  s_d3d.merge_first_end = first + count;
                  return;
-@@ -6148,6 +8139,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6148,6 +8144,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
          if (emitted && s_d3d.draw_count < MAX_DRAWS) {
              D3D12DrawRecord* dr = &s_d3d.draws[s_d3d.draw_count];
              dr->vb_byte_offset = rec;
@@ -5571,7 +5613,7 @@ index 68929ed..0aecd08 100644
              dr->vertex_count   = emitted;
              dr->topology       = RSX_TOPOLOGY_TRIANGLES;
              dr->textured       = s_d3d.tex_bound;
-@@ -6158,6 +8150,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6158,6 +8155,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
              dr->cull = rsx_cull_key(s_d3d.current_rsx_state);
          dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
              dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
@@ -5580,7 +5622,7 @@ index 68929ed..0aecd08 100644
              dr->cmask = 0xF;
              if (s_d3d.current_rsx_state) {
                  u32 _cm = s_d3d.current_rsx_state->color_mask;
-@@ -6168,10 +8162,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6168,10 +8167,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
              }
              dr->alpha_ctl = 0;
              if (s_d3d.current_rsx_state)
@@ -5593,7 +5635,7 @@ index 68929ed..0aecd08 100644
                  dr->tex[_u].off = s_d3d.cur_texs[_u].off;
                  dr->tex[_u].raw = s_d3d.cur_texs[_u].raw;
                  dr->tex[_u].w   = s_d3d.cur_texs[_u].w;
-@@ -6184,12 +8176,14 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6184,12 +8181,14 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  dr->tex_rt[_u]  = -1;
              }
              dr->tex_slot = -1;
@@ -5609,7 +5651,7 @@ index 68929ed..0aecd08 100644
              if (s_d3d.current_rsx_state) {
                  dr->vp_x = s_d3d.current_rsx_state->viewport_x;
                  dr->vp_y = s_d3d.current_rsx_state->viewport_y;
-@@ -6197,7 +8191,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6197,7 +8196,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  dr->vp_h = s_d3d.current_rsx_state->viewport_h;
              } else { dr->vp_x = dr->vp_y = dr->vp_w = dr->vp_h = 0; }
              dr->cb_slot = s_d3d.draw_count;
@@ -5618,7 +5660,7 @@ index 68929ed..0aecd08 100644
              s_d3d.draw_count++;
              /* Anchor for merging the next DRAW_ARRAYS batch of this stream. */
              s_d3d.merge_prev_draw  = (primitive == RSX_PRIMITIVE_TRIANGLES);
-@@ -6283,7 +8277,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6283,7 +8282,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
              pv->fp_addr == fpnow &&
              pv->begin_epoch == (s_d3d.current_rsx_state
                                  ? s_d3d.current_rsx_state->begin_epoch : 0) &&
@@ -5627,7 +5669,7 @@ index 68929ed..0aecd08 100644
              pv->vertex_count += emitted;
              s_d3d.merge_first_end = first + count;
              return;
-@@ -6292,6 +8286,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6292,6 +8291,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
      if (emitted && s_d3d.draw_count < MAX_DRAWS) {
          D3D12DrawRecord* dr = &s_d3d.draws[s_d3d.draw_count];
          dr->vb_byte_offset = rec;
@@ -5635,7 +5677,7 @@ index 68929ed..0aecd08 100644
          dr->vertex_count   = emitted;
          dr->topology       = RSX_TOPOLOGY_TRIANGLES;
          dr->textured       = s_d3d.tex_bound;
-@@ -6301,6 +8296,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6301,6 +8301,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
              ((s_d3d.current_rsx_state->shader_control & 0x40) != 0) : 1;
          dr->cull = rsx_cull_key(s_d3d.current_rsx_state);
          dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
@@ -5644,7 +5686,7 @@ index 68929ed..0aecd08 100644
          dr->cmask = 0xF;
          if (s_d3d.current_rsx_state) {
              u32 _cm = s_d3d.current_rsx_state->color_mask;
-@@ -6311,10 +8308,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6311,10 +8313,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
          }
          dr->alpha_ctl = 0;
          if (s_d3d.current_rsx_state)
@@ -5657,7 +5699,7 @@ index 68929ed..0aecd08 100644
              dr->tex[_u].off = s_d3d.cur_texs[_u].off;
              dr->tex[_u].raw = s_d3d.cur_texs[_u].raw;
              dr->tex[_u].w   = s_d3d.cur_texs[_u].w;
-@@ -6327,12 +8322,14 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6327,12 +8327,14 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
              dr->tex_rt[_u]  = -1;
          }
          dr->tex_slot = -1;
@@ -5673,7 +5715,7 @@ index 68929ed..0aecd08 100644
          if (s_d3d.current_rsx_state) {
              dr->vp_x = s_d3d.current_rsx_state->viewport_x;
              dr->vp_y = s_d3d.current_rsx_state->viewport_y;
-@@ -6340,7 +8337,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6340,7 +8342,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
              dr->vp_h = s_d3d.current_rsx_state->viewport_h;
          } else { dr->vp_x = dr->vp_y = dr->vp_w = dr->vp_h = 0; }
          dr->cb_slot = s_d3d.draw_count;
@@ -5682,7 +5724,7 @@ index 68929ed..0aecd08 100644
          s_d3d.draw_count++;
          /* Anchor for merging the next batch of this indexed stream. */
          s_d3d.merge_prev_draw = (primitive == RSX_PRIMITIVE_TRIANGLES);
-@@ -6419,7 +8416,7 @@ static void d3d12_bind_texture(void* ud, u32 unit, const rsx_texture_state* tex)
+@@ -6419,7 +8421,7 @@ static void d3d12_bind_texture(void* ud, u32 unit, const rsx_texture_state* tex)
      /* VP path: record the latest bound texture (any supported format) so draws
       * can carry it per-draw. Location bits (format[1:0]): 1 = LOCAL, 2 = MAIN. */
      extern u32 cellGcmResolveLocated(int local, u32 offset);
@@ -5691,7 +5733,7 @@ index 68929ed..0aecd08 100644
          (base_fmt == 0x81 /* B8 */ || base_fmt == 0x85 /* A8R8G8B8 */ ||
           base_fmt == 0x8B /* G8B8: LBP's font atlas */ ||
           (base_fmt >= 0x86 && base_fmt <= 0x88) /* DXT1/23/45 */ ||
-@@ -6636,6 +8633,7 @@ int rsx_d3d12_backend_init(u32 width, u32 height, const char* title)
+@@ -6636,6 +8638,7 @@ int rsx_d3d12_backend_init(u32 width, u32 height, const char* title)
      s_d3d12_backend.set_shader        = d3d12_set_shader;
      s_d3d12_backend.set_vertex_attribs = d3d12_set_vertex_attribs;
      s_d3d12_backend.draw_arrays       = d3d12_draw_arrays;
@@ -5699,7 +5741,7 @@ index 68929ed..0aecd08 100644
      s_d3d12_backend.draw_indexed      = d3d12_draw_indexed;
      s_d3d12_backend.bind_texture      = d3d12_bind_texture;
  
-@@ -6709,8 +8707,22 @@ void rsx_d3d12_backend_present(void)
+@@ -6709,8 +8712,22 @@ void rsx_d3d12_backend_present(void)
       * that partial present right after the FIFO ring recycle was the visible
       * blink. Keep the ticker present solely as the boot-time fallback (before
       * the first framed clear arrives). */
@@ -6973,311 +7015,13 @@ index 931d3b3..100a945 100644
                  continue;
              }
 diff --git a/runtime/spu/spu_helpers.h b/runtime/spu/spu_helpers.h
-index 0fca7f5..0b78161 100644
+index 0fca7f5..3c9aa0a 100644
 --- a/runtime/spu/spu_helpers.h
 +++ b/runtime/spu/spu_helpers.h
-@@ -1,191 +1,217 @@
--/*
-- * ps3recomp - SPU instruction semantics helpers
-- *
-- * Pure-C, header-only implementation of the per-instruction semantics used
-- * by lifter-generated code. Extracted from spu_lifter.py so the helpers
-- * have one source of truth and can be unit-tested directly (see
-- * runtime/spu/tests/test_spu_helpers.c).
-- *
-- * Each helper is `static inline u128 spu_<mnemonic>(...)`. Naming, lane
-- * widths and big-endian conventions match runtime/spu/spu_context.h.
-- */
--
--#ifndef SPU_HELPERS_H
--#define SPU_HELPERS_H
--
--#include "spu_context.h"
--#include <string.h>
--#include <math.h>
--
--#ifdef __cplusplus
--extern "C" {
--#endif
--
--#ifdef _MSC_VER
--#include <intrin.h>
--static inline int spu_clz32(uint32_t x) {
--    unsigned long idx;
--    if (!x) return 32;
--    _BitScanReverse(&idx, x);
--    return 31 - (int)idx;
--}
--#else
--static inline int spu_clz32(uint32_t x) { return x ? __builtin_clz(x) : 32; }
--#endif
--
--/* Architectural SPU barrier -- the lifted `sync`/`dsync`/`syncc` emission.
-- * SPU ISA v1.2 §13 (+ the per-instruction pages): order all earlier LS and
-- * channel accesses before later ones; LS must be consistent "if it were\n * observed by another entity" (Table 13-6 is exactly this runtime's
-- * host-thread producer -> SPU consumer handoff). A no-op is neither a
-- * compiler nor a CPU barrier -- MSVC at /O2 may reorder plain LS accesses
-- * across an empty statement (the PPU twin of this bug is LESSONS #11d). A
-- * full fence: the locked exchange forces total order and is opaque to the
-- * optimizer. */
--#ifdef _MSC_VER
--static inline void spu_arch_fence(void) { long spu_fence_tmp = 0; _InterlockedExchange(&spu_fence_tmp, 1); }
--#else
--static inline void spu_arch_fence(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
--#endif
--
--/* SPU byte position -> our _u8 index.
-- * Our u128 is HOST-NATIVE little-endian (_u32[i]=SPU word i as a value via
-- * spu_ls_read128's big-endian load), so within each 4-byte word the _u8[]
-- * bytes are reversed vs SPU big-endian byte order. Any op defined in terms of
-- * SPU *byte positions* (quadword byte rotates/shifts, gen-controls, shuffle
-- * insertion) must map SPU byte P to our index W(P). Word-aligned operations
-- * are unaffected (W is identity modulo the within-word reversal). */
--#define SPU_W(P) (((P) & ~3) | (3 - ((P) & 3)))
--
--/* ---- constructors ---- */
--static inline u128 spu_splat_u32(uint32_t v) {
--    u128 r; r._u32[0]=v; r._u32[1]=v; r._u32[2]=v; r._u32[3]=v; return r;
--}
--/* Link register value for brsl/bisl/bisled: the SPU writes the return address
-- * into the PREFERRED word (word 0) and ZEROS the other three slots (matches
-- * RPCS3 v128::from32r, SPUInterpreter.cpp BRSL). Splatting it (the old bug)
-- * corrupts any code that saves/reloads/operates on the full 128-bit link. */
--/* An SPU instruction the lifter could not translate. It emits a bare comment,
-- * so an unsupported opcode on a live path silently does NOTHING and the guest
-- * computes garbage from there on -- which surfaces much later as a wild DMA or
-- * atomic address with no hint of where it came from. Most of these are data
-- * embedded in .text that never executes; this fires only if one actually runs.
-- * One line per site. */
--static inline void spu_unsupported(uint32_t pc, const char* mnemonic)
--{
--    static int warned;
--    if (warned < 64) {
--        warned++;
--        fprintf(stderr, "[spu] UNSUPPORTED %s at LS 0x%05X -- executed, "
--                        "result is wrong from here\n", mnemonic, pc);
--        fflush(stderr);
--    }
--}
--
--static inline u128 spu_link(uint32_t addr) {
--    u128 r; r._u32[0]=addr; r._u32[1]=0; r._u32[2]=0; r._u32[3]=0; return r;
--}
--/* Preferred-slot scalar: value in word 0, remaining slots ZERO. CBEA's scalar
-- * channel convention -- rchcnt returns the count this way (RPCS3 measured
-- * {1,0,0,0} where the old splat gave {1,1,1,1}). Same bug class as spu_link. */
--static inline u128 spu_pref_u32(uint32_t v) {
--    u128 r; r._u32[0]=v; r._u32[1]=0; r._u32[2]=0; r._u32[3]=0; return r;
--}
--static inline u128 spu_splat_u16(uint16_t v) {
--    u128 r; for (int i=0;i<8;i++) r._u16[i]=v; return r;
--}
--static inline u128 spu_splat_u8(uint8_t v) {
--    u128 r; for (int i=0;i<16;i++) r._u8[i]=v; return r;
--}
--static inline u128 spu_zero(void) { u128 r; memset(&r,0,sizeof r); return r; }
--
--/* ---- integer arithmetic (SIMD) ---- */
--static inline u128 spu_a(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]+b._u32[i]; return r; }
--static inline u128 spu_sf(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=b._u32[i]-a._u32[i]; return r; }
--static inline u128 spu_ah(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]+b._u16[i]; return r; }
--static inline u128 spu_sfh(u128 a, u128 b){ u128 r; for(int i=0;i<8;i++) r._u16[i]=b._u16[i]-a._u16[i]; return r; }
--static inline u128 spu_ai(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]+(uint32_t)imm; return r; }
--static inline u128 spu_ahi(u128 a, int32_t imm){ u128 r; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]+(uint16_t)imm; return r; }
--static inline u128 spu_sfi(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)imm-a._u32[i]; return r; }
--static inline u128 spu_sfhi(u128 a, int32_t imm){ u128 r; for(int i=0;i<8;i++) r._u16[i]=(uint16_t)imm-a._u16[i]; return r; }
--
--/* ---- multiply (low halfword of each word × ... -> 32-bit, per SPU mpy) ----
-- * Sub-lane indexing assumes a little-endian host (matches the recompiler's
-- * target). The "low halfword of word i" in SPU BE semantics is _s16[2i] on
-- * an LE host (NOT _s16[2i+1], which would be correct on a BE host). */
--static inline u128 spu_mpy(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[i*2]*(int32_t)b._s16[i*2]; return r; }
--/* mpya: 16x16 signed multiply of low halves + add rc (per word, RRR form). */
--static inline u128 spu_mpya(u128 a, u128 b, u128 c) { u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[i*2]*(int32_t)b._s16[i*2]+c._s32[i]; return r; }
--/* sfx: extended subtract rb-ra-1+carry; carry-in = low bit of old rt (RT is 3rd src). */
--static inline u128 spu_sfx(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i++) r._u32[i]=b._u32[i]+~a._u32[i]+(t._u32[i]&1u); return r; }
--/* FI decodes the base and step fields produced by the hardware estimate
-- * instructions; its second operand is not an ordinary reciprocal float. */
--static inline u128 spu_fi(u128 a, u128 b) {
--    u128 r;
--    for (int i = 0; i < 4; i++) {
--        uint32_t rb = b._u32[i];
--        uint32_t ra = a._u32[i];
--        uint32_t exp = (rb >> 23) & 0xFFu;
--        uint32_t base_bits = rb & 0xFFFFFC00u;
--        float base; memcpy(&base, &base_bits, sizeof base);
--        uint32_t step_frac = rb & 0x3FFu;
--        float step = ldexpf((float)step_frac, (int)exp - 127 - 13);
--        if (base < 0.0f) step = -step;
--        float y = ldexpf((float)(ra & 0x7FFFFu), -19);
--        r._f32[i] = base - step * y;
--    }
--    return r;
--}
--static inline u128 spu_mpyu(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[i*2]*(uint32_t)b._u16[i*2]; return r; }
--static inline u128 spu_mpyi(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[i*2]*(int16_t)imm; return r; }
--
--/* ---- bitwise logic (whole 128 bits) ---- */
--static inline u128 spu_and(u128 a, u128 b) { u128 r; r._u64[0]=a._u64[0]&b._u64[0]; r._u64[1]=a._u64[1]&b._u64[1]; return r; }
--static inline u128 spu_or(u128 a, u128 b)  { u128 r; r._u64[0]=a._u64[0]|b._u64[0]; r._u64[1]=a._u64[1]|b._u64[1]; return r; }
--static inline u128 spu_xor(u128 a, u128 b) { u128 r; r._u64[0]=a._u64[0]^b._u64[0]; r._u64[1]=a._u64[1]^b._u64[1]; return r; }
--static inline u128 spu_nand(u128 a, u128 b){ u128 r; r._u64[0]=~(a._u64[0]&b._u64[0]); r._u64[1]=~(a._u64[1]&b._u64[1]); return r; }
--static inline u128 spu_nor(u128 a, u128 b) { u128 r; r._u64[0]=~(a._u64[0]|b._u64[0]); r._u64[1]=~(a._u64[1]|b._u64[1]); return r; }
--static inline u128 spu_andc(u128 a, u128 b){ u128 r; r._u64[0]=a._u64[0]&~b._u64[0]; r._u64[1]=a._u64[1]&~b._u64[1]; return r; }
--static inline u128 spu_orc(u128 a, u128 b) { u128 r; r._u64[0]=a._u64[0]|~b._u64[0]; r._u64[1]=a._u64[1]|~b._u64[1]; return r; }
--static inline u128 spu_andi(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]&(uint32_t)imm; return r; }
--static inline u128 spu_ori(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]|(uint32_t)imm; return r; }
--static inline u128 spu_xori(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]^(uint32_t)imm; return r; }
--
--/* ---- count leading zeros / population count per byte ---- */
--static inline u128 spu_clz(u128 a)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)spu_clz32(a._u32[i]); return r; }
--static inline u128 spu_cntb(u128 a) { u128 r; for(int i=0;i<16;i++){ uint8_t v=a._u8[i],c=0; while(v){c+=v&1;v>>=1;} r._u8[i]=c; } return r; }
--
--/* ---- compares: all-ones / all-zeros per lane ---- */
--static inline u128 spu_ceq(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._u32[i]==b._u32[i])?0xFFFFFFFFu:0; return r; }
--static inline u128 spu_ceqh(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++) r._u16[i]=(a._u16[i]==b._u16[i])?0xFFFFu:0; return r; }
--static inline u128 spu_ceqb(u128 a, u128 b) { u128 r; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]==b._u8[i])?0xFFu:0; return r; }
--static inline u128 spu_cgt(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._s32[i]>b._s32[i])?0xFFFFFFFFu:0; return r; }
--static inline u128 spu_cgth(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++) r._u16[i]=(a._s16[i]>b._s16[i])?0xFFFFu:0; return r; }
--static inline u128 spu_cgtb(u128 a, u128 b) { u128 r; for(int i=0;i<16;i++) r._u8[i]=(a._s8[i]>b._s8[i])?0xFFu:0; return r; }
--static inline u128 spu_clgt(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._u32[i]>b._u32[i])?0xFFFFFFFFu:0; return r; }
--static inline u128 spu_clgth(u128 a, u128 b){ u128 r; for(int i=0;i<8;i++) r._u16[i]=(a._u16[i]>b._u16[i])?0xFFFFu:0; return r; }
--static inline u128 spu_clgtb(u128 a, u128 b){ u128 r; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]>b._u8[i])?0xFFu:0; return r; }
--static inline u128 spu_ceqi(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._s32[i]==imm)?0xFFFFFFFFu:0; return r; }
--static inline u128 spu_cgti(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._s32[i]>imm)?0xFFFFFFFFu:0; return r; }
--static inline u128 spu_clgti(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._u32[i]>(uint32_t)imm)?0xFFFFFFFFu:0; return r; }
--
--/* ---- select / shuffle ---- */
--static inline u128 spu_selb(u128 a, u128 b, u128 c) {
--    u128 r;
--    r._u64[0]=(a._u64[0]&~c._u64[0])|(b._u64[0]&c._u64[0]);
--    r._u64[1]=(a._u64[1]&~c._u64[1])|(b._u64[1]&c._u64[1]);
--    return r;
--}
--/* shufb special selectors per Cell BE ISA:
-- *   sel & 0xE0 == 0xE0 -> 0x80
-- *   sel & 0xC0 == 0xC0 -> 0xFF
-- *   sel & 0xC0 == 0x80 -> 0x00
-- *   otherwise           -> concat{a,b}[sel & 0x1F] */
-+/*
-+ * ps3recomp - SPU instruction semantics helpers
-+ *
-+ * Pure-C, header-only implementation of the per-instruction semantics used
-+ * by lifter-generated code. Extracted from spu_lifter.py so the helpers
-+ * have one source of truth and can be unit-tested directly (see
-+ * runtime/spu/tests/test_spu_helpers.c).
-+ *
-+ * Each helper is `static inline u128 spu_<mnemonic>(...)`. Naming, lane
-+ * widths and big-endian conventions match runtime/spu/spu_context.h.
-+ */
-+
-+#ifndef SPU_HELPERS_H
-+#define SPU_HELPERS_H
-+
-+#include "spu_context.h"
-+#include <string.h>
-+#include <math.h>
-+
-+#ifdef __cplusplus
-+extern "C" {
-+#endif
-+
-+#ifdef _MSC_VER
-+#include <intrin.h>
-+static inline int spu_clz32(uint32_t x) {
-+    unsigned long idx;
-+    if (!x) return 32;
-+    _BitScanReverse(&idx, x);
-+    return 31 - (int)idx;
-+}
-+#else
-+static inline int spu_clz32(uint32_t x) { return x ? __builtin_clz(x) : 32; }
-+#endif
-+
-+/* Architectural SPU barrier -- the lifted `sync`/`dsync`/`syncc` emission.
-+ * SPU ISA v1.2 §13 (+ the per-instruction pages): order all earlier LS and
-+ * channel accesses before later ones; LS must be consistent "if it were\n * observed by another entity" (Table 13-6 is exactly this runtime's
-+ * host-thread producer -> SPU consumer handoff). A no-op is neither a
-+ * compiler nor a CPU barrier -- MSVC at /O2 may reorder plain LS accesses
-+ * across an empty statement (the PPU twin of this bug is LESSONS #11d). A
-+ * full fence: the locked exchange forces total order and is opaque to the
-+ * optimizer. */
-+#ifdef _MSC_VER
-+static inline void spu_arch_fence(void) { long spu_fence_tmp = 0; _InterlockedExchange(&spu_fence_tmp, 1); }
-+#else
-+static inline void spu_arch_fence(void) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
-+#endif
-+
-+/* SPU byte position -> our _u8 index.
-+ * Our u128 is HOST-NATIVE little-endian (_u32[i]=SPU word i as a value via
-+ * spu_ls_read128's big-endian load), so within each 4-byte word the _u8[]
-+ * bytes are reversed vs SPU big-endian byte order. Any op defined in terms of
-+ * SPU *byte positions* (quadword byte rotates/shifts, gen-controls, shuffle
-+ * insertion) must map SPU byte P to our index W(P). Word-aligned operations
-+ * are unaffected (W is identity modulo the within-word reversal). */
-+#define SPU_W(P) (((P) & ~3) | (3 - ((P) & 3)))
-+
-+/* ---- constructors ---- */
-+static inline u128 spu_splat_u32(uint32_t v) {
-+    u128 r; r._u32[0]=v; r._u32[1]=v; r._u32[2]=v; r._u32[3]=v; return r;
-+}
-+/* Link register value for brsl/bisl/bisled: the SPU writes the return address
-+ * into the PREFERRED word (word 0) and ZEROS the other three slots (matches
-+ * RPCS3 v128::from32r, SPUInterpreter.cpp BRSL). Splatting it (the old bug)
-+ * corrupts any code that saves/reloads/operates on the full 128-bit link. */
-+/* An SPU instruction the lifter could not translate. It emits a bare comment,
-+ * so an unsupported opcode on a live path silently does NOTHING and the guest
-+ * computes garbage from there on -- which surfaces much later as a wild DMA or
-+ * atomic address with no hint of where it came from. Most of these are data
-+ * embedded in .text that never executes; this fires only if one actually runs.
-+ * One line per site. */
-+static inline void spu_unsupported(uint32_t pc, const char* mnemonic)
-+{
-+    static int warned;
-+    if (warned < 64) {
-+        warned++;
-+        fprintf(stderr, "[spu] UNSUPPORTED %s at LS 0x%05X -- executed, "
-+                        "result is wrong from here\n", mnemonic, pc);
-+        fflush(stderr);
-+    }
-+}
-+
-+static inline u128 spu_link(uint32_t addr) {
-+    u128 r; r._u32[0]=addr; r._u32[1]=0; r._u32[2]=0; r._u32[3]=0; return r;
-+}
-+/* Preferred-slot scalar: value in word 0, remaining slots ZERO. CBEA's scalar
-+ * channel convention -- rchcnt returns the count this way (RPCS3 measured
-+ * {1,0,0,0} where the old splat gave {1,1,1,1}). Same bug class as spu_link. */
-+static inline u128 spu_pref_u32(uint32_t v) {
-+    u128 r; r._u32[0]=v; r._u32[1]=0; r._u32[2]=0; r._u32[3]=0; return r;
-+}
-+static inline u128 spu_splat_u16(uint16_t v) {
-+    u128 r; for (int i=0;i<8;i++) r._u16[i]=v; return r;
-+}
-+static inline u128 spu_splat_u8(uint8_t v) {
-+    u128 r; for (int i=0;i<16;i++) r._u8[i]=v; return r;
-+}
-+static inline u128 spu_zero(void) { u128 r; memset(&r,0,sizeof r); return r; }
-+
-+/* ---- integer arithmetic (SIMD) ---- */
-+static inline u128 spu_a(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]+b._u32[i]; return r; }
-+static inline u128 spu_sf(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=b._u32[i]-a._u32[i]; return r; }
-+static inline u128 spu_ah(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]+b._u16[i]; return r; }
-+static inline u128 spu_sfh(u128 a, u128 b){ u128 r; for(int i=0;i<8;i++) r._u16[i]=b._u16[i]-a._u16[i]; return r; }
-+static inline u128 spu_ai(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]+(uint32_t)imm; return r; }
-+static inline u128 spu_ahi(u128 a, int32_t imm){ u128 r; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]+(uint16_t)imm; return r; }
-+static inline u128 spu_sfi(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)imm-a._u32[i]; return r; }
-+static inline u128 spu_sfhi(u128 a, int32_t imm){ u128 r; for(int i=0;i<8;i++) r._u16[i]=(uint16_t)imm-a._u16[i]; return r; }
-+
-+/* ---- multiply (low halfword of each word × ... -> 32-bit, per SPU mpy) ----
-+ * Sub-lane indexing assumes a little-endian host (matches the recompiler's
-+ * target). The "low halfword of word i" in SPU BE semantics is _s16[2i] on
-+ * an LE host (NOT _s16[2i+1], which would be correct on a BE host). */
-+static inline u128 spu_mpy(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[i*2]*(int32_t)b._s16[i*2]; return r; }
-+/* mpya: 16x16 signed multiply of low halves + add rc (per word, RRR form). */
-+static inline u128 spu_mpya(u128 a, u128 b, u128 c) { u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[i*2]*(int32_t)b._s16[i*2]+c._s32[i]; return r; }
-+/* sfx: extended subtract rb-ra-1+carry; carry-in = low bit of old rt (RT is 3rd src). */
-+static inline u128 spu_sfx(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i++) r._u32[i]=b._u32[i]+~a._u32[i]+(t._u32[i]&1u); return r; }
+@@ -117,6 +117,32 @@ static inline u128 spu_mpy(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._s3
+ static inline u128 spu_mpya(u128 a, u128 b, u128 c) { u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[i*2]*(int32_t)b._s16[i*2]+c._s32[i]; return r; }
+ /* sfx: extended subtract rb-ra-1+carry; carry-in = low bit of old rt (RT is 3rd src). */
+ static inline u128 spu_sfx(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i++) r._u32[i]=b._u32[i]+~a._u32[i]+(t._u32[i]&1u); return r; }
 +/* Exact powers of two, built from their bits, for the scale factors below.
 + * ldexpf and exp2 were C-library calls: eight per fi instruction, which
 + * follows every reciprocal estimate, about 4.5% of GT5 Prologue's render jobs
@@ -7304,83 +7048,64 @@ index 0fca7f5..0b78161 100644
 +#else
 +#define SPU__EXP2I(n) spu__pow2d(n)
 +#endif
-+/* FI decodes the base and step fields produced by the hardware estimate
-+ * instructions; its second operand is not an ordinary reciprocal float. */
-+static inline u128 spu_fi(u128 a, u128 b) {
-+    u128 r;
-+    for (int i = 0; i < 4; i++) {
-+        uint32_t rb = b._u32[i];
-+        uint32_t ra = a._u32[i];
-+        uint32_t exp = (rb >> 23) & 0xFFu;
-+        uint32_t base_bits = rb & 0xFFFFFC00u;
-+        float base; memcpy(&base, &base_bits, sizeof base);
-+        uint32_t step_frac = rb & 0x3FFu;
+ /* FI decodes the base and step fields produced by the hardware estimate
+  * instructions; its second operand is not an ordinary reciprocal float. */
+ static inline u128 spu_fi(u128 a, u128 b) {
+@@ -128,9 +154,9 @@ static inline u128 spu_fi(u128 a, u128 b) {
+         uint32_t base_bits = rb & 0xFFFFFC00u;
+         float base; memcpy(&base, &base_bits, sizeof base);
+         uint32_t step_frac = rb & 0x3FFu;
+-        float step = ldexpf((float)step_frac, (int)exp - 127 - 13);
 +        float step = spu__ldexpf((float)step_frac, (int)exp - 127 - 13);
-+        if (base < 0.0f) step = -step;
+         if (base < 0.0f) step = -step;
+-        float y = ldexpf((float)(ra & 0x7FFFFu), -19);
 +        float y = spu__ldexpf((float)(ra & 0x7FFFFu), -19);
-+        r._f32[i] = base - step * y;
-+    }
-+    return r;
-+}
-+static inline u128 spu_mpyu(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[i*2]*(uint32_t)b._u16[i*2]; return r; }
-+static inline u128 spu_mpyi(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[i*2]*(int16_t)imm; return r; }
-+
-+/* ---- bitwise logic (whole 128 bits) ---- */
-+static inline u128 spu_and(u128 a, u128 b) { u128 r; r._u64[0]=a._u64[0]&b._u64[0]; r._u64[1]=a._u64[1]&b._u64[1]; return r; }
-+static inline u128 spu_or(u128 a, u128 b)  { u128 r; r._u64[0]=a._u64[0]|b._u64[0]; r._u64[1]=a._u64[1]|b._u64[1]; return r; }
-+static inline u128 spu_xor(u128 a, u128 b) { u128 r; r._u64[0]=a._u64[0]^b._u64[0]; r._u64[1]=a._u64[1]^b._u64[1]; return r; }
-+static inline u128 spu_nand(u128 a, u128 b){ u128 r; r._u64[0]=~(a._u64[0]&b._u64[0]); r._u64[1]=~(a._u64[1]&b._u64[1]); return r; }
-+static inline u128 spu_nor(u128 a, u128 b) { u128 r; r._u64[0]=~(a._u64[0]|b._u64[0]); r._u64[1]=~(a._u64[1]|b._u64[1]); return r; }
-+static inline u128 spu_andc(u128 a, u128 b){ u128 r; r._u64[0]=a._u64[0]&~b._u64[0]; r._u64[1]=a._u64[1]&~b._u64[1]; return r; }
-+static inline u128 spu_orc(u128 a, u128 b) { u128 r; r._u64[0]=a._u64[0]|~b._u64[0]; r._u64[1]=a._u64[1]|~b._u64[1]; return r; }
-+static inline u128 spu_andi(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]&(uint32_t)imm; return r; }
-+static inline u128 spu_ori(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]|(uint32_t)imm; return r; }
-+static inline u128 spu_xori(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]^(uint32_t)imm; return r; }
-+
-+/* ---- count leading zeros / population count per byte ---- */
-+static inline u128 spu_clz(u128 a)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)spu_clz32(a._u32[i]); return r; }
-+static inline u128 spu_cntb(u128 a) { u128 r; for(int i=0;i<16;i++){ uint8_t v=a._u8[i],c=0; while(v){c+=v&1;v>>=1;} r._u8[i]=c; } return r; }
-+
-+/* ---- compares: all-ones / all-zeros per lane ---- */
-+static inline u128 spu_ceq(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._u32[i]==b._u32[i])?0xFFFFFFFFu:0; return r; }
-+static inline u128 spu_ceqh(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++) r._u16[i]=(a._u16[i]==b._u16[i])?0xFFFFu:0; return r; }
-+static inline u128 spu_ceqb(u128 a, u128 b) { u128 r; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]==b._u8[i])?0xFFu:0; return r; }
-+static inline u128 spu_cgt(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._s32[i]>b._s32[i])?0xFFFFFFFFu:0; return r; }
-+static inline u128 spu_cgth(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++) r._u16[i]=(a._s16[i]>b._s16[i])?0xFFFFu:0; return r; }
-+static inline u128 spu_cgtb(u128 a, u128 b) { u128 r; for(int i=0;i<16;i++) r._u8[i]=(a._s8[i]>b._s8[i])?0xFFu:0; return r; }
-+static inline u128 spu_clgt(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._u32[i]>b._u32[i])?0xFFFFFFFFu:0; return r; }
-+static inline u128 spu_clgth(u128 a, u128 b){ u128 r; for(int i=0;i<8;i++) r._u16[i]=(a._u16[i]>b._u16[i])?0xFFFFu:0; return r; }
-+static inline u128 spu_clgtb(u128 a, u128 b){ u128 r; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]>b._u8[i])?0xFFu:0; return r; }
-+static inline u128 spu_ceqi(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._s32[i]==imm)?0xFFFFFFFFu:0; return r; }
-+static inline u128 spu_cgti(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._s32[i]>imm)?0xFFFFFFFFu:0; return r; }
-+static inline u128 spu_clgti(u128 a, int32_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._u32[i]>(uint32_t)imm)?0xFFFFFFFFu:0; return r; }
-+
-+/* ---- select / shuffle ---- */
-+static inline u128 spu_selb(u128 a, u128 b, u128 c) {
-+    u128 r;
-+    r._u64[0]=(a._u64[0]&~c._u64[0])|(b._u64[0]&c._u64[0]);
-+    r._u64[1]=(a._u64[1]&~c._u64[1])|(b._u64[1]&c._u64[1]);
-+    return r;
-+}
-+/* shufb special selectors per Cell BE ISA:
-+ *   sel & 0xE0 == 0xE0 -> 0x80
-+ *   sel & 0xC0 == 0xC0 -> 0xFF
-+ *   sel & 0xC0 == 0x80 -> 0x00
-+ *   otherwise           -> concat{a,b}[sel & 0x1F] */
- #if defined(__SSE4_1__)
- #include <smmintrin.h>
+         r._f32[i] = base - step * y;
+     }
+     return r;
+@@ -185,6 +211,26 @@ static inline u128 spu_selb(u128 a, u128 b, u128 c) {
  /* pshufb version: one of the hottest SPU ops (~11% of GH3's FMOD mixer task
   * as the byte loop). SPU byte P lives at host byte SPU_W(P), i.e. the bytes
   * of each 32-bit word reversed, so swap into SPU order, select, swap back. */
--static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
++#if !defined(SPU_SHUFB_SWAP)
++/* SPU byte P is host byte SPU_W(P) = P ^ 3, and the control's bytes sit at the
++ * same host positions as the result's, so nothing needs swapping: host result
++ * byte p takes host source byte (C[p] & 0xF) ^ 3 of a or b. Bit 4 of the
++ * control picks b (shifted up to bit 7 for blendv), and bit 7 marks the special
++ * selectors, whose value depends only on the high nibble: 8-B 0x00, C-D 0xFF,
++ * E-F 0x80. Nine instructions against seventeen for the swapping version
++ * below, which SPU_SHUFB_SWAP restores. */
 +static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
++    __m128i A, B, C; memcpy(&A, &a, 16); memcpy(&B, &b, 16); memcpy(&C, &c, 16);
++    const __m128i idx = _mm_xor_si128(C, _mm_set1_epi8(3));
++    __m128i r = _mm_blendv_epi8(_mm_shuffle_epi8(A, idx), _mm_shuffle_epi8(B, idx),
++                                _mm_slli_epi16(C, 3));
++    const __m128i spec = _mm_setr_epi8(0,0,0,0, 0,0,0,0, 0,0,0,0,
++                                       (char)0xFF,(char)0xFF,(char)0x80,(char)0x80);
++    const __m128i hi = _mm_and_si128(_mm_srli_epi16(C, 4), _mm_set1_epi8(0x0F));
++    r = _mm_blendv_epi8(r, _mm_shuffle_epi8(spec, hi), C);
++    u128 out; memcpy(&out, &r, 16); return out;
++}
++#else
+ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
      const __m128i sw = _mm_setr_epi8(3,2,1,0, 7,6,5,4, 11,10,9,8, 15,14,13,12);
      __m128i A, B, C; memcpy(&A, &a, 16); memcpy(&B, &b, 16); memcpy(&C, &c, 16);
-     A = _mm_shuffle_epi8(A, sw); B = _mm_shuffle_epi8(B, sw); C = _mm_shuffle_epi8(C, sw);
-@@ -202,27 +228,27 @@ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
- }
+@@ -199,7 +245,8 @@ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
+     const __m128i special = _mm_blendv_epi8(mC0, _mm_set1_epi8((char)0x80), mE0);
+     r = _mm_shuffle_epi8(_mm_blendv_epi8(r, special, m80), sw);
+     u128 out; memcpy(&out, &r, 16); return out;
+-}
++}
++#endif
  /* The byte loop stays as the reference (tests/test_spu_shufb.c checks both). */
  static inline u128 spu_shufb_ref(u128 a, u128 b, u128 c) {
+     /* shufb is defined on SPU byte positions. Our u128 is host-native LE, so SPU
+@@ -223,31 +270,31 @@ static inline u128 spu_shufb_ref(u128 a, u128 b, u128 c) {
+     }
+     return r;
+ }
+-#else
+-static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
 -    /* shufb is defined on SPU byte positions. Our u128 is host-native LE, so SPU
 -     * byte P lives at _u8[SPU_W(P)]; map every access (the concat source, the
 -     * control, and the result) through SPU_W so a control supplied as an immediate
@@ -7402,6 +7127,8 @@ index 0fca7f5..0b78161 100644
 -    }
 -    return r;
 -}
++#else
++static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
 +    /* shufb is defined on SPU byte positions. Our u128 is host-native LE, so SPU
 +     * byte P lives at _u8[SPU_W(P)]; map every access (the concat source, the
 +     * control, and the result) through SPU_W so a control supplied as an immediate
@@ -7423,406 +7150,18 @@ index 0fca7f5..0b78161 100644
 +    }
 +    return r;
 +}
- #else
- static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
-     /* shufb is defined on SPU byte positions. Our u128 is host-native LE, so SPU
-@@ -248,387 +274,433 @@ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
- }
  #define spu_shufb_ref spu_shufb
- #endif
--
--/* ---- shift / rotate immediate (word lanes) ---- */
--static inline u128 spu_shli(u128 a, int sh)  { u128 r; sh&=0x3F; for(int i=0;i<4;i++) r._u32[i]=(sh>31)?0:(a._u32[i]<<sh); return r; }
--static inline u128 spu_shlhi(u128 a, int sh) { u128 r; sh&=0x1F; for(int i=0;i<8;i++) r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]<<sh); return r; }
--static inline u128 spu_roti(u128 a, int sh)  { u128 r; sh&=31; for(int i=0;i<4;i++) r._u32[i]= sh ? ((a._u32[i]<<sh)|(a._u32[i]>>(32-sh))) : a._u32[i]; return r; }
--static inline u128 spu_rothi(u128 a, int sh) { u128 r; sh&=15; for(int i=0;i<8;i++) r._u16[i]=(uint16_t)((a._u16[i]<<sh)|(a._u16[i]>>(16-sh))); return r; }
--static inline u128 spu_rotmi(u128 a, int i7)  { u128 r; int sh=(0-i7)&0x3F; for(int i=0;i<4;i++) r._u32[i]=(sh>31)?0:(a._u32[i]>>sh); return r; }
--static inline u128 spu_rotmai(u128 a, int i7) { u128 r; int sh=(0-i7)&0x3F; for(int i=0;i<4;i++) r._s32[i]=(sh>31)?(a._s32[i]>>31):(a._s32[i]>>sh); return r; }
--static inline u128 spu_rotmhi(u128 a, int i7) { u128 r; int sh=(0-i7)&0x1F; for(int i=0;i<8;i++) r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]>>sh); return r; }
+-#endif
++#endif
+ 
+ /* ---- shift / rotate immediate (word lanes) ---- */
+ static inline u128 spu_shli(u128 a, int sh)  { u128 r; sh&=0x3F; for(int i=0;i<4;i++) r._u32[i]=(sh>31)?0:(a._u32[i]<<sh); return r; }
+@@ -257,8 +304,58 @@ static inline u128 spu_rothi(u128 a, int sh) { u128 r; sh&=15; for(int i=0;i<8;i
+ static inline u128 spu_rotmi(u128 a, int i7)  { u128 r; int sh=(0-i7)&0x3F; for(int i=0;i<4;i++) r._u32[i]=(sh>31)?0:(a._u32[i]>>sh); return r; }
+ static inline u128 spu_rotmai(u128 a, int i7) { u128 r; int sh=(0-i7)&0x3F; for(int i=0;i<4;i++) r._s32[i]=(sh>31)?(a._s32[i]>>31):(a._s32[i]>>sh); return r; }
+ static inline u128 spu_rotmhi(u128 a, int i7) { u128 r; int sh=(0-i7)&0x1F; for(int i=0;i<8;i++) r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]>>sh); return r; }
 -static inline u128 spu_shlqbyi(u128 a, int sh) { u128 r=spu_zero(); sh&=0x1F; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
 -static inline u128 spu_rotqbyi(u128 a, int sh) { u128 r; sh&=0x0F; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
--/* Bit-level quadword shifts/rotates operate on the WHOLE 128-bit big-endian
-- * value. Our _u64[0]/_u64[1] are word-SCRAMBLED (host-LE: _u64[0] = word0 |
-- * word1<<32, but SPU's MS half is word0<<32 | word1), so native shifts on them
-- * corrupt any bits crossing a 32-bit boundary. Assemble the logical hi/lo halves
-- * with _u32[0] as most-significant, shift, then disassemble. */
--static inline u128 spu_shlqbii(u128 a, int sh) { sh&=7; if(!sh) return a;
--    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
--    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh);
--    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
--static inline u128 spu_rotqbii(u128 a, int sh) { sh&=7; if(!sh) return a;
--    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
--    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh)|(hi>>(64-sh));
--    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
--
--/* ---- single-precision float (4 lanes) ---- */
--static inline u128 spu_fa(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[i]=a._f32[i]+b._f32[i]; return r; }
--static inline u128 spu_fs(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[i]=a._f32[i]-b._f32[i]; return r; }
--
--/* RI8 scale: float-to-int uses 2^(173-i8), int-to-float 2^(i8-155).
-- * The canonical immediates 173 and 155 are identity conversions. */
--static inline u128 spu_cflts(u128 a, int i8){ u128 r; double f=exp2((double)(173-i8));
--    for(int i=0;i<4;i++){ double v=(double)a._f32[i]*f; if(v>2147483647.0)v=2147483647.0; if(v<-2147483648.0)v=-2147483648.0; r._s32[i]=(int32_t)v; } return r; }
--static inline u128 spu_cfltu(u128 a, int i8){ u128 r; double f=exp2((double)(173-i8));
--    for(int i=0;i<4;i++){ double v=(double)a._f32[i]*f; if(v<0)v=0; if(v>4294967295.0)v=4294967295.0; r._u32[i]=(uint32_t)v; } return r; }
--static inline u128 spu_csflt(u128 a, int i8){ u128 r; double f=exp2((double)(i8-155));
--    for(int i=0;i<4;i++) r._f32[i]=(float)((double)a._s32[i]*f); return r; }
--static inline u128 spu_cuflt(u128 a, int i8){ u128 r; double f=exp2((double)(i8-155));
--    for(int i=0;i<4;i++) r._f32[i]=(float)((double)a._u32[i]*f); return r; }
--static inline u128 spu_fm(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[i]=a._f32[i]*b._f32[i]; return r; }
--static inline u128 spu_fma(u128 a, u128 b, u128 c)  { u128 r; for(int i=0;i<4;i++) r._f32[i]=fmaf(a._f32[i], b._f32[i], c._f32[i]); return r; }
--static inline u128 spu_fms(u128 a, u128 b, u128 c)  { u128 r; for(int i=0;i<4;i++) r._f32[i]=fmaf(a._f32[i], b._f32[i], -c._f32[i]); return r; }
--static inline u128 spu_fnms(u128 a, u128 b, u128 c) { u128 r; for(int i=0;i<4;i++) r._f32[i]=fmaf(a._f32[i], -b._f32[i], c._f32[i]); return r; }
--static inline u128 spu_fceq(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._f32[i]==b._f32[i])?0xFFFFFFFFu:0; return r; }
--static inline u128 spu_fcgt(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._f32[i]>b._f32[i])?0xFFFFFFFFu:0; return r; }
--
--/* ---- SPU double-precision (2 doubles/reg; dword i = words 2i(high),2i+1(low)).
-- * Reassemble via _u32 -- our u128 is host-LE, so a naive _f64[i] would SWAP the
-- * two words. Semantics from RPCS3 SPUInterpreter (DFASM / DFMA / FESD / FRDS). ---- */
--static inline double spu__dget(u128 r, int i) {
--    uint64_t u = ((uint64_t)r._u32[i*2] << 32) | r._u32[i*2+1];
--    double d; memcpy(&d, &u, sizeof d); return d;
--}
--static inline void spu__dset(u128* r, int i, double d) {
--    uint64_t u; memcpy(&u, &d, sizeof u);
--    r->_u32[i*2] = (uint32_t)(u >> 32); r->_u32[i*2+1] = (uint32_t)u;
--}
--static inline u128 spu_dfa(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)+spu__dget(b,i)); return r; }
--static inline u128 spu_dfs(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)-spu__dget(b,i)); return r; }
--static inline u128 spu_dfm(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)*spu__dget(b,i)); return r; }
--/* double FMA family: c = rt (accumulator, 3-register). */
--static inline u128 spu_dfma(u128 a, u128 b, u128 t)  { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)*spu__dget(b,i)+spu__dget(t,i)); return r; }
--static inline u128 spu_dfms(u128 a, u128 b, u128 t)  { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)*spu__dget(b,i)-spu__dget(t,i)); return r; }
--static inline u128 spu_dfnms(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(t,i)-spu__dget(a,i)*spu__dget(b,i)); return r; }
--static inline u128 spu_dfnma(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, -(spu__dget(a,i)*spu__dget(b,i)+spu__dget(t,i))); return r; }
--/* double compares -> per-lane 64-bit mask (RPCS3 stubs these; sane impl here). */
--static inline u128 spu_dfceq(u128 a, u128 b)  { u128 r; for(int i=0;i<2;i++){ uint64_t m=(spu__dget(a,i)==spu__dget(b,i))?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
--static inline u128 spu_dfcmeq(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++){ double x=spu__dget(a,i),y=spu__dget(b,i); if(x<0)x=-x; if(y<0)y=-y; uint64_t m=(x==y)?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
--/* Singles occupy preferred words 0 and 2 when converting doubleword lanes. */
--static inline u128 spu_fesd(u128 a) { u128 r; memset(&r,0,sizeof r); for(int i=0;i<2;i++) spu__dset(&r,i,(double)a._f32[i*2]); return r; }
--static inline u128 spu_frds(u128 a) { u128 r; memset(&r,0,sizeof r); for(int i=0;i<2;i++) r._f32[i*2]=(float)spu__dget(a,i); return r; }
--/* mpyhhu: high-16 x high-16 of each word, unsigned, full 32-bit product. */
--static inline u128 spu_mpyhhu(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[2*i+1]*(uint32_t)b._u16[2*i+1]; return r; }
--/* cgx: extended carry-generate, carry-in = low bit of old rt (RPCS3 CGX). */
--static inline u128 spu_cgx(u128 a, u128 b, u128 t){ u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)(((uint64_t)(t._u32[i]&1u)+a._u32[i]+b._u32[i])>>32); return r; }
--
--/* ---- remaining SPU ISA ops (RPCS3 SPUInterpreter: EQV/ABSDB/AVGB/MPYHHA/
-- * MPYHHAU/DFCGT/DFCMGT/XORBI/DFTSV). Completes the lifter's opcode coverage. ---- */
--static inline u128 spu_eqv(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++) r._u32[i]=~(a._u32[i]^b._u32[i]); return r; }
--static inline u128 spu_xorbi(u128 a, int32_t imm){ u128 r; for(int i=0;i<16;i++) r._u8[i]=(uint8_t)(a._u8[i]^(uint8_t)imm); return r; }
--static inline u128 spu_absdb(u128 a, u128 b)  { u128 r; for(int i=0;i<16;i++){ uint8_t x=a._u8[i],y=b._u8[i]; r._u8[i]=(uint8_t)(x>y?x-y:y-x); } return r; }
--static inline u128 spu_avgb(u128 a, u128 b)   { u128 r; for(int i=0;i<16;i++) r._u8[i]=(uint8_t)(((uint32_t)a._u8[i]+(uint32_t)b._u8[i]+1u)>>1); return r; }
--/* mpyhha/mpyhhau: high-16 x high-16, ACCUMULATE into rt (3-register). */
--static inline u128 spu_mpyhha(u128 a, u128 b, u128 t)  { u128 r; for(int i=0;i<4;i++) r._s32[i]=t._s32[i]+(int32_t)a._s16[2*i+1]*(int32_t)b._s16[2*i+1]; return r; }
--static inline u128 spu_mpyhhau(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i++) r._u32[i]=t._u32[i]+(uint32_t)a._u16[2*i+1]*(uint32_t)b._u16[2*i+1]; return r; }
--/* double compare greater (RPCS3 stubs these; sane impl) -> per-lane mask. */
--static inline u128 spu_dfcgt(u128 a, u128 b)  { u128 r; for(int i=0;i<2;i++){ uint64_t m=(spu__dget(a,i)>spu__dget(b,i))?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
--static inline u128 spu_dfcmgt(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++){ double x=spu__dget(a,i),y=spu__dget(b,i); if(x<0)x=-x; if(y<0)y=-y; uint64_t m=(x>y)?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
--/* dftsv: double test special value -- RPCS3 stubs (fatal); 0 = no special. */
--static inline u128 spu_dftsv(u128 a, int32_t imm){ (void)a; (void)imm; u128 r; memset(&r,0,sizeof r); return r; }
--
--/* ---- Phase 2: register-variable shifts/rotates ---- */
--static inline u128 spu_shl(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++){ uint32_t sh=b._u32[i]&0x3F; r._u32[i]=(sh>31)?0:(a._u32[i]<<sh); } return r; }
--static inline u128 spu_shlh(u128 a, u128 b)  { u128 r; for(int i=0;i<8;i++){ uint32_t sh=b._u16[i]&0x1F; r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]<<sh); } return r; }
--static inline u128 spu_rot(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++){ uint32_t sh=b._u32[i]&31; r._u32[i]= sh ? ((a._u32[i]<<sh)|(a._u32[i]>>(32-sh))) : a._u32[i]; } return r; }
--static inline u128 spu_roth(u128 a, u128 b)  { u128 r; for(int i=0;i<8;i++){ uint32_t sh=b._u16[i]&15; r._u16[i]= sh ? (uint16_t)((a._u16[i]<<sh)|(a._u16[i]>>(16-sh))) : a._u16[i]; } return r; }
--static inline u128 spu_shlqbi(u128 a, u128 b){ int sh=b._u32[0]&7; if(!sh) return a;
--    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
--    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh);
--    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
--static inline u128 spu_rotqbi(u128 a, u128 b){ int sh=b._u32[0]&7; if(!sh) return a;
--    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
--    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh)|(hi>>(64-sh));
--    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
--static inline u128 spu_shlqby(u128 a, u128 b){ int sh=b._u32[0]&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
--static inline u128 spu_rotqby(u128 a, u128 b){ int sh=b._u32[0]&0x0F; u128 r; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
--static inline u128 spu_shlqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
--static inline u128 spu_rotqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x0F; u128 r; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
--
--/* ---- Phase 2: rotmahi ---- */
--static inline u128 spu_rotmahi(u128 a, int i7) { u128 r; int sh=(0-i7)&0x1F; for(int i=0;i<8;i++) r._s16[i]=(sh>15)?(a._s16[i]>>15):(a._s16[i]>>sh); return r; }
--
--/* ---- Phase 2: byte/half immediate compares ---- */
--static inline u128 spu_ceqbi(u128 a, int32_t imm)  { u128 r; uint8_t v=(uint8_t)imm; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]==v)?0xFFu:0; return r; }
--static inline u128 spu_ceqhi(u128 a, int32_t imm)  { u128 r; int16_t v=(int16_t)imm; for(int i=0;i<8;i++) r._u16[i]=(a._s16[i]==v)?0xFFFFu:0; return r; }
--static inline u128 spu_clgtbi(u128 a, int32_t imm) { u128 r; uint8_t v=(uint8_t)imm; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]>v)?0xFFu:0; return r; }
--static inline u128 spu_clgthi(u128 a, int32_t imm) { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=(a._u16[i]>v)?0xFFFFu:0; return r; }
--static inline u128 spu_cgthi(u128 a, int32_t imm)  { u128 r; int16_t v=(int16_t)imm; for(int i=0;i<8;i++) r._u16[i]=(a._s16[i]>v)?0xFFFFu:0; return r; }
--static inline u128 spu_cgtbi(u128 a, int32_t imm)  { u128 r; int8_t v=(int8_t)imm; for(int i=0;i<16;i++) r._u8[i]=(a._s8[i]>v)?0xFFu:0; return r; }
--
--/* ---- Phase 2: misc one-offs ---- */
--static inline u128 spu_fscrrd(u128 a) { (void)a; return spu_zero(); }
--static inline u128 spu_gb(u128 a) {
--    uint32_t v = ((a._u32[0]&1)<<3)|((a._u32[1]&1)<<2)|((a._u32[2]&1)<<1)|(a._u32[3]&1);
--    u128 r = spu_zero(); r._u32[0]=v; return r;
--}
--static inline u128 spu_gbh(u128 a) {
--    /* gather LSB of each SPU halfword H into bit (7-H). SPU halfword H maps to
--     * our _u16[H^1] (the within-word halfword swap of the value layout). */
--    uint32_t v=0; for(int i=0;i<8;i++) v |= ((uint32_t)(a._u16[i^1]&1) << (7-i));
--    u128 r = spu_zero(); r._u32[0]=v; return r;
--}
--/* gather LSB of each SPU byte i into bit (15-i); exact inverse of spu_fsmb.
-- * SPU byte i lives at our _u8[SPU_W(i)] (byte-reversed within each word). */
--static inline u128 spu_gbb(u128 a) {
--    uint32_t v=0; for(int i=0;i<16;i++) v |= ((uint32_t)(a._u8[SPU_W(i)]&1) << (15-i));
--    u128 r = spu_zero(); r._u32[0]=v; return r;
--}
--static inline u128 spu_cg(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)(((uint64_t)a._u32[i]+(uint64_t)b._u32[i])>>32); return r; }
--/* sumb: sum the 4 bytes of each word. Per CBEA, RT halfword 2i (the HIGH half of
-- * word i) = sum of RB's 4 bytes of word i; halfword 2i+1 (LOW half) = sum of RA's
-- * 4 bytes of word i. Computed on word VALUES so byte order is irrelevant. */
--static inline u128 spu_sumb(u128 a, u128 b) {
--    u128 r;
--    for(int i=0;i<4;i++) {
--        uint32_t wa=a._u32[i], wb=b._u32[i];
--        uint32_t sa=((wa>>24)&0xFF)+((wa>>16)&0xFF)+((wa>>8)&0xFF)+(wa&0xFF);
--        uint32_t sb=((wb>>24)&0xFF)+((wb>>16)&0xFF)+((wb>>8)&0xFF)+(wb&0xFF);
--        r._u32[i]=(sb<<16)|sa;
--    }
--    return r;
--}
--/* Borrow generate: carry-out of (b + ~a + 1) == (b >= a unsigned ? 1 : 0).
-- * The subtract-side sibling of cg; pairs with sf/sfx for extended subtraction. */
--static inline u128 spu_bg(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)(((uint64_t)b._u32[i]+(uint64_t)(~a._u32[i])+1u)>>32); return r; }
--static inline u128 spu_addx(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]+b._u32[i]+(t._u32[i]&1); return r; }
--/* LE host: high half of word i = _s16[2i+1], low half = _s16[2i]. */
--static inline u128 spu_mpyh(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._s32[i]=((int32_t)a._s16[2*i+1] * (int32_t)b._s16[2*i]) << 16; return r; }
--static inline u128 spu_mpyhh(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[2*i+1] * (int32_t)b._s16[2*i+1]; return r; }
--static inline u128 spu_mpys(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++){ int32_t p=(int32_t)a._s16[2*i]*(int32_t)b._s16[2*i]; r._s32[i]=(int16_t)(p>>16); } return r; }
--static inline u128 spu_mpyui(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[2*i]*(uint32_t)(uint16_t)imm; return r; }
--static inline u128 spu_fcmeq(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++){ float fa=fabsf(a._f32[i]),fb=fabsf(b._f32[i]); r._u32[i]=(fa==fb)?0xFFFFFFFFu:0; } return r; }
--static inline u128 spu_fcmgt(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++){ float fa=fabsf(a._f32[i]),fb=fabsf(b._f32[i]); r._u32[i]=(fa>fb)?0xFFFFFFFFu:0; } return r; }
--static const uint32_t spu_frest_fraction_lut[32] = {
--    0x7FFBE0, 0x7F87A6, 0x70EF72, 0x708B40, 0x638B12, 0x633AEA, 0x5792C4, 0x574AA0,
--    0x4CCA7E, 0x4C9262, 0x430A44, 0x42D62A, 0x3A2E12, 0x39FDFA, 0x3215E4, 0x31F1D2,
--    0x2AA9BE, 0x2A85AC, 0x23D59A, 0x23BD8E, 0x1D8576, 0x1D8576, 0x17AD5A, 0x17AD5A,
--    0x124543, 0x124543, 0x0D392D, 0x0D392D, 0x08851A, 0x08851A, 0x041D07, 0x041D07
--};
--
--static const uint32_t spu_frsqest_fraction_lut[64] = {
--    0x350160, 0x34E954, 0x2F993D, 0x2F993D, 0x2AA523, 0x2AA523, 0x26190D, 0x26190D,
--    0x21E4F9, 0x21E4F9, 0x1E00E9, 0x1E00E9, 0x1A5CD9, 0x1A5CD9, 0x16F8CB, 0x16F8CB,
--    0x13CCC0, 0x13CCC0, 0x10CCB3, 0x10CCB3, 0x0E00AA, 0x0E00AA, 0x0B58A1, 0x0B58A1,
--    0x08D498, 0x08D498, 0x067491, 0x067491, 0x043089, 0x043089, 0x020C83, 0x020C83,
--    0x7FFDF4, 0x7FD1DE, 0x7859C8, 0x783DBA, 0x71559C, 0x71559C, 0x6AE57C, 0x6AE57C,
--    0x64F561, 0x64F561, 0x5F7149, 0x5F7149, 0x5A4D33, 0x5A4D33, 0x55811F, 0x55811F,
--    0x51050F, 0x51050F, 0x4CC8FE, 0x4CC8FE, 0x48D0F0, 0x48D0F0, 0x4510E4, 0x4510E4,
--    0x4180D7, 0x4180D7, 0x3E24CC, 0x3E24CC, 0x3AF4C3, 0x3AF4C3, 0x37E8BA, 0x37E8BA
--};
--
--static inline u128 spu_frsqest(u128 a) {
--    u128 r;
--    for (int i = 0; i < 4; i++) {
--        uint32_t bits = a._u32[i];
--        uint32_t exp  = (bits >> 23) & 0xFFu;
--        uint32_t frac_idx = (bits >> 18) & 0x3Fu;
--        uint32_t rexp = (exp == 0u) ? 0xFFu : (190u - (exp + 1u) / 2u);
--        uint32_t fraction = spu_frsqest_fraction_lut[frac_idx];
--        uint32_t out = (rexp << 23) | (fraction & 0x7FFFFFu);
--        memcpy(&r._f32[i], &out, sizeof out);
--    }
--    return r;
--}
--/* frest: reciprocal estimate (refined by the following spu_fi Newton step).
-- * Full-precision 1/x is exact after fi and >= HW-estimate accuracy. */
--static inline u128 spu_frest(u128 a) {
--    u128 r;
--    for (int i = 0; i < 4; i++) {
--        uint32_t bits = a._u32[i];
--        uint32_t sign = bits & 0x80000000u;
--        uint32_t exp  = (bits >> 23) & 0xFFu;
--        uint32_t frac_idx = (bits >> 18) & 0x1Fu;
--        uint32_t out;
--        if (exp == 0u) {
--            /* zero or denormal operand: ISA p.215 "1/0 is defined to give the
--             * maximum SPU single-precision extended-range fp number", sign of
--             * the (zero) input preserved. Same bucket for true denormals
--             * (their biased exponent field is also 0). */
--            out = sign | 0x7FFFFFFFu;
--        } else {
--            /* result biased exponent = 253 - input biased exponent (253 =
--             * 2*127-1, i.e. reciprocal negates the unbiased exponent),
--             * clamped to 0 on underflow (ISA p.215 "Big: if |x|>=2^126,
--             * 1/x underflows to zero"). Verified bit-exact against RPCS3's
--             * raw 256-entry spu_frest_exponent_lut for all 256 inputs. */
--            uint32_t rexp = (exp >= 253u) ? 0u : (253u - exp);
--            uint32_t fraction = spu_frest_fraction_lut[frac_idx];
--            out = sign | (rexp << 23) | (fraction & 0x7FFFFFu);
--        }
--        memcpy(&r._f32[i], &out, sizeof out);
--    }
--    return r;
--}
--
--/* ---- Phase 3: sign extension ----
-- * LE host: low sub-lane = _u8[2i] / _s16[2i] / _s32[2i] (the byte/half/word
-- * at the *lower* storage address). Same caveat as the mpy family. */
--static inline u128 spu_xsbh(u128 a) { u128 r; for(int i=0;i<8;i++) r._s16[i] = (int8_t)a._u8[2*i]; return r; }
--static inline u128 spu_xshw(u128 a) { u128 r; for(int i=0;i<4;i++) r._s32[i] = (int16_t)a._s16[2*i]; return r; }
--/* xswd: rt.doubleword[d] = sign_extend_64(ra.word[2d+1]) -- the ODD word of
-- * each doubleword, because that is the low half in big-endian order.
-- *
-- * This read the EVEN words (2d) and wrote the result through _s64, which is a
-- * host little-endian lane: writing it puts the value in _u32[2d] (SPU word 2d,
-- * the HIGH half) and the sign fill in _u32[2d+1]. Both halves were therefore
-- * wrong, and the common case -- a small positive value -- came out as ZERO.
-- *
-- * You Don't Know Jack's FMOD mixer hit exactly that: a compiler-generated
-- * 64-bit multiply helper received `1 * 0` instead of `1 * 16`, so the mixer's
-- * block count was zero and it stopped on its own assert. Unlike its siblings
-- * xsbh/xshw, whose source and destination swaps cancel, nothing cancels here.
-- * Write the two words explicitly. */
--static inline u128 spu_xswd(u128 a) {
--    u128 r;
--    for (int d = 0; d < 2; d++) {
--        int32_t v = (int32_t)a._u32[2*d + 1];
--        r._u32[2*d]     = (uint32_t)(v >> 31);   /* sign fill (high word) */
--        r._u32[2*d + 1] = (uint32_t)v;           /* value      (low word) */
--    }
--    return r;
--}
--
--/* ---- Phase 3: OR across ---- */
--static inline u128 spu_orx(u128 a) {
--    u128 r = spu_zero();
--    r._u32[0] = a._u32[0] | a._u32[1] | a._u32[2] | a._u32[3];
--    return r;
--}
--
--/* ---- Phase 3: form-select mask from bits ---- */
--static inline u128 spu_fsm(u128 a) {
--    u128 r; uint32_t v = a._u32[0] & 0xF;
--    for(int i=0;i<4;i++) r._u32[i] = ((v>>(3-i))&1) ? 0xFFFFFFFFu : 0;
--    return r;
--}
--/* fsmh: per-halfword mask from 8 bits. SPU halfword H <- bit (7-H); store at
-- * our _u16[H^1] (within-word halfword swap of the value layout). Per-halfword
-- * both bytes are identical so byte order within a halfword is irrelevant, but
-- * the halfword ORDER within each word must be swapped. */
--static inline u128 spu_fsmh(u128 a) {
--    u128 r; uint32_t v = a._u32[0] & 0xFF;
--    for(int i=0;i<8;i++) r._u16[i^1] = ((v>>(7-i))&1) ? 0xFFFFu : 0;
--    return r;
--}
--/* fsmb/fsmbi: per-byte mask from 16 bits. SPU byte position P <- bit (15-P);
-- * store at our _u8[SPU_W(P)] (byte-reversed within each word). A bit set at SPU
-- * byte P must land at our _u8[SPU_W(P)] so that downstream word arithmetic (e.g.
-- * andbi(fsmbi(0x101),-128) building a +0x80 EA offset in the low byte of words
-- * 1,3) places the value in the correct byte lane. Raw _u8[P] would put 0x80 in
-- * the high byte (bit 31) instead -> wrong DMA EA. */
--static inline u128 spu_fsmb(u128 a) {
--    u128 r; uint32_t v = a._u32[0] & 0xFFFF;
--    for(int i=0;i<16;i++) r._u8[SPU_W(i)] = ((v>>(15-i))&1) ? 0xFFu : 0;
--    return r;
--}
--static inline u128 spu_fsmbi(int32_t imm) {
--    u128 r; uint32_t v = imm & 0xFFFF;
--    for(int i=0;i<16;i++) r._u8[SPU_W(i)] = ((v>>(15-i))&1) ? 0xFFu : 0;
--    return r;
--}
--
--/* ---- Phase 3: constant generators (insertion shuffle patterns) ---- */
--/* Generate-controls (cbd/chd/cwd/cdd) — insertion selectors for the (now
-- * SPU-byte-correct) shufb. Each builds a control in TRUE SPU byte order: the
-- * base selects b's SPU byte t at result SPU byte t (selector 0x10+t), and the
-- * insert positions select a's preferred scalar bytes -- SPU byte 3 for a byte
-- * (selector 0x03), SPU bytes 2,3 for a halfword (0x02,0x03), SPU bytes 0..3 for
-- * a word, 0..7 for a doubleword. Every store is mapped through SPU_W to land at
-- * the right host index. Verified to compose correctly with the fixed shufb for
-- * both cbd-generated and immediate/LS-constant controls. */
--static inline u128 spu_cbd_pos(int pos) {
--    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
--    r._u8[SPU_W(pos & 0xF)] = 0x03;                 /* a's preferred byte = SPU byte 3 */
--    return r;
--}
--static inline u128 spu_chd_pos(int pos) {
--    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
--    int p = (pos & 0xF) & ~1;                       /* SPU halfword byte positions p, p+1 */
--    r._u8[SPU_W(p)]   = 0x02;                        /* a SPU byte 2 (hi byte of preferred hw) */
--    r._u8[SPU_W(p+1)] = 0x03;                        /* a SPU byte 3 (lo byte) */
--    return r;
--}
--static inline u128 spu_cwd_pos(int pos) {
--    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
--    int p = (pos & 0xF) & ~3;
--    for(int k=0;k<4;k++) r._u8[SPU_W(p+k)] = (uint8_t)k;   /* a SPU bytes 0..3 (preferred word) */
--    return r;
--}
--static inline u128 spu_cdd_pos(int pos) {
--    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
--    int p = (pos & 0xF) & ~7;
--    for(int k=0;k<8;k++) r._u8[SPU_W(p+k)] = (uint8_t)k;   /* a SPU bytes 0..7 (preferred dword) */
--    return r;
--}
--static inline u128 spu_cbd(u128 a, int i7){ return spu_cbd_pos((int)a._u32[0]+i7); }
--static inline u128 spu_chd(u128 a, int i7){ return spu_chd_pos((int)a._u32[0]+i7); }
--static inline u128 spu_cwd(u128 a, int i7){ return spu_cwd_pos((int)a._u32[0]+i7); }
--static inline u128 spu_cdd(u128 a, int i7){ return spu_cdd_pos((int)a._u32[0]+i7); }
--static inline u128 spu_cbx(u128 a, u128 b){ return spu_cbd_pos((int)(a._u32[0]+b._u32[0])); }
--static inline u128 spu_chx(u128 a, u128 b){ return spu_chd_pos((int)(a._u32[0]+b._u32[0])); }
--static inline u128 spu_cwx(u128 a, u128 b){ return spu_cwd_pos((int)(a._u32[0]+b._u32[0])); }
--static inline u128 spu_cdx(u128 a, u128 b){ return spu_cdd_pos((int)(a._u32[0]+b._u32[0])); }
--
--/* ---- Phase 3: rotate-and-mask family ---- */
--static inline u128 spu_rotm(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++){ uint32_t sh=(0-b._u32[i])&0x3F; r._u32[i]=(sh>31)?0:(a._u32[i]>>sh); } return r; }
--static inline u128 spu_rotma(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++){ uint32_t sh=(0-b._u32[i])&0x3F; r._s32[i]=(sh>31)?(a._s32[i]>>31):(a._s32[i]>>sh); } return r; }
--static inline u128 spu_rothm(u128 a, u128 b)  { u128 r; for(int i=0;i<8;i++){ uint32_t sh=(0-b._u16[i])&0x1F; r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]>>sh); } return r; }
--static inline u128 spu_rothma(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++){ uint32_t sh=(0-b._u16[i])&0x1F; r._s16[i]=(sh>15)?(a._s16[i]>>15):(a._s16[i]>>sh); } return r; }
--static inline u128 spu_rothmi(u128 a, int i7) { u128 r; int sh=(0-i7)&0x1F; for(int i=0;i<8;i++) r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]>>sh); return r; }
--static inline u128 spu_rotqmbi(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])&7; if(!sh) return a;
--    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
--    uint64_t nlo=(lo>>sh)|(hi<<(64-sh)), nhi=(hi>>sh);
--    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
--static inline u128 spu_rotqmby(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i-sh; if(s>=0) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
--static inline u128 spu_rotqmbybi(u128 a, u128 b) { int sh=(0-((int)b._u32[0]>>3))&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i-sh; if(s>=0) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
--static inline u128 spu_rotqmbii(u128 a, int i7)  { int sh=(0-i7)&7; if(!sh) return a;
--    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
--    uint64_t nlo=(lo>>sh)|(hi<<(64-sh)), nhi=(hi>>sh);
--    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
--static inline u128 spu_rotqmbyi(u128 a, int i7)  { int sh=(0-i7)&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i-sh; if(s>=0) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
--
--/* ---- Phase 3: halfword/byte immediate logic ---- */
--static inline u128 spu_andhi(u128 a, int32_t imm) { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]&v; return r; }
--static inline u128 spu_andbi(u128 a, int32_t imm) { u128 r; uint8_t  v=(uint8_t)imm;  for(int i=0;i<16;i++) r._u8[i]=a._u8[i]&v;   return r; }
--static inline u128 spu_orhi(u128 a, int32_t imm)  { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]|v; return r; }
--static inline u128 spu_orbi(u128 a, int32_t imm)  { u128 r; uint8_t  v=(uint8_t)imm;  for(int i=0;i<16;i++) r._u8[i]=a._u8[i]|v;   return r; }
--static inline u128 spu_xorhi(u128 a, int32_t imm) { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]^v; return r; }
--
--/* ---- Phase 3: borrow-generate extended ---- */
--static inline u128 spu_bgx(u128 a, u128 b, u128 t) {
--    u128 r;
--    for(int i=0;i<4;i++) {
--        uint64_t s = (uint64_t)b._u32[i] + (uint64_t)(~a._u32[i]) + (uint64_t)(t._u32[i]&1);
--        r._u32[i] = (uint32_t)(s >> 32);
--    }
--    return r;
--}
--
--/* ---- Phase 3: mfspr stub ---- */
--static inline u128 spu_mfspr(u128 a) { (void)a; return spu_zero(); }
--
--/* ---- immediate loaders ---- */
--static inline u128 spu_il(int32_t imm)   { return spu_splat_u32((uint32_t)imm); }
--static inline u128 spu_ila(uint32_t i18) { return spu_splat_u32(i18 & 0x3FFFF); }
--static inline u128 spu_ilh(uint16_t imm) { return spu_splat_u16(imm); }
--static inline u128 spu_ilhu(uint16_t imm){ return spu_splat_u32((uint32_t)imm << 16); }
--static inline u128 spu_iohl(u128 a, uint16_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]|(uint32_t)imm; return r; }
--
--#ifdef __cplusplus
--}
--#endif
--
--#endif /* SPU_HELPERS_H */
-+
-+/* ---- shift / rotate immediate (word lanes) ---- */
-+static inline u128 spu_shli(u128 a, int sh)  { u128 r; sh&=0x3F; for(int i=0;i<4;i++) r._u32[i]=(sh>31)?0:(a._u32[i]<<sh); return r; }
-+static inline u128 spu_shlhi(u128 a, int sh) { u128 r; sh&=0x1F; for(int i=0;i<8;i++) r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]<<sh); return r; }
-+static inline u128 spu_roti(u128 a, int sh)  { u128 r; sh&=31; for(int i=0;i<4;i++) r._u32[i]= sh ? ((a._u32[i]<<sh)|(a._u32[i]>>(32-sh))) : a._u32[i]; return r; }
-+static inline u128 spu_rothi(u128 a, int sh) { u128 r; sh&=15; for(int i=0;i<8;i++) r._u16[i]=(uint16_t)((a._u16[i]<<sh)|(a._u16[i]>>(16-sh))); return r; }
-+static inline u128 spu_rotmi(u128 a, int i7)  { u128 r; int sh=(0-i7)&0x3F; for(int i=0;i<4;i++) r._u32[i]=(sh>31)?0:(a._u32[i]>>sh); return r; }
-+static inline u128 spu_rotmai(u128 a, int i7) { u128 r; int sh=(0-i7)&0x3F; for(int i=0;i<4;i++) r._s32[i]=(sh>31)?(a._s32[i]>>31):(a._s32[i]>>sh); return r; }
-+static inline u128 spu_rotmhi(u128 a, int i7) { u128 r; int sh=(0-i7)&0x1F; for(int i=0;i<8;i++) r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]>>sh); return r; }
 +/* Byte rotates and shifts of the whole quadword. As loops over SPU_W these
 + * were most of what was left of GT5 Prologue's sound mixer once the larger
 + * costs were gone: its filter loop does a rotqby and two shlqbyi per audio
@@ -7831,7 +7170,25 @@ index 0fca7f5..0b78161 100644
 + * select zero). The loops stay as *_ref. */
 +static inline u128 spu_shlqbyi_ref(u128 a, int sh) { u128 r=spu_zero(); sh&=0x1F; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
 +static inline u128 spu_rotqbyi_ref(u128 a, int sh) { u128 r; sh&=0x0F; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
-+#if defined(__SSE4_1__)
++#if defined(__SSE4_1__) && !defined(SPU_BYTETAB_RUNTIME)
++/* The same masks as constants: row sh (0-15) rotates, row 16+sh shifts left
++ * with 0x80 (select zero) in the vacated bytes. Host byte p of the result is
++ * SPU byte W(p) of the rotated value, i.e. SPU byte (W(p)+sh), host byte
++ * W(W(p)+sh) of the source, and W(P) is P ^ 3. Built at run time they cost a
++ * first-use check on every rotate (SPU_BYTETAB_RUNTIME restores that). */
++#define SPU__RB(p, sh) ((uint8_t)(((((p) ^ 3) + (sh)) & 15) ^ 3))
++#define SPU__SB(p, sh) ((uint8_t)((((p) ^ 3) + (sh)) < 16 ? ((((p) ^ 3) + (sh)) ^ 3) : 0x80))
++#define SPU__ROW(M, sh) { M(0,sh),M(1,sh),M(2,sh),M(3,sh),M(4,sh),M(5,sh),M(6,sh),M(7,sh), \
++                          M(8,sh),M(9,sh),M(10,sh),M(11,sh),M(12,sh),M(13,sh),M(14,sh),M(15,sh) }
++#define SPU__ROWS(M) SPU__ROW(M,0),SPU__ROW(M,1),SPU__ROW(M,2),SPU__ROW(M,3), \
++                     SPU__ROW(M,4),SPU__ROW(M,5),SPU__ROW(M,6),SPU__ROW(M,7), \
++                     SPU__ROW(M,8),SPU__ROW(M,9),SPU__ROW(M,10),SPU__ROW(M,11), \
++                     SPU__ROW(M,12),SPU__ROW(M,13),SPU__ROW(M,14),SPU__ROW(M,15)
++static const uint8_t spu__bytetab_c[32][16] __attribute__((aligned(16))) = {
++    SPU__ROWS(SPU__RB), SPU__ROWS(SPU__SB)
++};
++static inline const uint8_t* spu__bytetab(void) { return &spu__bytetab_c[0][0]; }
++#elif defined(__SSE4_1__)
 +static inline const uint8_t* spu__bytetab(void) {
 +    static uint8_t t[32][16]; static int ok;
 +    if (!ok) {
@@ -7844,6 +7201,8 @@ index 0fca7f5..0b78161 100644
 +    }
 +    return &t[0][0];
 +}
++#endif
++#if defined(__SSE4_1__)
 +static inline u128 spu__pshufb_tab(u128 a, int row) {
 +    __m128i A, M; memcpy(&A, &a, 16); memcpy(&M, spu__bytetab() + 16 * row, 16);
 +    A = _mm_shuffle_epi8(A, M);
@@ -7855,35 +7214,29 @@ index 0fca7f5..0b78161 100644
 +static inline u128 spu_shlqbyi(u128 a, int sh) { return spu_shlqbyi_ref(a, sh); }
 +static inline u128 spu_rotqbyi(u128 a, int sh) { return spu_rotqbyi_ref(a, sh); }
 +#endif
-+/* Bit-level quadword shifts/rotates operate on the WHOLE 128-bit big-endian
-+ * value. Our _u64[0]/_u64[1] are word-SCRAMBLED (host-LE: _u64[0] = word0 |
-+ * word1<<32, but SPU's MS half is word0<<32 | word1), so native shifts on them
-+ * corrupt any bits crossing a 32-bit boundary. Assemble the logical hi/lo halves
-+ * with _u32[0] as most-significant, shift, then disassemble. */
-+static inline u128 spu_shlqbii(u128 a, int sh) { sh&=7; if(!sh) return a;
-+    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
-+    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh);
-+    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
-+static inline u128 spu_rotqbii(u128 a, int sh) { sh&=7; if(!sh) return a;
-+    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
-+    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh)|(hi>>(64-sh));
-+    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
-+
-+/* ---- single-precision float (4 lanes) ---- */
-+static inline u128 spu_fa(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[i]=a._f32[i]+b._f32[i]; return r; }
-+static inline u128 spu_fs(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[i]=a._f32[i]-b._f32[i]; return r; }
-+
-+/* RI8 scale: float-to-int uses 2^(173-i8), int-to-float 2^(i8-155).
-+ * The canonical immediates 173 and 155 are identity conversions. */
+ /* Bit-level quadword shifts/rotates operate on the WHOLE 128-bit big-endian
+  * value. Our _u64[0]/_u64[1] are word-SCRAMBLED (host-LE: _u64[0] = word0 |
+  * word1<<32, but SPU's MS half is word0<<32 | word1), so native shifts on them
+@@ -279,18 +376,29 @@ static inline u128 spu_fs(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[
+ 
+ /* RI8 scale: float-to-int uses 2^(173-i8), int-to-float 2^(i8-155).
+  * The canonical immediates 173 and 155 are identity conversions. */
+-static inline u128 spu_cflts(u128 a, int i8){ u128 r; double f=exp2((double)(173-i8));
 +static inline u128 spu_cflts(u128 a, int i8){ u128 r; double f=SPU__EXP2I(173-i8);
-+    for(int i=0;i<4;i++){ double v=(double)a._f32[i]*f; if(v>2147483647.0)v=2147483647.0; if(v<-2147483648.0)v=-2147483648.0; r._s32[i]=(int32_t)v; } return r; }
+     for(int i=0;i<4;i++){ double v=(double)a._f32[i]*f; if(v>2147483647.0)v=2147483647.0; if(v<-2147483648.0)v=-2147483648.0; r._s32[i]=(int32_t)v; } return r; }
+-static inline u128 spu_cfltu(u128 a, int i8){ u128 r; double f=exp2((double)(173-i8));
 +static inline u128 spu_cfltu(u128 a, int i8){ u128 r; double f=SPU__EXP2I(173-i8);
-+    for(int i=0;i<4;i++){ double v=(double)a._f32[i]*f; if(v<0)v=0; if(v>4294967295.0)v=4294967295.0; r._u32[i]=(uint32_t)v; } return r; }
+     for(int i=0;i<4;i++){ double v=(double)a._f32[i]*f; if(v<0)v=0; if(v>4294967295.0)v=4294967295.0; r._u32[i]=(uint32_t)v; } return r; }
+-static inline u128 spu_csflt(u128 a, int i8){ u128 r; double f=exp2((double)(i8-155));
 +static inline u128 spu_csflt(u128 a, int i8){ u128 r; double f=SPU__EXP2I(i8-155);
-+    for(int i=0;i<4;i++) r._f32[i]=(float)((double)a._s32[i]*f); return r; }
+     for(int i=0;i<4;i++) r._f32[i]=(float)((double)a._s32[i]*f); return r; }
+-static inline u128 spu_cuflt(u128 a, int i8){ u128 r; double f=exp2((double)(i8-155));
 +static inline u128 spu_cuflt(u128 a, int i8){ u128 r; double f=SPU__EXP2I(i8-155);
-+    for(int i=0;i<4;i++) r._f32[i]=(float)((double)a._u32[i]*f); return r; }
-+static inline u128 spu_fm(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[i]=a._f32[i]*b._f32[i]; return r; }
+     for(int i=0;i<4;i++) r._f32[i]=(float)((double)a._u32[i]*f); return r; }
+ static inline u128 spu_fm(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._f32[i]=a._f32[i]*b._f32[i]; return r; }
+-static inline u128 spu_fma(u128 a, u128 b, u128 c)  { u128 r; for(int i=0;i<4;i++) r._f32[i]=fmaf(a._f32[i], b._f32[i], c._f32[i]); return r; }
+-static inline u128 spu_fms(u128 a, u128 b, u128 c)  { u128 r; for(int i=0;i<4;i++) r._f32[i]=fmaf(a._f32[i], b._f32[i], -c._f32[i]); return r; }
+-static inline u128 spu_fnms(u128 a, u128 b, u128 c) { u128 r; for(int i=0;i<4;i++) r._f32[i]=fmaf(a._f32[i], -b._f32[i], c._f32[i]); return r; }
 +/* Without -mfma the compiler turns fmaf() into a call to the C library's
 + * software version, four calls per instruction: in GT5 Prologue's sound mixer
 + * job that was most of the time spent outside the executable. The product of
@@ -7898,377 +7251,66 @@ index 0fca7f5..0b78161 100644
 +static inline u128 spu_fma(u128 a, u128 b, u128 c)  { u128 r; for(int i=0;i<4;i++) r._f32[i]=SPU__FMAF(a._f32[i], b._f32[i], c._f32[i]); return r; }
 +static inline u128 spu_fms(u128 a, u128 b, u128 c)  { u128 r; for(int i=0;i<4;i++) r._f32[i]=SPU__FMAF(a._f32[i], b._f32[i], -c._f32[i]); return r; }
 +static inline u128 spu_fnms(u128 a, u128 b, u128 c) { u128 r; for(int i=0;i<4;i++) r._f32[i]=SPU__FMAF(a._f32[i], -b._f32[i], c._f32[i]); return r; }
-+static inline u128 spu_fceq(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._f32[i]==b._f32[i])?0xFFFFFFFFu:0; return r; }
-+static inline u128 spu_fcgt(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._f32[i]>b._f32[i])?0xFFFFFFFFu:0; return r; }
-+
-+/* ---- SPU double-precision (2 doubles/reg; dword i = words 2i(high),2i+1(low)).
-+ * Reassemble via _u32 -- our u128 is host-LE, so a naive _f64[i] would SWAP the
-+ * two words. Semantics from RPCS3 SPUInterpreter (DFASM / DFMA / FESD / FRDS). ---- */
-+static inline double spu__dget(u128 r, int i) {
-+    uint64_t u = ((uint64_t)r._u32[i*2] << 32) | r._u32[i*2+1];
-+    double d; memcpy(&d, &u, sizeof d); return d;
-+}
-+static inline void spu__dset(u128* r, int i, double d) {
-+    uint64_t u; memcpy(&u, &d, sizeof u);
-+    r->_u32[i*2] = (uint32_t)(u >> 32); r->_u32[i*2+1] = (uint32_t)u;
-+}
-+static inline u128 spu_dfa(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)+spu__dget(b,i)); return r; }
-+static inline u128 spu_dfs(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)-spu__dget(b,i)); return r; }
-+static inline u128 spu_dfm(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)*spu__dget(b,i)); return r; }
-+/* double FMA family: c = rt (accumulator, 3-register). */
-+static inline u128 spu_dfma(u128 a, u128 b, u128 t)  { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)*spu__dget(b,i)+spu__dget(t,i)); return r; }
-+static inline u128 spu_dfms(u128 a, u128 b, u128 t)  { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(a,i)*spu__dget(b,i)-spu__dget(t,i)); return r; }
-+static inline u128 spu_dfnms(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, spu__dget(t,i)-spu__dget(a,i)*spu__dget(b,i)); return r; }
-+static inline u128 spu_dfnma(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<2;i++) spu__dset(&r,i, -(spu__dget(a,i)*spu__dget(b,i)+spu__dget(t,i))); return r; }
-+/* double compares -> per-lane 64-bit mask (RPCS3 stubs these; sane impl here). */
-+static inline u128 spu_dfceq(u128 a, u128 b)  { u128 r; for(int i=0;i<2;i++){ uint64_t m=(spu__dget(a,i)==spu__dget(b,i))?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
-+static inline u128 spu_dfcmeq(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++){ double x=spu__dget(a,i),y=spu__dget(b,i); if(x<0)x=-x; if(y<0)y=-y; uint64_t m=(x==y)?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
-+/* Singles occupy preferred words 0 and 2 when converting doubleword lanes. */
-+static inline u128 spu_fesd(u128 a) { u128 r; memset(&r,0,sizeof r); for(int i=0;i<2;i++) spu__dset(&r,i,(double)a._f32[i*2]); return r; }
-+static inline u128 spu_frds(u128 a) { u128 r; memset(&r,0,sizeof r); for(int i=0;i<2;i++) r._f32[i*2]=(float)spu__dget(a,i); return r; }
-+/* mpyhhu: high-16 x high-16 of each word, unsigned, full 32-bit product. */
-+static inline u128 spu_mpyhhu(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[2*i+1]*(uint32_t)b._u16[2*i+1]; return r; }
-+/* cgx: extended carry-generate, carry-in = low bit of old rt (RPCS3 CGX). */
-+static inline u128 spu_cgx(u128 a, u128 b, u128 t){ u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)(((uint64_t)(t._u32[i]&1u)+a._u32[i]+b._u32[i])>>32); return r; }
-+
-+/* ---- remaining SPU ISA ops (RPCS3 SPUInterpreter: EQV/ABSDB/AVGB/MPYHHA/
-+ * MPYHHAU/DFCGT/DFCMGT/XORBI/DFTSV). Completes the lifter's opcode coverage. ---- */
-+static inline u128 spu_eqv(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++) r._u32[i]=~(a._u32[i]^b._u32[i]); return r; }
-+static inline u128 spu_xorbi(u128 a, int32_t imm){ u128 r; for(int i=0;i<16;i++) r._u8[i]=(uint8_t)(a._u8[i]^(uint8_t)imm); return r; }
-+static inline u128 spu_absdb(u128 a, u128 b)  { u128 r; for(int i=0;i<16;i++){ uint8_t x=a._u8[i],y=b._u8[i]; r._u8[i]=(uint8_t)(x>y?x-y:y-x); } return r; }
-+static inline u128 spu_avgb(u128 a, u128 b)   { u128 r; for(int i=0;i<16;i++) r._u8[i]=(uint8_t)(((uint32_t)a._u8[i]+(uint32_t)b._u8[i]+1u)>>1); return r; }
-+/* mpyhha/mpyhhau: high-16 x high-16, ACCUMULATE into rt (3-register). */
-+static inline u128 spu_mpyhha(u128 a, u128 b, u128 t)  { u128 r; for(int i=0;i<4;i++) r._s32[i]=t._s32[i]+(int32_t)a._s16[2*i+1]*(int32_t)b._s16[2*i+1]; return r; }
-+static inline u128 spu_mpyhhau(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i++) r._u32[i]=t._u32[i]+(uint32_t)a._u16[2*i+1]*(uint32_t)b._u16[2*i+1]; return r; }
-+/* double compare greater (RPCS3 stubs these; sane impl) -> per-lane mask. */
-+static inline u128 spu_dfcgt(u128 a, u128 b)  { u128 r; for(int i=0;i<2;i++){ uint64_t m=(spu__dget(a,i)>spu__dget(b,i))?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
-+static inline u128 spu_dfcmgt(u128 a, u128 b) { u128 r; for(int i=0;i<2;i++){ double x=spu__dget(a,i),y=spu__dget(b,i); if(x<0)x=-x; if(y<0)y=-y; uint64_t m=(x>y)?~0ull:0ull; r._u32[i*2]=(uint32_t)(m>>32); r._u32[i*2+1]=(uint32_t)m; } return r; }
-+/* dftsv: double test special value -- RPCS3 stubs (fatal); 0 = no special. */
-+static inline u128 spu_dftsv(u128 a, int32_t imm){ (void)a; (void)imm; u128 r; memset(&r,0,sizeof r); return r; }
-+
-+/* ---- Phase 2: register-variable shifts/rotates ---- */
-+static inline u128 spu_shl(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++){ uint32_t sh=b._u32[i]&0x3F; r._u32[i]=(sh>31)?0:(a._u32[i]<<sh); } return r; }
-+static inline u128 spu_shlh(u128 a, u128 b)  { u128 r; for(int i=0;i<8;i++){ uint32_t sh=b._u16[i]&0x1F; r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]<<sh); } return r; }
-+static inline u128 spu_rot(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++){ uint32_t sh=b._u32[i]&31; r._u32[i]= sh ? ((a._u32[i]<<sh)|(a._u32[i]>>(32-sh))) : a._u32[i]; } return r; }
-+static inline u128 spu_roth(u128 a, u128 b)  { u128 r; for(int i=0;i<8;i++){ uint32_t sh=b._u16[i]&15; r._u16[i]= sh ? (uint16_t)((a._u16[i]<<sh)|(a._u16[i]>>(16-sh))) : a._u16[i]; } return r; }
-+static inline u128 spu_shlqbi(u128 a, u128 b){ int sh=b._u32[0]&7; if(!sh) return a;
-+    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
-+    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh);
-+    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
-+static inline u128 spu_rotqbi(u128 a, u128 b){ int sh=b._u32[0]&7; if(!sh) return a;
-+    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
-+    uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh)|(hi>>(64-sh));
-+    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
-+static inline u128 spu_shlqby(u128 a, u128 b){ int sh=b._u32[0]&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
+ static inline u128 spu_fceq(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._f32[i]==b._f32[i])?0xFFFFFFFFu:0; return r; }
+ static inline u128 spu_fcgt(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(a._f32[i]>b._f32[i])?0xFFFFFFFFu:0; return r; }
+ 
+@@ -353,7 +461,12 @@ static inline u128 spu_rotqbi(u128 a, u128 b){ int sh=b._u32[0]&7; if(!sh) retur
+     uint64_t nhi=(hi<<sh)|(lo>>(64-sh)), nlo=(lo<<sh)|(hi>>(64-sh));
+     u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
+ static inline u128 spu_shlqby(u128 a, u128 b){ int sh=b._u32[0]&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
+-static inline u128 spu_rotqby(u128 a, u128 b){ int sh=b._u32[0]&0x0F; u128 r; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
 +static inline u128 spu_rotqby_ref(u128 a, u128 b){ int sh=b._u32[0]&0x0F; u128 r; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
 +#if defined(__SSE4_1__)
 +static inline u128 spu_rotqby(u128 a, u128 b){ int sh=b._u32[0]&0x0F; if (!sh) return a; return spu__pshufb_tab(a, sh); }
 +#else
 +static inline u128 spu_rotqby(u128 a, u128 b){ return spu_rotqby_ref(a, b); }
 +#endif
-+static inline u128 spu_shlqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
-+static inline u128 spu_rotqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x0F; u128 r; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
-+
-+/* ---- Phase 2: rotmahi ---- */
-+static inline u128 spu_rotmahi(u128 a, int i7) { u128 r; int sh=(0-i7)&0x1F; for(int i=0;i<8;i++) r._s16[i]=(sh>15)?(a._s16[i]>>15):(a._s16[i]>>sh); return r; }
-+
-+/* ---- Phase 2: byte/half immediate compares ---- */
-+static inline u128 spu_ceqbi(u128 a, int32_t imm)  { u128 r; uint8_t v=(uint8_t)imm; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]==v)?0xFFu:0; return r; }
-+static inline u128 spu_ceqhi(u128 a, int32_t imm)  { u128 r; int16_t v=(int16_t)imm; for(int i=0;i<8;i++) r._u16[i]=(a._s16[i]==v)?0xFFFFu:0; return r; }
-+static inline u128 spu_clgtbi(u128 a, int32_t imm) { u128 r; uint8_t v=(uint8_t)imm; for(int i=0;i<16;i++) r._u8[i]=(a._u8[i]>v)?0xFFu:0; return r; }
-+static inline u128 spu_clgthi(u128 a, int32_t imm) { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=(a._u16[i]>v)?0xFFFFu:0; return r; }
-+static inline u128 spu_cgthi(u128 a, int32_t imm)  { u128 r; int16_t v=(int16_t)imm; for(int i=0;i<8;i++) r._u16[i]=(a._s16[i]>v)?0xFFFFu:0; return r; }
-+static inline u128 spu_cgtbi(u128 a, int32_t imm)  { u128 r; int8_t v=(int8_t)imm; for(int i=0;i<16;i++) r._u8[i]=(a._s8[i]>v)?0xFFu:0; return r; }
-+
-+/* ---- Phase 2: misc one-offs ---- */
-+static inline u128 spu_fscrrd(u128 a) { (void)a; return spu_zero(); }
-+static inline u128 spu_gb(u128 a) {
-+    uint32_t v = ((a._u32[0]&1)<<3)|((a._u32[1]&1)<<2)|((a._u32[2]&1)<<1)|(a._u32[3]&1);
-+    u128 r = spu_zero(); r._u32[0]=v; return r;
-+}
-+static inline u128 spu_gbh(u128 a) {
-+    /* gather LSB of each SPU halfword H into bit (7-H). SPU halfword H maps to
-+     * our _u16[H^1] (the within-word halfword swap of the value layout). */
-+    uint32_t v=0; for(int i=0;i<8;i++) v |= ((uint32_t)(a._u16[i^1]&1) << (7-i));
-+    u128 r = spu_zero(); r._u32[0]=v; return r;
-+}
-+/* gather LSB of each SPU byte i into bit (15-i); exact inverse of spu_fsmb.
-+ * SPU byte i lives at our _u8[SPU_W(i)] (byte-reversed within each word). */
-+static inline u128 spu_gbb(u128 a) {
-+    uint32_t v=0; for(int i=0;i<16;i++) v |= ((uint32_t)(a._u8[SPU_W(i)]&1) << (15-i));
-+    u128 r = spu_zero(); r._u32[0]=v; return r;
-+}
-+static inline u128 spu_cg(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)(((uint64_t)a._u32[i]+(uint64_t)b._u32[i])>>32); return r; }
-+/* sumb: sum the 4 bytes of each word. Per CBEA, RT halfword 2i (the HIGH half of
-+ * word i) = sum of RB's 4 bytes of word i; halfword 2i+1 (LOW half) = sum of RA's
-+ * 4 bytes of word i. Computed on word VALUES so byte order is irrelevant. */
-+static inline u128 spu_sumb(u128 a, u128 b) {
-+    u128 r;
-+    for(int i=0;i<4;i++) {
-+        uint32_t wa=a._u32[i], wb=b._u32[i];
-+        uint32_t sa=((wa>>24)&0xFF)+((wa>>16)&0xFF)+((wa>>8)&0xFF)+(wa&0xFF);
-+        uint32_t sb=((wb>>24)&0xFF)+((wb>>16)&0xFF)+((wb>>8)&0xFF)+(wb&0xFF);
-+        r._u32[i]=(sb<<16)|sa;
-+    }
-+    return r;
-+}
-+/* Borrow generate: carry-out of (b + ~a + 1) == (b >= a unsigned ? 1 : 0).
-+ * The subtract-side sibling of cg; pairs with sf/sfx for extended subtraction. */
-+static inline u128 spu_bg(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)(((uint64_t)b._u32[i]+(uint64_t)(~a._u32[i])+1u)>>32); return r; }
-+static inline u128 spu_addx(u128 a, u128 b, u128 t) { u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]+b._u32[i]+(t._u32[i]&1); return r; }
-+/* LE host: high half of word i = _s16[2i+1], low half = _s16[2i]. */
-+static inline u128 spu_mpyh(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++) r._s32[i]=((int32_t)a._s16[2*i+1] * (int32_t)b._s16[2*i]) << 16; return r; }
-+static inline u128 spu_mpyhh(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++) r._s32[i]=(int32_t)a._s16[2*i+1] * (int32_t)b._s16[2*i+1]; return r; }
-+static inline u128 spu_mpys(u128 a, u128 b) { u128 r; for(int i=0;i<4;i++){ int32_t p=(int32_t)a._s16[2*i]*(int32_t)b._s16[2*i]; r._s32[i]=(int16_t)(p>>16); } return r; }
-+static inline u128 spu_mpyui(u128 a, int32_t imm) { u128 r; for(int i=0;i<4;i++) r._u32[i]=(uint32_t)a._u16[2*i]*(uint32_t)(uint16_t)imm; return r; }
-+static inline u128 spu_fcmeq(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++){ float fa=fabsf(a._f32[i]),fb=fabsf(b._f32[i]); r._u32[i]=(fa==fb)?0xFFFFFFFFu:0; } return r; }
-+static inline u128 spu_fcmgt(u128 a, u128 b){ u128 r; for(int i=0;i<4;i++){ float fa=fabsf(a._f32[i]),fb=fabsf(b._f32[i]); r._u32[i]=(fa>fb)?0xFFFFFFFFu:0; } return r; }
-+static const uint32_t spu_frest_fraction_lut[32] = {
-+    0x7FFBE0, 0x7F87A6, 0x70EF72, 0x708B40, 0x638B12, 0x633AEA, 0x5792C4, 0x574AA0,
-+    0x4CCA7E, 0x4C9262, 0x430A44, 0x42D62A, 0x3A2E12, 0x39FDFA, 0x3215E4, 0x31F1D2,
-+    0x2AA9BE, 0x2A85AC, 0x23D59A, 0x23BD8E, 0x1D8576, 0x1D8576, 0x17AD5A, 0x17AD5A,
-+    0x124543, 0x124543, 0x0D392D, 0x0D392D, 0x08851A, 0x08851A, 0x041D07, 0x041D07
-+};
-+
-+static const uint32_t spu_frsqest_fraction_lut[64] = {
-+    0x350160, 0x34E954, 0x2F993D, 0x2F993D, 0x2AA523, 0x2AA523, 0x26190D, 0x26190D,
-+    0x21E4F9, 0x21E4F9, 0x1E00E9, 0x1E00E9, 0x1A5CD9, 0x1A5CD9, 0x16F8CB, 0x16F8CB,
-+    0x13CCC0, 0x13CCC0, 0x10CCB3, 0x10CCB3, 0x0E00AA, 0x0E00AA, 0x0B58A1, 0x0B58A1,
-+    0x08D498, 0x08D498, 0x067491, 0x067491, 0x043089, 0x043089, 0x020C83, 0x020C83,
-+    0x7FFDF4, 0x7FD1DE, 0x7859C8, 0x783DBA, 0x71559C, 0x71559C, 0x6AE57C, 0x6AE57C,
-+    0x64F561, 0x64F561, 0x5F7149, 0x5F7149, 0x5A4D33, 0x5A4D33, 0x55811F, 0x55811F,
-+    0x51050F, 0x51050F, 0x4CC8FE, 0x4CC8FE, 0x48D0F0, 0x48D0F0, 0x4510E4, 0x4510E4,
-+    0x4180D7, 0x4180D7, 0x3E24CC, 0x3E24CC, 0x3AF4C3, 0x3AF4C3, 0x37E8BA, 0x37E8BA
-+};
-+
-+static inline u128 spu_frsqest(u128 a) {
-+    u128 r;
-+    for (int i = 0; i < 4; i++) {
-+        uint32_t bits = a._u32[i];
-+        uint32_t exp  = (bits >> 23) & 0xFFu;
-+        uint32_t frac_idx = (bits >> 18) & 0x3Fu;
-+        uint32_t rexp = (exp == 0u) ? 0xFFu : (190u - (exp + 1u) / 2u);
-+        uint32_t fraction = spu_frsqest_fraction_lut[frac_idx];
-+        uint32_t out = (rexp << 23) | (fraction & 0x7FFFFFu);
-+        memcpy(&r._f32[i], &out, sizeof out);
-+    }
-+    return r;
-+}
-+/* frest: reciprocal estimate (refined by the following spu_fi Newton step).
-+ * Full-precision 1/x is exact after fi and >= HW-estimate accuracy. */
-+static inline u128 spu_frest(u128 a) {
-+    u128 r;
-+    for (int i = 0; i < 4; i++) {
-+        uint32_t bits = a._u32[i];
-+        uint32_t sign = bits & 0x80000000u;
-+        uint32_t exp  = (bits >> 23) & 0xFFu;
-+        uint32_t frac_idx = (bits >> 18) & 0x1Fu;
-+        uint32_t out;
-+        if (exp == 0u) {
-+            /* zero or denormal operand: ISA p.215 "1/0 is defined to give the
-+             * maximum SPU single-precision extended-range fp number", sign of
-+             * the (zero) input preserved. Same bucket for true denormals
-+             * (their biased exponent field is also 0). */
-+            out = sign | 0x7FFFFFFFu;
-+        } else {
-+            /* result biased exponent = 253 - input biased exponent (253 =
-+             * 2*127-1, i.e. reciprocal negates the unbiased exponent),
-+             * clamped to 0 on underflow (ISA p.215 "Big: if |x|>=2^126,
-+             * 1/x underflows to zero"). Verified bit-exact against RPCS3's
-+             * raw 256-entry spu_frest_exponent_lut for all 256 inputs. */
-+            uint32_t rexp = (exp >= 253u) ? 0u : (253u - exp);
-+            uint32_t fraction = spu_frest_fraction_lut[frac_idx];
-+            out = sign | (rexp << 23) | (fraction & 0x7FFFFFu);
-+        }
-+        memcpy(&r._f32[i], &out, sizeof out);
-+    }
-+    return r;
-+}
-+
-+/* ---- Phase 3: sign extension ----
-+ * LE host: low sub-lane = _u8[2i] / _s16[2i] / _s32[2i] (the byte/half/word
-+ * at the *lower* storage address). Same caveat as the mpy family. */
-+static inline u128 spu_xsbh(u128 a) { u128 r; for(int i=0;i<8;i++) r._s16[i] = (int8_t)a._u8[2*i]; return r; }
-+static inline u128 spu_xshw(u128 a) { u128 r; for(int i=0;i<4;i++) r._s32[i] = (int16_t)a._s16[2*i]; return r; }
-+/* xswd: rt.doubleword[d] = sign_extend_64(ra.word[2d+1]) -- the ODD word of
-+ * each doubleword, because that is the low half in big-endian order.
-+ *
-+ * This read the EVEN words (2d) and wrote the result through _s64, which is a
-+ * host little-endian lane: writing it puts the value in _u32[2d] (SPU word 2d,
-+ * the HIGH half) and the sign fill in _u32[2d+1]. Both halves were therefore
-+ * wrong, and the common case -- a small positive value -- came out as ZERO.
-+ *
-+ * You Don't Know Jack's FMOD mixer hit exactly that: a compiler-generated
-+ * 64-bit multiply helper received `1 * 0` instead of `1 * 16`, so the mixer's
-+ * block count was zero and it stopped on its own assert. Unlike its siblings
-+ * xsbh/xshw, whose source and destination swaps cancel, nothing cancels here.
-+ * Write the two words explicitly. */
-+static inline u128 spu_xswd(u128 a) {
-+    u128 r;
-+    for (int d = 0; d < 2; d++) {
-+        int32_t v = (int32_t)a._u32[2*d + 1];
-+        r._u32[2*d]     = (uint32_t)(v >> 31);   /* sign fill (high word) */
-+        r._u32[2*d + 1] = (uint32_t)v;           /* value      (low word) */
-+    }
-+    return r;
-+}
-+
-+/* ---- Phase 3: OR across ---- */
-+static inline u128 spu_orx(u128 a) {
-+    u128 r = spu_zero();
-+    r._u32[0] = a._u32[0] | a._u32[1] | a._u32[2] | a._u32[3];
-+    return r;
-+}
-+
-+/* ---- Phase 3: form-select mask from bits ---- */
-+static inline u128 spu_fsm(u128 a) {
-+    u128 r; uint32_t v = a._u32[0] & 0xF;
-+    for(int i=0;i<4;i++) r._u32[i] = ((v>>(3-i))&1) ? 0xFFFFFFFFu : 0;
-+    return r;
-+}
-+/* fsmh: per-halfword mask from 8 bits. SPU halfword H <- bit (7-H); store at
-+ * our _u16[H^1] (within-word halfword swap of the value layout). Per-halfword
-+ * both bytes are identical so byte order within a halfword is irrelevant, but
-+ * the halfword ORDER within each word must be swapped. */
-+static inline u128 spu_fsmh(u128 a) {
-+    u128 r; uint32_t v = a._u32[0] & 0xFF;
-+    for(int i=0;i<8;i++) r._u16[i^1] = ((v>>(7-i))&1) ? 0xFFFFu : 0;
-+    return r;
-+}
-+/* fsmb/fsmbi: per-byte mask from 16 bits. SPU byte position P <- bit (15-P);
-+ * store at our _u8[SPU_W(P)] (byte-reversed within each word). A bit set at SPU
-+ * byte P must land at our _u8[SPU_W(P)] so that downstream word arithmetic (e.g.
-+ * andbi(fsmbi(0x101),-128) building a +0x80 EA offset in the low byte of words
-+ * 1,3) places the value in the correct byte lane. Raw _u8[P] would put 0x80 in
-+ * the high byte (bit 31) instead -> wrong DMA EA. */
-+static inline u128 spu_fsmb(u128 a) {
-+    u128 r; uint32_t v = a._u32[0] & 0xFFFF;
-+    for(int i=0;i<16;i++) r._u8[SPU_W(i)] = ((v>>(15-i))&1) ? 0xFFu : 0;
-+    return r;
-+}
-+static inline u128 spu_fsmbi(int32_t imm) {
-+    u128 r; uint32_t v = imm & 0xFFFF;
-+    for(int i=0;i<16;i++) r._u8[SPU_W(i)] = ((v>>(15-i))&1) ? 0xFFu : 0;
-+    return r;
-+}
-+
-+/* ---- Phase 3: constant generators (insertion shuffle patterns) ---- */
-+/* Generate-controls (cbd/chd/cwd/cdd) — insertion selectors for the (now
-+ * SPU-byte-correct) shufb. Each builds a control in TRUE SPU byte order: the
-+ * base selects b's SPU byte t at result SPU byte t (selector 0x10+t), and the
-+ * insert positions select a's preferred scalar bytes -- SPU byte 3 for a byte
-+ * (selector 0x03), SPU bytes 2,3 for a halfword (0x02,0x03), SPU bytes 0..3 for
-+ * a word, 0..7 for a doubleword. Every store is mapped through SPU_W to land at
-+ * the right host index. Verified to compose correctly with the fixed shufb for
-+ * both cbd-generated and immediate/LS-constant controls. */
-+static inline u128 spu_cbd_pos(int pos) {
-+    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
-+    r._u8[SPU_W(pos & 0xF)] = 0x03;                 /* a's preferred byte = SPU byte 3 */
-+    return r;
-+}
-+static inline u128 spu_chd_pos(int pos) {
-+    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
-+    int p = (pos & 0xF) & ~1;                       /* SPU halfword byte positions p, p+1 */
-+    r._u8[SPU_W(p)]   = 0x02;                        /* a SPU byte 2 (hi byte of preferred hw) */
-+    r._u8[SPU_W(p+1)] = 0x03;                        /* a SPU byte 3 (lo byte) */
-+    return r;
-+}
-+static inline u128 spu_cwd_pos(int pos) {
-+    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
-+    int p = (pos & 0xF) & ~3;
-+    for(int k=0;k<4;k++) r._u8[SPU_W(p+k)] = (uint8_t)k;   /* a SPU bytes 0..3 (preferred word) */
-+    return r;
-+}
-+static inline u128 spu_cdd_pos(int pos) {
-+    u128 r; for(int t=0;t<16;t++) r._u8[SPU_W(t)] = (uint8_t)(0x10 + t);
-+    int p = (pos & 0xF) & ~7;
-+    for(int k=0;k<8;k++) r._u8[SPU_W(p+k)] = (uint8_t)k;   /* a SPU bytes 0..7 (preferred dword) */
-+    return r;
-+}
-+static inline u128 spu_cbd(u128 a, int i7){ return spu_cbd_pos((int)a._u32[0]+i7); }
-+static inline u128 spu_chd(u128 a, int i7){ return spu_chd_pos((int)a._u32[0]+i7); }
-+static inline u128 spu_cwd(u128 a, int i7){ return spu_cwd_pos((int)a._u32[0]+i7); }
-+static inline u128 spu_cdd(u128 a, int i7){ return spu_cdd_pos((int)a._u32[0]+i7); }
-+static inline u128 spu_cbx(u128 a, u128 b){ return spu_cbd_pos((int)(a._u32[0]+b._u32[0])); }
-+static inline u128 spu_chx(u128 a, u128 b){ return spu_chd_pos((int)(a._u32[0]+b._u32[0])); }
-+static inline u128 spu_cwx(u128 a, u128 b){ return spu_cwd_pos((int)(a._u32[0]+b._u32[0])); }
-+static inline u128 spu_cdx(u128 a, u128 b){ return spu_cdd_pos((int)(a._u32[0]+b._u32[0])); }
-+
-+/* ---- Phase 3: rotate-and-mask family ---- */
-+static inline u128 spu_rotm(u128 a, u128 b)   { u128 r; for(int i=0;i<4;i++){ uint32_t sh=(0-b._u32[i])&0x3F; r._u32[i]=(sh>31)?0:(a._u32[i]>>sh); } return r; }
-+static inline u128 spu_rotma(u128 a, u128 b)  { u128 r; for(int i=0;i<4;i++){ uint32_t sh=(0-b._u32[i])&0x3F; r._s32[i]=(sh>31)?(a._s32[i]>>31):(a._s32[i]>>sh); } return r; }
-+static inline u128 spu_rothm(u128 a, u128 b)  { u128 r; for(int i=0;i<8;i++){ uint32_t sh=(0-b._u16[i])&0x1F; r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]>>sh); } return r; }
-+static inline u128 spu_rothma(u128 a, u128 b) { u128 r; for(int i=0;i<8;i++){ uint32_t sh=(0-b._u16[i])&0x1F; r._s16[i]=(sh>15)?(a._s16[i]>>15):(a._s16[i]>>sh); } return r; }
-+static inline u128 spu_rothmi(u128 a, int i7) { u128 r; int sh=(0-i7)&0x1F; for(int i=0;i<8;i++) r._u16[i]=(sh>15)?0:(uint16_t)(a._u16[i]>>sh); return r; }
-+static inline u128 spu_rotqmbi(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])&7; if(!sh) return a;
-+    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
-+    uint64_t nlo=(lo>>sh)|(hi<<(64-sh)), nhi=(hi>>sh);
-+    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
-+static inline u128 spu_rotqmby(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i-sh; if(s>=0) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
-+static inline u128 spu_rotqmbybi(u128 a, u128 b) { int sh=(0-((int)b._u32[0]>>3))&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i-sh; if(s>=0) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
-+static inline u128 spu_rotqmbii(u128 a, int i7)  { int sh=(0-i7)&7; if(!sh) return a;
-+    uint64_t hi=((uint64_t)a._u32[0]<<32)|a._u32[1], lo=((uint64_t)a._u32[2]<<32)|a._u32[3];
-+    uint64_t nlo=(lo>>sh)|(hi<<(64-sh)), nhi=(hi>>sh);
-+    u128 r; r._u32[0]=(uint32_t)(nhi>>32); r._u32[1]=(uint32_t)nhi; r._u32[2]=(uint32_t)(nlo>>32); r._u32[3]=(uint32_t)nlo; return r; }
-+static inline u128 spu_rotqmbyi(u128 a, int i7)  { int sh=(0-i7)&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i-sh; if(s>=0) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
-+
-+/* ---- Phase 3: halfword/byte immediate logic ---- */
-+static inline u128 spu_andhi(u128 a, int32_t imm) { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]&v; return r; }
-+static inline u128 spu_andbi(u128 a, int32_t imm) { u128 r; uint8_t  v=(uint8_t)imm;  for(int i=0;i<16;i++) r._u8[i]=a._u8[i]&v;   return r; }
-+static inline u128 spu_orhi(u128 a, int32_t imm)  { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]|v; return r; }
-+static inline u128 spu_orbi(u128 a, int32_t imm)  { u128 r; uint8_t  v=(uint8_t)imm;  for(int i=0;i<16;i++) r._u8[i]=a._u8[i]|v;   return r; }
-+static inline u128 spu_xorhi(u128 a, int32_t imm) { u128 r; uint16_t v=(uint16_t)imm; for(int i=0;i<8;i++) r._u16[i]=a._u16[i]^v; return r; }
-+
-+/* ---- Phase 3: borrow-generate extended ---- */
-+static inline u128 spu_bgx(u128 a, u128 b, u128 t) {
-+    u128 r;
-+    for(int i=0;i<4;i++) {
-+        uint64_t s = (uint64_t)b._u32[i] + (uint64_t)(~a._u32[i]) + (uint64_t)(t._u32[i]&1);
-+        r._u32[i] = (uint32_t)(s >> 32);
-+    }
-+    return r;
-+}
-+
-+/* ---- Phase 3: mfspr stub ---- */
-+static inline u128 spu_mfspr(u128 a) { (void)a; return spu_zero(); }
-+
-+/* ---- immediate loaders ---- */
-+static inline u128 spu_il(int32_t imm)   { return spu_splat_u32((uint32_t)imm); }
-+static inline u128 spu_ila(uint32_t i18) { return spu_splat_u32(i18 & 0x3FFFF); }
-+static inline u128 spu_ilh(uint16_t imm) { return spu_splat_u16(imm); }
-+static inline u128 spu_ilhu(uint16_t imm){ return spu_splat_u32((uint32_t)imm << 16); }
-+static inline u128 spu_iohl(u128 a, uint16_t imm){ u128 r; for(int i=0;i<4;i++) r._u32[i]=a._u32[i]|(uint32_t)imm; return r; }
-+
-+#ifdef __cplusplus
-+}
-+#endif
-+
-+#endif /* SPU_HELPERS_H */
+ static inline u128 spu_shlqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
+ static inline u128 spu_rotqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x0F; u128 r; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
+ 
 diff --git a/runtime/spu/spu_raw.c b/runtime/spu/spu_raw.c
-index f6dc8be..c6ff157 100644
+index f6dc8be..0063da1 100644
 --- a/runtime/spu/spu_raw.c
 +++ b/runtime/spu/spu_raw.c
-@@ -232,6 +232,7 @@ void spu_raw_note_image(uint32_t src_ea, uint32_t entry)
+@@ -27,6 +27,7 @@
+  */
+ 
+ #include "spu_raw.h"
++#include "ps3emu/thread_name.h"
+ #include "spu_context.h"
+ #include "spu_workload.h"
+ #include "spu_lifted_job.h"
+@@ -232,6 +233,8 @@ void spu_raw_note_image(uint32_t src_ea, uint32_t entry)
  #ifdef _WIN32
  static DWORD WINAPI raw_spu_thread(LPVOID arg)
  {
 +    fprintf(stderr, "[hostthread] raw-spu hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
++    ps3_name_thread(L"raw-spu");
      raw_spu* s = (raw_spu*)arg;
      spu_context* c = s->ctx;
  
 diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
-index 2a8dca1..68b140d 100644
+index 2a8dca1..f527096 100644
 --- a/runtime/spu/spu_workload.c
 +++ b/runtime/spu/spu_workload.c
-@@ -787,6 +787,7 @@ static void spu_async_run(spu_async_job* j)
+@@ -6,6 +6,7 @@
+  * spu_workload_dispatch(); the registry is populated by the title's lifted set.
+  */
+ #include "spu_workload.h"
++#include "ps3emu/thread_name.h"
+ #include "spu_lifted_job.h"   /* spu_run_lifted_job */
+ #include "../ps3_log.h"      /* ps3_log_verbose */
+ #include <stdio.h>
+@@ -787,6 +788,8 @@ static void spu_async_run(spu_async_job* j)
  
  #ifdef _WIN32
  static DWORD WINAPI spu_async_thread(LPVOID p) {
 +    fprintf(stderr, "[hostthread] spu-async hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
++    ps3_name_thread(L"spu-async");
      /* Reserve handler headroom so a stack overflow in lifted SPU code (e.g. a
       * runaway brsl recursion) can actually reach the STACKOVERFLOW reporter
       * instead of killing the process silently with 0x80000001. */
-@@ -807,7 +808,25 @@ int spu_workload_dispatch_job(const uint8_t* image, uint32_t image_size,
+@@ -807,7 +810,25 @@ int spu_workload_dispatch_job(const uint8_t* image, uint32_t image_size,
  {
      if (!image || image_size == 0) return 0;
  
@@ -9005,3 +8047,281 @@ index 2630352..d29c28a 100644
      0b01000100: "xori",   # xor word immediate
      0b01111100: "ceqi",   # compare equal word immediate
      0b01111101: "ceqhi",  # compare equal halfword immediate
+diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
+index bfc9af4..39b0b18 100644
+--- a/tools/spu_lifter.py
++++ b/tools/spu_lifter.py
+@@ -456,9 +456,35 @@ def compute_link_returns(insns, bounds) -> set:
+     return returns
+ 
+ 
++# Register cache (--regcache). Lifted code otherwise reads and writes every
++# guest register through ctx->gpr[], and since local-store accesses go through
++# a uint8_t pointer the compiler must assume each one can change any register:
++# every instruction is a load from and a store to the context. With the cache a
++# function keeps the registers it uses in C locals and the context is brought
++# up to date only where something else can look at it. The translator marks
++# those places and _apply_regcache() fills them in:
++#   EXIT  control leaves the function (return, tail transfer, stop, halt):
++#         store the registers changed since the last sync; the path that does
++#         not leave keeps them pending.
++#   OUT   just before a runtime or lifted call: store them, nothing pending.
++#   IN    just after that call: reload every register the function uses, since
++#         the callee (a lifted function, a stop handler, the interpreter) may
++#         have changed any of them.
++# Locals the compiler can prove dead are dropped by it, so the reload and the
++# entry loads cost only what is live.
++_RC_EXIT, _RC_OUT, _RC_IN = "/*@X*/", "/*@O*/", "/*@I*/"
++_RC_MARK = re.compile(r"/\*@[XOI]\*/")
++_RC_GPR = re.compile(r"ctx->gpr\[(\d+)\]")
++_RC_WRITE = re.compile(r"\br(\d+) = ")
++
++
+ class SPULifter:
+-    def __init__(self, trace: bool = False, prefix: str = ""):
++    def __init__(self, trace: bool = False, prefix: str = "",
++                 regcache: bool = False):
+         self.functions: list[LiftedFunction] = []
++        # Per-instruction tracing reads ctx->gpr after every instruction, which
++        # the cache would leave stale, so the two do not combine.
++        self.regcache = regcache and not trace
+         self.call_targets: set[int] = set()
+         self.branch_targets: set[int] = set()
+         self.unsupported: dict[str, int] = {}
+@@ -527,7 +553,7 @@ class SPULifter:
+         if (last_insn is not None and last_insn.mnemonic not in _TERMINATORS
+                 and end in getattr(self, "func_starts", set())):
+             func.body_lines.append(
+-                f"    {{ ctx->pc = 0x{end:X}; "
++                f"    {{ {_RC_EXIT}ctx->pc = 0x{end:X}; "
+                 f"g_spu_trampoline_fn = {self.prefix}spu_func_{end:08X}; return; }}")
+ 
+         # Infinite no-op self-loop (the SPU `br .` halt idiom): a function whose
+@@ -548,9 +574,56 @@ class SPULifter:
+                     "    spu_halt(ctx); return;",
+                 ]
+ 
++        if self.regcache:
++            # Falling off the end returns to the dispatcher like any exit.
++            func.body_lines.append(f"    {_RC_EXIT};")
++            self._apply_regcache(func)
++        else:
++            func.body_lines = [_RC_MARK.sub("", b) for b in func.body_lines]
+         self.functions.append(func)
+         return func
+ 
++    @staticmethod
++    def _apply_regcache(func: LiftedFunction) -> None:
++        """Move the function's guest registers into locals; see _RC_EXIT."""
++        body = func.body_lines
++        used = sorted({int(n) for b in body for n in _RC_GPR.findall(b)})
++        if not used:
++            func.body_lines = [_RC_MARK.sub("", b) for b in body]
++            return
++        body = [_RC_GPR.sub(r"r\1", b) for b in body]
++        written = {int(n) for b in body for n in _RC_WRITE.findall(b)}
++
++        def stores(regs):
++            return "".join(f"ctx->gpr[{n}] = r{n}; " for n in sorted(regs))
++        reload = "".join(f"r{n} = ctx->gpr[{n}]; " for n in used)
++
++        out, dirty = [], set()
++        for b in body:
++            if b.endswith(":"):
++                # A label can be reached from anywhere in the function, with
++                # anything it wrote still pending.
++                dirty = set(written)
++                out.append(b)
++                continue
++            parts = re.split(r"(/\*@[XOI]\*/)", b)
++            text = []
++            for p in parts:
++                if p == _RC_EXIT:
++                    text.append(stores(dirty))
++                elif p == _RC_OUT:
++                    text.append(stores(dirty))
++                    dirty = set()
++                elif p == _RC_IN:
++                    text.append(reload)
++                    dirty = set()
++                else:
++                    dirty |= {int(n) for n in _RC_WRITE.findall(p)}
++                    text.append(p)
++            out.append("".join(text))
++        decl = "    " + " ".join(f"u128 r{n} = ctx->gpr[{n}];" for n in used)
++        func.body_lines = [decl] + out
++
+     @staticmethod
+     def _branch_target(insn: SPUInstruction):
+         """The literal target of a direct branch, or None if it has none.
+@@ -610,7 +683,7 @@ class SPULifter:
+         if mn == "stop":
+             # Preserve the 14-bit stop-and-signal code: SPURS leaf tasks use
+             # `stop <code>` to invoke kernel syscalls (EXIT/YIELD/WAIT_SIGNAL/...).
+-            return (f"ctx->stop_code = 0x{insn.raw & 0x3FFF:X}u; "
++            return (f"{_RC_EXIT}ctx->stop_code = 0x{insn.raw & 0x3FFF:X}u; "
+                     f"ctx->status = SPU_STATUS_STOPPED_BY_STOP; spu_stop(ctx); return;")
+ 
+         # ---- immediate loaders ----
+@@ -651,13 +724,13 @@ class SPULifter:
+                 cond = f"(int32_t){pw(ra())} > (int32_t){pw(rb())}"
+             else:  # hlgt
+                 cond = f"{pw(ra())} > {pw(rb())}"
+-            return (f"if ({cond}) {{ extern void spu_halt(spu_context*); "
++            return (f"if ({cond}) {{ {_RC_EXIT}extern void spu_halt(spu_context*); "
+                     f"fprintf(stderr, \"[spu] HALT-ASSERT {mn} pc=0x{addr:05X} "
+                     f"img=%d\\n\", ctx->image_id); "
+                     f"ctx->status = SPU_STATUS_STOPPED_BY_HALT; "
+                     f"spu_halt(ctx); return; }}")
+         if mn == "stopd":
+-            return ("ctx->stop_code = 0u; "
++            return (f"{_RC_EXIT}ctx->stop_code = 0u; "
+                     "ctx->status = SPU_STATUS_STOPPED_BY_STOP; spu_stop(ctx); return;")
+ 
+         # ---- integer arithmetic (register) ----
+@@ -811,15 +884,23 @@ class SPULifter:
+             return f"spu_ls_write128(ctx, {g(ra())}._u32[0] + {g(rb())}._u32[0], {g(rt())});"
+ 
+         # ---- channel ops ----
++        # With the register cache the result goes through a temporary, so the
++        # registers are reloaded after the call and before rt is assigned.
+         if mn == "rdch":
++            if self.regcache:
++                return (f"{{ {_RC_OUT}u128 _ch = spu_rdch(ctx, {_chan(ops[1])}); "
++                        f"{_RC_IN}{g(rt())} = _ch; }}")
+             return f"{g(rt())} = spu_rdch(ctx, {_chan(ops[1])});"
+         if mn == "rchcnt":
+             # CBEA: the count lands in the PREFERRED word, remaining slots ZERO
+             # (splatting it is the spu_link bug class; RPCS3 = v128::from32r).
++            if self.regcache:
++                return (f"{{ {_RC_OUT}u128 _ch = spu_pref_u32(spu_rchcnt(ctx, "
++                        f"{_chan(ops[1])})); {_RC_IN}{g(rt())} = _ch; }}")
+             return f"{g(rt())} = spu_pref_u32(spu_rchcnt(ctx, {_chan(ops[1])}));"
+         if mn == "wrch":
+             # operands: channel, $rt
+-            return f"spu_wrch(ctx, {_chan(ops[0])}, {g(_reg(ops[1]))});"
++            return f"{_RC_OUT}spu_wrch(ctx, {_chan(ops[0])}, {g(_reg(ops[1]))});{_RC_IN}"
+ 
+         # ---- branches ----
+         if mn in ("br", "bra"):
+@@ -829,7 +910,7 @@ class SPULifter:
+             # `goto loc_self` busy-spins the host thread forever; stop the SPU
+             # instead (same halt path the lifter emits for a `stop` instruction).
+             if tgt == addr:
+-                return "ctx->status = SPU_STATUS_STOPPED_BY_HALT; return;"
++                return f"{_RC_EXIT}ctx->status = SPU_STATUS_STOPPED_BY_HALT; return;"
+             return self._uncond_branch(tgt, func)
+         if mn in ("brsl", "brasl"):
+             # The disassembler drops the link register from brsl operands, so
+@@ -846,7 +927,7 @@ class SPULifter:
+             # boot in cri_audio_00023C58). Set the link, then stop the SPU (same
+             # halt path the lifter emits for a `stop` instruction).
+             if tgt == addr:
+-                return f"{link} ctx->status = SPU_STATUS_STOPPED_BY_HALT; return;"
++                return f"{link} {_RC_EXIT}ctx->status = SPU_STATUS_STOPPED_BY_HALT; return;"
+             # PC-GETTER IDIOM: `brsl rX, .+4` (target == next instruction) just
+             # loads PC+4 into rX for PC-relative addressing / computed jump tables;
+             # it is NOT a real call. Emitting a host call here imbalances the C
+@@ -863,9 +944,9 @@ class SPULifter:
+                 # `bi $r0` returns via host return) + SPU_DRAIN (drains the
+                 # callee's own tail-chains so they don't grow the caller frame)
+                 # + image save/restore (adopt-on-serve cannot leak upward).
+-                return (f"{link} {{ int32_t _si = (int32_t)ctx->image_id; "
++                return (f"{link} {{ {_RC_OUT}int32_t _si = (int32_t)ctx->image_id; "
+                         f"ctx->host_depth++; {self.prefix}spu_func_{tgt:08X}(ctx); "
+-                        f"spu_drain_call(ctx, 0x{addr + 4:X}); ctx->host_depth--; spu_img_restore(ctx, _si); }}")
++                        f"spu_drain_call(ctx, 0x{addr + 4:X}); ctx->host_depth--; spu_img_restore(ctx, _si); {_RC_IN}}}")
+             return f"{link} /* TODO spu: brsl unresolved target */;"
+         if mn in _COND_BR:
+             tgt = self._branch_target(insn)
+@@ -878,7 +959,7 @@ class SPULifter:
+             self.branch_targets.add(tgt)
+             # Cross-function conditional branch = conditional tail: hand the
+             # target to the trampoline and unwind (enclosing SPU_DRAIN re-enters).
+-            return (f"if ({cond}) {{ ctx->pc = 0x{tgt:X}; "
++            return (f"if ({cond}) {{ {_RC_EXIT}ctx->pc = 0x{tgt:X}; "
+                     f"g_spu_trampoline_fn = {self.prefix}spu_func_{tgt:08X}; return; }}")
+         # Interrupt enable/disable bits on the bi family (bie/bid, irete/iretd,
+         # bisle(d)...): bit 0x40000 = E (enable), 0x80000 = D (disable), taking
+@@ -904,14 +985,14 @@ class SPULifter:
+                 # publish THAT register as the return PC: SPU_RET publishes r0,
+                 # and spu_drain_call restarts dispatch when pc != return_pc.
+                 if tgt_reg != "0":
+-                    return f"{_ied}SPU_RET_REG(ctx, {tgt_reg});"
+-                return f"{_ied}SPU_RET(ctx);"
++                    return f"{_ied}{_RC_EXIT}SPU_RET_REG(ctx, {tgt_reg});"
++                return f"{_ied}{_RC_EXIT}SPU_RET(ctx);"
+             # Computed indirect tail: set pc + trampoline to the dispatcher, unwind.
+-            return (f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; "
++            return (f"{_ied}{_RC_EXIT}ctx->pc = {g(tgt_reg)}._u32[0]; "
+                     f"g_spu_trampoline_fn = spu_indirect_branch; return;")
+         # iret: interrupt return -> branch to the saved interrupt PC (SRR0).
+         if mn == "iret":
+-            return (f"{_ied}ctx->pc = ctx->srr0; "
++            return (f"{_ied}{_RC_EXIT}ctx->pc = ctx->srr0; "
+                     "g_spu_trampoline_fn = spu_indirect_branch; return;")
+         if mn in ("bisl",):
+             # `bisl rt, ra`: rt = link, ra = TARGET. The disassembler emits BOTH
+@@ -927,16 +1008,16 @@ class SPULifter:
+             # here and its `bi $r0` returns via host return.
+             return (f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
+                     f"{{ int32_t _si = (int32_t)ctx->image_id; "
+-                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; ctx->host_depth++; "
++                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; {_RC_OUT}ctx->host_depth++; "
+                     f"spu_indirect_branch(ctx); spu_drain_call(ctx, 0x{addr + 4:X}); "
+-                    f"ctx->host_depth--; spu_img_restore(ctx, _si); }}")
++                    f"ctx->host_depth--; spu_img_restore(ctx, _si); {_RC_IN}}}")
+         # bisled: set link, branch to RA only if an external event is pending.
+         if mn in ("bisled",):
+             link_rt = insn.raw & 0x7F            # rt = link; ra (last) = target
+             tgt_reg = _reg(ops[-1])
+             return (f"{g(link_rt)} = spu_splat_u32(0x{addr + 4:X}); "
+                     f"if ((ctx->event_status & ctx->event_mask) != 0) {{ "
+-                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; "
++                    f"{_ied}{_RC_EXIT}ctx->pc = {g(tgt_reg)}._u32[0]; "
+                     f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
+         # biz/binz/bihz/bihnz: ops[0] = condition reg, ops[1] = target reg.
+         if mn in ("biz", "binz", "bihz", "bihnz"):
+@@ -950,9 +1031,9 @@ class SPULifter:
+             if (tgt_reg == "0" and addr not in self.bi_r0_jump) \
+                     or addr in self.link_return:
+                 if tgt_reg != "0":
+-                    return f"if ({cond}) {{ {_ied}SPU_RET_REG(ctx, {tgt_reg}); }}"
+-                return f"if ({cond}) {{ {_ied}SPU_RET(ctx); }}"
+-            return (f"if ({cond}) {{ {_ied}ctx->pc = {g(tgt_reg)}._u32[0]; "
++                    return f"if ({cond}) {{ {_ied}{_RC_EXIT}SPU_RET_REG(ctx, {tgt_reg}); }}"
++                return f"if ({cond}) {{ {_ied}{_RC_EXIT}SPU_RET(ctx); }}"
++            return (f"if ({cond}) {{ {_ied}{_RC_EXIT}ctx->pc = {g(tgt_reg)}._u32[0]; "
+                     f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
+ 
+         # hint-for-branch: pure performance hint, safe to drop
+@@ -988,7 +1069,7 @@ class SPULifter:
+         self.branch_targets.add(tgt)
+         # Cross-function unconditional tail: hand the target to the trampoline
+         # and unwind so the enclosing SPU_DRAIN re-enters (no host-stack growth).
+-        return (f"{{ ctx->pc = 0x{tgt:X}; "
++        return (f"{{ {_RC_EXIT}ctx->pc = 0x{tgt:X}; "
+                 f"g_spu_trampoline_fn = {self.prefix}spu_func_{tgt:08X}; return; }}")
+ 
+     # ------------------------------------------------------------------ #
+@@ -1080,6 +1161,10 @@ def main() -> None:
+                    help="Emit spu_trace_pc/spu_trace_rt around each instruction "
+                         "for §3 diff-vs-RPCS3 validation. Output goes to stderr "
+                         "unless spu_trace_init(path) is called by the harness.")
++    p.add_argument("--regcache", action="store_true",
++                   help="Keep each function's guest registers in C locals and "
++                        "sync ctx->gpr only at exits and around runtime calls "
++                        "(see _RC_EXIT). Ignored with --trace.")
+     p.add_argument("--symbol-prefix", default="",
+                    help="Prefix for all emitted spu_func_* / spu_recomp_register "
+                         "symbols, so multiple lifted SPU images can link into one "
+@@ -1199,7 +1284,8 @@ def main() -> None:
+ 
+     insns = disassemble_spu(data, base)
+ 
+-    lifter = SPULifter(trace=args.trace, prefix=args.symbol_prefix)
++    lifter = SPULifter(trace=args.trace, prefix=args.symbol_prefix,
++                       regcache=args.regcache)
+     lifter.bi_r0_jump = compute_bi_r0_jumps(insns, bounds)
+     if lifter.bi_r0_jump:
+         print(f"  {len(lifter.bi_r0_jump)} `bi $r0` computed-jump site(s) "

@@ -93,6 +93,7 @@ endif()
 add_executable(gt5p
     src/main.cpp
     src/gt5p_present.cpp
+    src/gt5p_profview.cpp
     src/gt5p_allocwatch.cpp
     src/gt5p_bbcount.cpp
     src/gt5p_longjmp.cpp

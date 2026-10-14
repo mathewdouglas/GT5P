@@ -110,9 +110,20 @@ Each corrects the one before.
   Phases 39-41 describe the logo-only stage it replaces.
 - **Dealership frame rate (Phase 43): 17.5 fps, up from 7.4.** The title's
   own threads cap it at about 20 (`RSX_VTX_SKIP=1` drops every draw and still
-  only reaches 20). The critical path is the job manager's SPU render jobs
-  (one lane per workload, `SPURS_READY_LANES=0`, gives 6.8 fps), which wait on
-  the walker for ring space. Their lanes are threads made per dispatch, so a
+  only reaches 20). **The serial limit is the present thread (Phase 45):**
+  per frame about 37 ms of FIFO walk, 39% of it `read_vp_vertex`, plus 9 ms of
+  present, all on one thread, with `PDI:1` and main close behind. The SPU
+  render jobs (Phase 43's "critical path") wait on it for ring space;
+  making their code faster gained nothing (Phases 44.2, 45.1, 45.2).
+  `GT5P_PRESENT_SLEEP=<ms>` (outer sleep, default 4) and
+  `RSX_PRESENT_SYNC=0` (no vsync wait) are measurement switches.
+  `SPU_REGCACHE=1` lifts SPU code with registers in locals: correct, slower.
+  **F3 in the game window shows a live profiler** (`GT5P_PROFVIEW=1` shows
+  it at start, `=0` disables it): fps, frame intervals by vblank count, the
+  present thread's split per frame, CPU per named thread (Phase 45.4).
+  Frames are quantised to vblanks, so present-thread work must drop below
+  about 33 ms for 30 fps.
+  The job lanes are threads made per dispatch, so a
   per-thread CPU table misses about 3 cores: use `scratch/cpu3.ps1` and
   `GT5P_SAMPLE=all` (or `GT5P_SAMPLE=4` for the busiest live threads), then
   `scratch/maplook.py build/gt5p.map <log>`. `scratch/perf.ps1 -Tag <t> -N 3`
@@ -334,7 +345,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dealership's 17.5 fps (Phase 43: SPU job execution speed, then a cheaper walker, then inline PPU memory access); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the dealership's 17.5 fps (Phase 45: take the vertex expansion off the present thread, then cheaper guest PPU threads); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

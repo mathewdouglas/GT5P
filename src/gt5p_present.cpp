@@ -26,6 +26,7 @@
 #include "ppu_context.h"
 #include "sys_ppu_thread.h"
 #include "vm.h"
+#include "ps3emu/thread_name.h"
 
 /* GT5P_THREADS=1: every 2 s, print each PPU thread's state and the guest
  * address of its last syscall/HLE call. "Runs its job loop but never loads
@@ -433,9 +434,13 @@ extern "C" void gt5p_start_sampler(void)
     CreateThread(NULL, 0, sampler_thread, (LPVOID)(uintptr_t)n, 0, NULL);
 }
 
+extern "C" void gt5p_start_profview(void);
+extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total);
+
 static DWORD WINAPI present_thread(LPVOID)
 {
     fprintf(stderr, "[hostthread] present hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
+    ps3_name_thread(L"present");
     gt5p_start_sampler();
     if (host_avoid_mask()) {
         SetThreadAffinityMask(GetCurrentThread(), host_avoid_mask());
@@ -459,11 +464,21 @@ static DWORD WINAPI present_thread(LPVOID)
     double p_vbl = 0, p_flip = 0, p_pres = 0, p_fifo = 0, p_pump = 0;
     unsigned p_ticks = 0, p_pres_n = 0;
     ULONGLONG p_last = GetTickCount64();
-#define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); acc += (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; } while (0)
+    /* Running totals of the same, never reset, for the profiler view
+     * (gt5p_profview.cpp), which takes the difference at each present. */
+    double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0;
+#define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_; } while (0)
+    if (rsx_ok) gt5p_start_profview();
+
+    /* GT5P_PRESENT_SLEEP=<ms>: the outer cadence, 4 by default. The FIFO is
+     * only walked once per pass, so the sleep is time the guest's command
+     * rings are not drained. */
+    const char* sl = getenv("GT5P_PRESENT_SLEEP");
+    const DWORD outer_sleep = sl ? (DWORD)atoi(sl) : 4;
 
     ULONGLONG next_tick = GetTickCount64();
     for (;;) {
-        Sleep(4);
+        Sleep(outer_sleep);
         ULONGLONG now = GetTickCount64();
 
         /* Catch up on missed ticks, but not for longer than 100 ms at a
@@ -477,6 +492,7 @@ static DWORD WINAPI present_thread(LPVOID)
             PROF_T(p_flip, cellGcmTickFlip());
             if (rsx_ok && cellGcm_take_flip_pending()) {
                 PROF_T(p_pres, backend_present()); p_pres_n++;
+                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
             }
             if (drain)
                 PROF_T(p_fifo, cellGcm_rsx_process_fifo());
@@ -495,6 +511,7 @@ static DWORD WINAPI present_thread(LPVOID)
         if (drain) {
             if (cellGcm_take_flip_pending() && rsx_ok) {
                 PROF_T(p_pres, backend_present()); p_pres_n++;
+                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
             }
             PROF_T(p_fifo, cellGcm_rsx_process_fifo());
         }
