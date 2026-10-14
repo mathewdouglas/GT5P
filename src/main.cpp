@@ -631,8 +631,76 @@ static void setup_argv(const char* argv0)
     printf(")\n");
 }
 
+/* Closing the game window ends the game. Nothing else did: the title's
+ * threads kept running with no window. The log is flushed first. */
+extern "C" void (*rsx_d3d12_on_close)(void);
+static void window_closed(void)
+{
+    printf("[GT5P] window closed; exiting\n");
+    fflush(stdout); fflush(stderr);
+    ExitProcess(0);
+}
+
+/* Run from anywhere. The game is found by paths relative to the working
+ * directory (input/EMAIN.ELF, input/pkg/, gamedata/), which is the project
+ * root when a script starts the port. Started any other way -- double-clicked
+ * in build/, say -- the working directory is wherever the exe is, nothing is
+ * found, and the port used to exit at once. So when the default executable is
+ * not where the working directory says, look for it upwards from the exe's
+ * own folder and work from there. GT5P_ROOT names the folder outright.
+ * Returns 0 when the game cannot be found. */
+static int locate_project_root(void)
+{
+    const char* forced = getenv("GT5P_ROOT");
+    if (forced && *forced) {
+        if (!SetCurrentDirectoryA(forced)) {
+            fprintf(stderr, "[GT5P] ERROR: GT5P_ROOT=\"%s\" is not a folder\n", forced);
+            return 0;
+        }
+        return 1;
+    }
+    if (GetFileAttributesA("input\\EMAIN.ELF") != INVALID_FILE_ATTRIBUTES) return 1;
+    char dir[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
+    if (!n || n >= sizeof dir) return 0;
+    for (int up = 0; up < 5; up++) {
+        char* cut = strrchr(dir, '\\');
+        if (!cut) break;
+        *cut = 0;                       /* the exe's folder, then its parents */
+        char probe[MAX_PATH + 32];
+        snprintf(probe, sizeof probe, "%s\\input\\EMAIN.ELF", dir);
+        if (GetFileAttributesA(probe) != INVALID_FILE_ATTRIBUTES) {
+            SetCurrentDirectoryA(dir);
+            printf("[GT5P] working from %s\n", dir);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
+    /* Someone started this by hand if its output is a console window rather
+     * than a file. Verbose logging serialises every guest thread on one lock
+     * (the sound stutters and the menu drops frames), so it is off for them
+     * unless asked for; the scripts redirect output and are not affected. */
+    const bool by_hand = GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) == FILE_TYPE_CHAR;
+    if (by_hand && !getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
+
+    if (argc <= 1 && !locate_project_root()) {
+        const char* msg =
+            "The game files were not found.\n\n"
+            "This program expects the project layout: a folder holding\n"
+            "input\\EMAIN.ELF (the decrypted executable) and input\\pkg\\\n"
+            "(PARAM.SFO and USRDIR). It looks in the current folder and in the\n"
+            "folders above the exe. Set GT5P_ROOT to that folder to name it.";
+        fprintf(stderr, "[GT5P] ERROR: %s\n", msg);
+        if (by_hand) MessageBoxA(NULL, msg, "Gran Turismo 5 Prologue", MB_OK | MB_ICONERROR);
+        return EXIT_FAILURE;
+    }
+
+    rsx_d3d12_on_close = window_closed;
+
     /* Schedule guest threads by their PS3 priority on two host cores, as the
      * console's two hardware threads would. Left to the host scheduler, about
      * one boot in four fails during sound start-up; with this on, 1 in 52

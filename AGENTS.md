@@ -109,8 +109,17 @@ Each corrects the one before.
   RPCS3's. This build draws exactly what the vertex colours and blend
   state say; what RPCS3 does differently is not found. Coverage, colour
   byte order and the scene are ruled out. Fragment programs get only
-  texture units 0 to 3, and samplers ignore the title's filter and wrap
-  settings (unit 0 point and clamp, the rest linear and wrap).
+  texture units 0 to 3.
+- Samplers follow the title's filter and wrap settings from a bank of
+  twelve static samplers in s4 to s15 (`RSX_SAMP_FIXED=1` for the old fixed
+  ones, `RSX_SAMPDBG=1` to list what the title sets). A `ps_5_0` shader has
+  sixteen sampler registers; do not declare one past s15.
+- **To play it:** `play.cmd` in the project root, or double-click
+  `build\gt5p.exe`. The exe finds the project root by looking for
+  `input\EMAIN.ELF` upwards from its own folder (`GT5P_ROOT` to name it),
+  turns verbose logging off when its output is a console, and exits when
+  the window is closed. Keyboard: arrows, Z Cross, X Circle, A Square,
+  S Triangle, Q/W L1/R1, 1/2 L2/R2, Enter Start, Tab Select.
 - `RSX_METHHIST=<n>` prints every RSX method sent in the first n, with
   counts and first values: the way to find a register nothing reads.
   `RSX_GAMMADBG=1`, `GCM_REPORTDBG=<n>`. Capture manifests print `gam=` and
@@ -303,7 +312,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-two files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in thirty-three files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.

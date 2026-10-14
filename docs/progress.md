@@ -146,10 +146,38 @@ elements RPCS3 is about 1.8 times this build until it clips. Not explained.
 One fit, untested: an sRGB encode of both the colour and the alpha (0.706
 to 0.86, 0.5 to 0.735, product 0.63, against RPCS3's 0.643).
 
-**Seen on the way, not fixed.** Texture unit 0 is always point-sampled and
-clamped, and units 1 to 3 always linear and wrapped, whatever the title
-asks for (`rsx_d3d12_backend.c`, the static samplers of the vertex-program
-root signature). The scene's main texture is on unit 0.
+**6. Samplers ignored the title's filter and wrap settings.** Texture unit
+0 was always point-sampled and clamped and units 1 to 3 always linear and
+repeating (the static samplers of the vertex-program root signature). The
+scene's main texture is on unit 0, which the title sets to linear with
+linear mip and repeat (`[SAMP] unit 0 filter 0x02062000 address
+0x10730121`, from the new `RSX_SAMPDBG=1`), so scenery was drawn
+unfiltered. Each unit now gets the filter and wrap the title asked for,
+from a bank of twelve static samplers in registers s4 to s15: three
+filters by four wrap pairs. Twelve because a `ps_5_0` shader has sixteen
+sampler registers (a first version put a bank of 64 at s16 and every
+program failed to compile with X4509) and the backend binds four texture
+units. Mirror is drawn as repeat and border as clamp. `RSX_SAMP_FIXED=1`
+for the old samplers. The stencil atlas keeps point sampling because the
+title asks for it (`filter 0x01012000`). Roofs and brickwork are visibly
+smoother (`r20/inp_075.png`); the 2D layer is unchanged.
+
+### Running it by hand
+
+`build\gt5p.exe` exited at once unless started from the project root,
+because the game is found by paths relative to the working directory. It
+now looks for `input\EMAIN.ELF` upwards from its own folder when the
+working directory does not have it (`GT5P_ROOT` names the folder outright),
+and shows a message box instead of vanishing when the game is not found.
+Started with a console for output, it turns verbose logging off unless
+`PS3_VERBOSE` is set. Closing the window now ends the process: nothing in
+a recompiled title acted on the close, and the threads ran on without a
+window. `play.cmd` in the project root does the same with the log sent to
+`scratch\play.out` and `.err`, and prints the keyboard mapping. Checked:
+started with `build\` and with `%TEMP%` as working directory, both reach
+the agreement screen; closing the window exits with code 0. Four 20 s
+headless boots after all of this: 129 opens each, no overrun
+(`scratch/ab-p37c/`).
 
 `scratch/menu.ps1` is 8 s faster: the agreement scrolls to its end in under
 5 s, so DOWN is held 13 s to 19 s instead of 16 s to 27 s, and CROSS is
