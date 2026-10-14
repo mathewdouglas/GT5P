@@ -9,6 +9,108 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 46 - Indexed vertex uploads; car reflections; a dealership stall (2026-10-15)
+
+### 46.1 Where the uploads go (`RSX_VTXSTAT=1`)
+
+New diagnostic: every 5 s, per vertex-upload path, calls, vertices asked for
+and written, time, and a histogram of call sizes. At the Car Dealer page, per
+5 s (about 84 frames): indexed triangles 334,000 calls, 75.5 million vertices,
+1.70 s (22.5 ns a vertex); indexed strips 67,000 calls, 16.5 million in and
+36.6 million out, 1.08 s. Uploads were 2.79 s of the FIFO walk's 3.40 s;
+`vp_stage_commit` (256-byte staging compacted afterwards) 0.35 s of it. Almost
+every call is 64-256 indices: the RSX sends a stream in batches of at most
+256, so splitting a draw across threads would not pay. The per-call vertex
+cache hit 73% (84.5 million hits, 31.5 million fetches): most of the work was
+copying already-converted vertices into duplicate slots.
+
+With every upload skipped (`RSX_VTX_SKIP=1`) the present thread falls to 0.39 s
+of FIFO and 0.03 s of present per 5 s and the page runs at 22 fps: the most
+any vertex work can buy, before the title's own threads and the SPU jobs.
+
+### 46.2 Indexed uploads (`RSX_VTX_INDEXED`, default on)
+
+ps3recomp `rsx_d3d12_backend.c`. Indexed triangles and strips no longer expand
+to triangle lists. Each call keeps a map from guest index to local vertex;
+a vertex is fetched the first time the call sees it and written once, compact,
+straight into the upload heap; the call's indices go to a new upload-heap index
+buffer (4 M x 32-bit per frame, double-buffered like `vp_vb`) and the record
+is drawn with `DrawIndexedInstanced`. Strip continuation, primitive restart
+and winding are the same loop. Batch merging still works: indices are kept on
+the CPU until the record is decided, then written with the merge offset (the
+upload heap is write-combined and never read back). Whether a record slot is
+indexed is stamped with a frame generation, because records are refilled
+field by field and never cleared.
+
+`RSX_VTX_INDEXED=0` restores the expansion; so do `RSX_VFAST=0`/`check`,
+immediate-mode vertices, and the diagnostics that read expanded vertices
+(`RSX_DBG_VTX`, `RSX_DBG_TRACK`, `RSX_DBG_SCALE`, `IDX_DBG`, `IDXDBG`,
+`VTX_DUMP`).
+
+Result: vertices written per frame fall to about a third (indexed triangles:
+91 million indices, 27 million vertices per 5 s), upload time per frame from
+about 33 to about 21 ms, present-thread work per frame from about 46 to 41 ms.
+Clean runs 18.7-20 fps (median about 19.5) against 17.4 for the pre-session
+baseline. The present thread is no longer saturated (about 76%); `PDI:1` and
+the main thread are as busy. The page draws the same. The frame vertex cap
+(`MAX_VERTICES`, 1.31 million) was below the 1.38 million the page asked for,
+so some draws were being dropped before; now none are.
+
+### 46.3 A dealership stall that today's builds hit far more often
+
+Two shapes, neither logging anything: the job lanes spin (about 1-8 fps, 6.5
+cores, no lane threads exiting), or the title stops submitting (no presents,
+2.4 cores). Counted at the page: the pre-session baseline exe 0 of about 30
+runs; builds since Phase 45's helper change about 1 in 9; builds with the
+index buffers about 9 in 23. Measured and ruled out:
+
+- the new SPU helpers: the same tree with the old ones (`SPU_SHUFB_SWAP`,
+  `SPU_BYTETAB_RUNTIME`) stalled 3 of 6, the new 2 of 6;
+- the index buffers themselves: `RSX_VTX_INDEXED=0` on the same build stalled
+  too; so did a run with the profiler view disabled;
+- the taskset `WAIT_SIGNAL` 1 s wait (upstream 0.14's fix): never entered.
+
+Hypothesis, not tested: a race in the job manager's lane hand-offs whose
+window grows as the pipeline gets faster (the rate rises with the frame
+rate). Not found yet; it is the next thing to look at.
+
+### 46.4 Car reflections
+
+`RSX_TEXUNITDBG=<n>` (new) lists, for the first n fragment programs, every
+bound unit: size, format, cube flag, offset, mip count, matching target, LOD,
+filter, address and remap registers. 128 of the page's 141 programs bind
+units above 3; the car materials share one layout. Three faults, each with a
+switch that undoes it:
+
+- **Cube maps on units 4-15** (`RSX_CUBE_HI=0`). The environment map is on
+  unit 14, but only units 0-3 were treated as cubes, and the decompiler was
+  always called with cube mask 0, so its per-unit `TextureCube` declarations
+  never appeared: the cube was sampled as a 2D texture with the reflection
+  vector's x and y (smeared roof and glass). Cube units 4-15 now go in bits
+  20-31 of the PSO key word and the whole 16-unit mask goes to the decompiler.
+- **A cube whose faces are render targets** (`RSX_CUBE_RT=0`). The title
+  renders that map: six linear 256x256 faces, each its own surface with the
+  mip chain stacked below level 0 at the same pitch (511 rows, face stride
+  523,264 bytes, `RSX_RTDRAWDBG=<hex offset>` shows the mip draws every
+  frame). The unit resolved to face 0's target, a 2D resource behind a
+  `TextureCube`. Such a unit now gets a real 6-face cube with all levels,
+  refreshed once a frame by the first draw that samples it.
+- **Constant remaps** (`RSX_REMAP_CONST=0`). Two 1x1 units at offset 0 have
+  `TEXTURE_CONTROL1` = `0x5500`: every channel ONE. Offset 0 is display buffer
+  0, so they took the display-copy path, which ignores the remap, and read
+  the screen's black corner; the paint's lit term was multiplied by it.
+  A unit whose remap leaves no channel on the crossbar now samples its
+  constants. `RSX_TEX0_PROBE=<AARRGGBB>` (an experiment that writes guest
+  memory) was how this was found.
+
+Before: the silver car drew black, glass and roofs a pink-white smear. After:
+silver and black paint read as such, reflections are real. Not yet compared
+with RPCS3 at the same moment; the cars may still be too bright. Still
+different from RPCS3: plain grey wheels, and no reflection of the cars in the
+floor. Also seen: the 16x16 tables on units 11 and 15 have the unnormalised
+coordinate bit set, which the backend only honours on units 0-3, and units
+4-15 use the fixed sampler bank rather than the title's filter and wrap.
+
 ## Phase 45 - SPU register cache, and the present thread is the bottleneck (2026-10-15)
 
 Measured as in Phase 44 (`scratch/perf.ps1`), two runs per setting unless

@@ -118,6 +118,13 @@ Each corrects the one before.
   `GT5P_PRESENT_SLEEP=<ms>` (outer sleep, default 4) and
   `RSX_PRESENT_SYNC=0` (no vsync wait) are measurement switches.
   `SPU_REGCACHE=1` lifts SPU code with registers in locals: correct, slower.
+  **Phase 46:** indexed draws keep an index buffer (`RSX_VTX_INDEXED=0` to
+  expand as before; `RSX_VTXSTAT=1` for per-path upload stats), about 19.5
+  fps. **A dealership stall now hits about 1 run in 3** (lanes spin at ~1 fps,
+  or presents stop); the pre-session exe never did. Not found yet; see 46.3.
+  Car materials: cube maps on units 4-15 (`RSX_CUBE_HI=0`), cubes whose faces
+  are render targets (`RSX_CUBE_RT=0`), constant remaps (`RSX_REMAP_CONST=0`);
+  `RSX_TEXUNITDBG=<n>` lists every bound unit of the first n programs.
   **F3 in the game window shows a live profiler** (`GT5P_PROFVIEW=1` shows
   it at start, `=0` disables it): fps, frame intervals by vblank count, the
   present thread's split per frame, CPU per named thread (Phase 45.4).
@@ -345,7 +352,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dealership's 17.5 fps (Phase 45: take the vertex expansion off the present thread, then cheaper guest PPU threads); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the car wheels and floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
@@ -373,7 +380,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-seven files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in thirty-nine files under `include/`, `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
