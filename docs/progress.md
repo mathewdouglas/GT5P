@@ -80,9 +80,30 @@ last of them.
 - `FP_HLSL_DUMP=<program>[,<dir>]` writes every text compiled for one
   program.
 
+**Then: the logo came back in some runs.** A capture of such a run
+(`RSX_CAP=1750:1:1`, `FRAME_BUDGET=1740`) still had 354 draws a frame
+truncated. Quads are uploaded as six vertices per four, so a 976,000-vertex
+frame overran the 1.3 M-vertex buffer, and the tail it lost was the 2D layer
+again. Whether it fitted depended on what was on screen.
+
+- **Vertices are stored compactly now.** Every vertex was 256 bytes (16
+  attribute slots). A vertex now holds only the attributes in the program's
+  input mask (`SET_VERTEX_ATTRIB_INPUT_MASK`), 16 bytes each, in slot
+  order. It is assembled in host memory and copied packed into the upload
+  heap (`vp_stage_commit`). Each draw records its stride and mask. The
+  replay binds the buffer per draw, and the pipeline's input layout follows
+  the mask, which is part of its key. `RSX_VTX_MASK=0` keeps all sixteen.
+- Measured: 0 draws truncated, about 2,050 recorded a frame; 7 frames a
+  second on the page (5 before); the main menu at 38 (31 before). Three
+  windowed runs in a row reached the page. In one, the third Cross opened the
+  Showroom panel (Acura NSX '91, Cr. 80,000).
+- `PERF=20` before the change: vertex fetch was 39% of a frame
+  (17.6 M vertices per 20 frames). After it, 23%.
+
 Open:
 
-- About 5 frames a second on the page.
+- About 7 frames a second on the page. Most of the rest of a frame is
+  outside the backend (guest threads and the walker): not yet profiled.
 - On a machine with an empty cache, about 9 s of an unanswering window on
   first entry.
 - The fallback when a pixel shader cannot be decompiled still runs a

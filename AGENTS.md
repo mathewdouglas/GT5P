@@ -105,7 +105,9 @@ Each corrects the one before.
   shows requested against kept). Fragment programs over 4 KB and with more
   than 64 constants are handled now. Compiled shaders are kept in
   `shadercache/` (gitignored), so only a first-ever entry stalls (about
-  9 s). Open: about 5 frames a second. Phases 39-41 describe the logo-only stage it replaces.
+  9 s). Generic vertices are stored with only
+  the attributes the program reads (`RSX_VTX_MASK=0` for all 16). Open:
+  about 7 frames a second on the page. Phases 39-41 describe the logo-only stage it replaces.
 - `GCM_FTRACE=<flip>,<n>`: every command header the FIFO walker decodes
   between `SetPrepareFlip` calls, with its first argument. This title writes
   no flip words, so frame boundaries come from those calls.
@@ -315,7 +317,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dealership's 15 s first-entry freeze (shader compiles on the window thread) and its 5 frames a second (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the dealership's 15 s first-entry freeze (shader compiles on the window thread) and its 7 frames a second (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
