@@ -89,8 +89,8 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 41 of
-[docs/progress.md](docs/progress.md); read 41 down to 19 in that order.
+Details and evidence are in Phases 17 to 42 of
+[docs/progress.md](docs/progress.md); read 42 down to 19 in that order.
 Each corrects the one before.
 
 - **A save exists now, so the title boots straight to the main menu**
@@ -98,12 +98,19 @@ Each corrects the one before.
   agreement that is no longer shown; with the save, drive the dealership
   with `scratch\inp.ps1 90 "PAD_HOLD=28000-28300:CROSS,34000-34300:CROSS,46000-46300:CROSS"`.
   Move `gamedata/dev_hdd0` aside to get the first-boot screens back.
-- **Choosing a manufacturer: frames run, the picture stays the logo
-  (Phases 39-40).** The render jobs now run on five virtual SPUs, their
-  blocks in the display list are waited for (`0xFFFFFFFF` = not filled yet)
-  and drawn, and frames continue at about 10 a second. The title then draws
-  only its environment and reflection passes. It loads the same files as
-  RPCS3 (Phase 41), so it is not waiting on data; what it waits on is open.
+- **The Car Dealer page draws (Phase 42).** Choosing a manufacturer shows
+  the cars on the showroom floor with the page's 2D layer, as on RPCS3. The
+  backend had been dropping about 4,000 of each frame's 4,300 draws: its
+  per-frame vertex and draw caps were too small (`FRAME_BUDGET=<frame>`
+  shows requested against kept). Fragment programs over 4 KB and with more
+  than 64 constants are handled now. Open: about 15 s of an unanswering
+  window on first entry while shaders compile, then about 5 frames a
+  second. Phases 39-41 describe the logo-only stage it replaces.
+- `GCM_FTRACE=<flip>,<n>`: every command header the FIFO walker decodes
+  between `SetPrepareFlip` calls, with its first argument. This title writes
+  no flip words, so frame boundaries come from those calls.
+- `boot_from=gamedata` (`GT5P_ARGS`) runs from an installed
+  `dev_hdd0/game/BCUS98158`; the default `bdvd` reads `GT.VOL` (Phase 42).
 - Logs: stdout and stderr are flushed every second (`GT5P_FLUSH_MS`), so a
   killed run keeps its tail. Before Phase 41 the last 64 KB was lost.
 - The game's TV/news files (RPCS3's `grim/file/contents`, 2 GB) are not in
@@ -308,7 +315,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: what the dealership waits for once its files are loaded (Phase 41); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the dealership's 15 s first-entry freeze (shader compiles on the window thread) and its 5 frames a second (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

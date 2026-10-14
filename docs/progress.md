@@ -9,6 +9,79 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 42 - The Car Dealer page draws: the backend was dropping most of each frame (2026-10-14)
+
+Choosing a manufacturer now shows the Car Dealer page as on RPCS3: the cars
+on the showroom floor, cycling through their colours with captions, "Car
+Dealer", the credit balance, the Showroom and Event buttons, and the footer.
+The logo of Phases 39 to 41 was the last thing ever drawn on the display.
+Every frame after it lost its main view, its post-processing and its 2D
+layer inside the D3D12 backend. The title was issuing them all along.
+
+How it was found, in order:
+
+1. Frame captures across the entry (`RSX_CAP=1450:40:6`): the logo frames
+   have a UI target and display draws; from the first showroom frame on there
+   are 630 cube-map draws, a 640x360 pass, a clear, and nothing else.
+2. `GCM_FTRACE=<flip>,<n>` (new): every command header the walker decodes
+   between two `SetPrepareFlip` calls, with its first argument. This title
+   writes no flip words into the FIFO. A whole showroom list is about 42,800
+   headers. Its last tenth sets up the bloom chain (512/256/128), a 2048-wide
+   target and the 1920-wide UI surface, then about 1,500 immediate-mode
+   vertex writes and the five reports. So the walker did reach the post and
+   UI passes.
+3. `FRAME_BUDGET=<frame>` (now takes a starting frame): each showroom frame
+   asked for about 983,000 vertices in 4,300 draws. The backend's per-frame
+   vertex buffer held 393,216 vertices and its draw table 2,048. Some 4,000
+   draws a frame were dropped once it filled, leaving the first 700.
+
+Fixes (ps3recomp, `libs/video` and `runtime/spu`):
+
+- **Per-frame caps.** `MAX_VERTICES` 1,310,720 (the generic vertex buffer
+  is that times 256 bytes, double-buffered: 640 MB of upload heap) and
+  `MAX_DRAWS` 6,144 (per-draw constants 104 MB). Packing vertices tighter
+  than 16 float4 slots would cut this; not done.
+- **Fragment programs longer than 4 KB.** The backend let the decompiler
+  read 4,096 bytes. The showroom's programs end 5,264 to over 8,192 bytes
+  in. Constant collection failed (`[FP] decompile fail`), and the fallback
+  stopped part-way. Now `FP_UCODE_MAX` 32 KB, HLSL buffer 128 KB.
+  `FP_FAIL_DUMP=<dir>` writes a failing program out for offline checking.
+- **More than 64 constants.** Those programs have 88 to 98. Over 64, the
+  backend baked them into the shader text. The title patches them every
+  frame, so every frame recompiled 37 KB shaders and the window stopped
+  answering. The per-draw slot now holds 128 (`FP_CB_CONSTS`).
+- **Two watchdogs that killed a legitimate wait.** The first showroom
+  frames take 15 to 18 s to replay, because their pixel shaders compile in
+  0.25 to 0.5 s each (`[FP] slow compile`, `[D3D12] frame took`).
+  - The walker's stuck-get rule resynced to `put` after eight idle passes
+    while it waited at an unfilled SPU block. It now waits up to
+    `GCM_FFFF_STUCK_MS` (120 s) there.
+  - The SPU repeat guard halted render jobs after 5 s of polling an RSX
+    label. Each halted job left its block unfilled for good. Now 120 s
+    (`SPU_DMA_REPEAT_MS`).
+
+Measured: three windowed runs with `scratch\inp.ps1 ... PAD_HOLD=...` all
+reached the page. The disc-mode `gamedata/` (no install) was used for the
+last of them.
+
+Open:
+
+- About 15 s with the window not answering on first entry, while shaders
+  compile on the thread that replays frames and owns the window.
+- About 5 frames a second on the page, sometimes 1 to 2.
+- The fallback when a pixel shader cannot be decompiled still runs a
+  built-in shader. Nothing in the showroom hits it now.
+
+Also measured in this phase:
+
+- `boot_from=gamedata` (`GT5P_ARGS`) runs the title from an installed
+  `dev_hdd0/game/BCUS98158` (its `PDIPFS`), mounts the system cache and uses
+  `/dev_hdd1`, as RPCS3 does after its install. `boot_from=hddgame` is the
+  PSN layout and exits.
+- Disc mode with no install uses `APP_CACHE` paths and never calls
+  `cellSysCacheMount`. RPCS3's first, disc-mode boot does the same. It is not
+  a fault.
+
 ## Phase 41 - The dealership loads what RPCS3 loads; a lost log tail and a form encoder (2026-10-14)
 
 Phase 40 said the title "opens no more files after `DealerTopRoot.gpb`". That
