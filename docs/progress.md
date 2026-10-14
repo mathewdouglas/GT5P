@@ -9,6 +9,75 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 39 - The dealership's render jobs: four faults fixed, not drawing yet (2026-10-14)
+
+Choosing a manufacturer still shows the logo on black. The stall of Phase 38
+(a job polling main-memory address 0) was the first of a chain. Measured, in
+the order found:
+
+1. **Jobs ran before they were started.** The job's ring record (start, end,
+   put, label address; 16 bytes per SPU at element `+0x80`, element 0 at
+   `0x016FA500`) is filled by `0x00BA49A8`, called from `0x00BA4A78` just
+   before `cellSpursReadyCountStore(workload 0, 5)`. An HLE trace showed the
+   job running and stalling before that call. ps3recomp's SPURS kernel ran
+   every enabled workload each pass whatever its ready count. With
+   `SPURS_READY_GATE=1` (now set by `src/main.cpp`) a workload runs only while
+   its ready count is nonzero, and the kernel no longer decrements the count:
+   with the gate on, the count for workload 4 was seen to go 1 -> 0 by itself,
+   so the job manager clears it.
+2. **Every interrupt wrote 76 registers across the running job's stack.** The
+   job manager's interrupt handler builds a register save routine at LS
+   `0x3FEC0` at run time; the runtime's small interpreter for such code
+   decoded `stqa`/`lqa` addresses with a shift of 4 instead of 2, so the save
+   went to `0x3E700` upwards in 64-byte steps instead of `0x3F9C0`. One of
+   those quadwords landed on the job's saved return address (`0x3F940`); the
+   job then returned into the interrupt handler and from there to `0x3FFFC`.
+   Fixed in `spu_smc_microstep`.
+3. **`maxContention` was always 1.** It is the ninth argument of
+   `_cellSpursWorkloadAttributeInitialize`, passed on the stack at
+   `0x70(r1)`; the HLE wrote 1. The five workloads now read 5, 5, 3, 3, 1.
+4. **One host thread ran all workloads in turn.** A render workload that
+   blocks stopped workload 4, which the render thread waits on. With the gate
+   on, a workload wanted on more than one SPU now runs on a thread of its own,
+   on min(ready count, maxContention) virtual SPUs, started 3 ms apart
+   (`SPURS_LANE_STAGGER_MS`).
+
+Also: the "256 identical transfers" guard kept its counter in statics shared
+by all SPU threads, so it rarely fired; it is per thread now, and a small
+repeated read gets `SPU_DMA_REPEAT_MS` (5 s) before it counts as wedged.
+
+**What is left.** With all four, the first dealership frame's 484 jobs
+finish in about 0.4 s. The next frame's jobs then fill their output rings
+(1 MB per SPU, 5 MB shared by both frames' elements, at `0x2A2BDF80`) and
+wait for the RSX to move the ring's label (labels `0x48`-`0x51`), and
+nothing moves it: at the stall every label still holds its ring's start, and
+the FIFO walker never jumps or calls into the ring (`GCM_BRDBG` over the ring:
+0 lines). Each frame then lasts as long as the guard takes to stop the
+waiting jobs. The job builds `SET_SEMAPHORE_OFFSET` (`0x1D6C`) and `0x1D74`
+commands carrying its put pointer (job body `0x14F64`-`0x14FDC`); how that
+output is meant to reach the RSX is not found. Hypothesis, untested: the PPU
+links each job's output into the frame's commands after the job reports,
+and that step is not happening.
+
+Two smaller things seen and not explained: one or two of the five virtual
+SPUs leave at once with "no command" on most runs (their list line reads as
+zeros), and the picture stays the logo even on the frame whose jobs finish.
+
+Not regressed: 4 of 4 headless boots full (`scratch/ab-p39`), menu sound
+3,187 jobs a second at 55%.
+
+**Antialiasing** is not implemented. The scene target asks for it
+(`[RT] new slot 6 off=0x1980000 1280x720 aa=3`, two samples a pixel;
+`RT_NEWDBG=1` prints this), and the backend creates every target with one
+sample. That is the jagged edges.
+
+New switches: `SPURS_READY_GATE`, `SPURS_READY_LANES=0`,
+`SPURS_LANE_STAGGER_MS`, `SPURS_KERN_STAT=1|<hex ea>[,<ea>]` (which workload
+the kernel thread is in; a job manager header's list pointers and rows),
+`SPURS_PM_ENDLOG=<wid>`, `SPU_DMA_HALT_DUMP=<reg>`, `SPU_DMA_HALT_EA=<hex>|@<lsa>`,
+`SPU_DMA_REPEAT_MS`, `SPU_IRQTRACE_MIN=<hex pc>`, `GCM_BRDBG=<lo>,<hi>`,
+`RT_NEWDBG=1`. `SPURS_PM_FLOW` now keeps the last 2,048 transfers.
+
 ## Phase 38 - A DualSense, and why a manufacturer never opens (2026-10-14)
 
 Still BCUS98158. A save now exists (`gamedata/dev_hdd0`), so the title boots

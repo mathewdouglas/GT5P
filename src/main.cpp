@@ -708,6 +708,13 @@ int main(int argc, char* argv[])
      * off. Must be set before the runtime creates its first thread. */
     if (!getenv("PS3_PPU_PRIO_SCHED")) _putenv_s("PS3_PPU_PRIO_SCHED", "2");
 
+    /* Run a SPURS workload only while its ready count is nonzero, on as many
+     * virtual SPUs as the count asks for. This title fills a job list first
+     * and raises the count afterwards; run before that, the dealership's
+     * render jobs read output rings not yet set up (docs/progress.md, Phase
+     * 39). SPURS_READY_GATE=0 for the old every-pass dispatch. */
+    if (!getenv("SPURS_READY_GATE")) _putenv_s("SPURS_READY_GATE", "1");
+
     /* Ask for 1 ms timer resolution. Without it Sleep(1) lasts about 15.6 ms
      * on Windows, and the runtime paces the SPU job poll, the present thread
      * and guest usleep with short sleeps: the agreement screen ran at 12.8
