@@ -66,6 +66,18 @@ zeros), and the picture stays the logo even on the frame whose jobs finish.
 Not regressed: 4 of 4 headless boots full (`scratch/ab-p39`), menu sound
 3,187 jobs a second at 55%.
 
+**Antialiasing, added after the above (same day).** A target whose surface
+format asks for antialiasing now gets a multisampled twin that the draws go
+to, a multisampled depth buffer beside it, pipelines with the matching sample
+count (bits 16-19 of the pipeline key), and a resolve into the one-sample
+texture when that is next read (`off_rt_transition`). Four samples by default,
+where the console uses two; `RSX_MSAA=2` matches the console, `RSX_MSAA=1`
+turns it off. Seen on the menu scene: `[RT] slot 6 ... drawn with 4 samples`,
+edges smooth, no `PSO FAIL`. Not handled: a pass that samples the scene's
+depth buffer would now find the one-sample depth buffer empty (none seen),
+and alpha-to-coverage is still the alpha test at one half. What follows was
+written before this.
+
 **Antialiasing** is not implemented. The scene target asks for it
 (`[RT] new slot 6 off=0x1980000 1280x720 aa=3`, two samples a pixel;
 `RT_NEWDBG=1` prints this), and the backend creates every target with one

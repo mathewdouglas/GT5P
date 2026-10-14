@@ -105,8 +105,9 @@ Each corrects the one before.
   `maxContention` of 1 for every workload, and one host thread for all
   workloads. Open: the second frame's jobs fill their output rings and wait
   on RSX labels `0x48`-`0x51` that nothing moves. Next: how job output is
-  linked into the RSX stream. Antialiasing is not implemented (the scene
-  target asks for two samples).
+  linked into the RSX stream.
+- Antialiasing: a target that asks for it is drawn multisampled and resolved
+  when read (`RSX_MSAA=<n>`, default 4; 1 turns it off).
 - Controllers: `SDL2.dll` beside the exe is loaded at run time and reads
   every controller (DualSense included); `scripts/get_sdl2.ps1` fetches it
   into `third_party/` (gitignored) and the build copies it. Without it,
@@ -303,7 +304,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dealership's ring labels (Phase 39); antialiasing; the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the dealership's ring labels (Phase 39); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
