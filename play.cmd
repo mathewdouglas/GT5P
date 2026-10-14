@@ -22,7 +22,7 @@ shift
 goto vars
 :run
 if not exist scratch mkdir scratch
-echo Gran Turismo 5 Prologue - a controller works if one is plugged in.
+echo Gran Turismo 5 Prologue - a controller works if one is plugged in (any kind, with SDL2.dll in build; Xbox ones without).
 echo Keyboard: arrows = d-pad   Z = Cross   X = Circle   A = Square   S = Triangle
 echo           Q / W = L1 / R1   1 / 2 = L2 / R2   Enter = Start   Tab = Select
 echo The agreement: hold Down to its end, Right to "Accept", then Z.

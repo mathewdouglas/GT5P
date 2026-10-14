@@ -135,6 +135,13 @@ if(WIN32)
     target_link_libraries(gt5p PRIVATE
         ws2_32 xinput ole32 bcrypt
         d3d12 dxgi dxguid d3dcompiler)
+    # SDL2.dll is loaded at run time, if present, to read controllers XInput
+    # does not know. scripts/get_sdl2.ps1 fetches it into third_party/.
+    if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/SDL2.dll")
+        add_custom_command(TARGET gt5p POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/third_party/SDL2.dll" "$<TARGET_FILE_DIR:gt5p>/SDL2.dll")
+    endif()
 else()
     target_link_libraries(gt5p PRIVATE pthread m)
 endif()

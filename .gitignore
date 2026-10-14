@@ -119,3 +119,5 @@ vsh_curves
 *.gzf
 *.i64
 *.idb
+# Third-party binaries fetched by scripts (SDL2.dll: scripts/get_sdl2.ps1)
+third_party/

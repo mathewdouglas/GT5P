@@ -322,7 +322,7 @@ index 5166a47..0d4e779 100644
  
  /* Build fopen mode string from PS3 flags */
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c11..ce0ee64 100644
+index f2b4c11..e7723e4 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -140,6 +140,72 @@ static int pad_host_window_focused(void)
@@ -414,6 +414,203 @@ index f2b4c11..ce0ee64 100644
      if (!pad_host_window_focused()) {
          /* Release everything on focus loss, or a key held while alt-tabbing
           * would stay down forever. */
+@@ -390,6 +465,176 @@ static void pad_shutdown_backend(void)
+ 
+ #endif /* PAD_BACKEND_SDL2 */
+ 
++
++/* ---------------------------------------------------------------------------
++ * SDL2 at run time (Windows)
++ *
++ * XInput only knows Xbox-style controllers: a DualSense or DualShock 4 is
++ * invisible to it. SDL2 knows them all, but linking it would make every
++ * build depend on it. So SDL2.dll is loaded if it is there -- beside the exe
++ * or on the path -- and only the dozen functions used are looked up. With it
++ * loaded SDL reads every controller, Xbox ones included, and XInput is not
++ * polled; without it nothing changes. PAD_NO_SDL=1 ignores the DLL.
++ *
++ * The constants are SDL2's ABI (SDL_GameControllerButton and ...Axis).
++ * -----------------------------------------------------------------------*/
++#if PAD_BACKEND_XINPUT
++
++static struct {
++    HMODULE dll;
++    int   (*Init)(unsigned);
++    void  (*SetMainReady)(void);
++    int   (*SetHint)(const char*, const char*);
++    int   (*NumJoysticks)(void);
++    int   (*IsGameController)(int);
++    void* (*GameControllerOpen)(int);
++    void  (*GameControllerClose)(void*);
++    int   (*GameControllerGetAttached)(void*);
++    void  (*GameControllerUpdate)(void);
++    unsigned char (*GameControllerGetButton)(void*, int);
++    short (*GameControllerGetAxis)(void*, int);
++    const char* (*GameControllerName)(void*);
++    int   (*JoystickGetDeviceInstanceID)(int);
++    void* (*GameControllerGetJoystick)(void*);
++    int   (*JoystickInstanceID)(void*);
++    const char* (*GetError)(void);
++} s_sdl;
++static void* s_sdl_pad[PAD_MAX_HOST_PORTS];
++static int   s_sdl_ok = 0;
++
++static int pad_sdl_dyn_init(void)
++{
++    static int tried = 0;
++    if (tried) return s_sdl_ok;
++    tried = 1;
++    if (getenv("PAD_NO_SDL")) return 0;
++    HMODULE m = LoadLibraryA("SDL2.dll");
++    if (!m) {
++        printf("[cellPad] SDL2.dll not found: XInput controllers and the keyboard only%c", 10);
++        return 0;
++    }
++    s_sdl.dll = m;
++#define PAD_SDL_FN(field, name) \
++    *(FARPROC*)&s_sdl.field = GetProcAddress(m, name); \
++    if (!s_sdl.field) { printf("[cellPad] SDL2.dll has no %s; not using it%c", name, 10); return 0; }
++    PAD_SDL_FN(Init, "SDL_Init")
++    PAD_SDL_FN(SetMainReady, "SDL_SetMainReady")
++    PAD_SDL_FN(SetHint, "SDL_SetHint")
++    PAD_SDL_FN(NumJoysticks, "SDL_NumJoysticks")
++    PAD_SDL_FN(IsGameController, "SDL_IsGameController")
++    PAD_SDL_FN(GameControllerOpen, "SDL_GameControllerOpen")
++    PAD_SDL_FN(GameControllerClose, "SDL_GameControllerClose")
++    PAD_SDL_FN(GameControllerGetAttached, "SDL_GameControllerGetAttached")
++    PAD_SDL_FN(GameControllerUpdate, "SDL_GameControllerUpdate")
++    PAD_SDL_FN(GameControllerGetButton, "SDL_GameControllerGetButton")
++    PAD_SDL_FN(GameControllerGetAxis, "SDL_GameControllerGetAxis")
++    PAD_SDL_FN(GameControllerName, "SDL_GameControllerName")
++    PAD_SDL_FN(JoystickGetDeviceInstanceID, "SDL_JoystickGetDeviceInstanceID")
++    PAD_SDL_FN(GameControllerGetJoystick, "SDL_GameControllerGetJoystick")
++    PAD_SDL_FN(JoystickInstanceID, "SDL_JoystickInstanceID")
++    PAD_SDL_FN(GetError, "SDL_GetError")
++#undef PAD_SDL_FN
++    /* No SDL window and no SDL event loop here: have SDL watch for devices on
++     * a thread of its own, and report input while another window has focus
++     * (ours is not SDL's). */
++    s_sdl.SetHint("SDL_JOYSTICK_THREAD", "1");
++    s_sdl.SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
++    s_sdl.SetHint("SDL_JOYSTICK_HIDAPI_PS5", "1");
++    s_sdl.SetHint("SDL_JOYSTICK_HIDAPI_PS4", "1");
++    s_sdl.SetMainReady();
++    if (s_sdl.Init(0x00002000u /* SDL_INIT_GAMECONTROLLER */) != 0) {
++        printf("[cellPad] SDL_Init failed: %s%c", s_sdl.GetError(), 10);
++        return 0;
++    }
++    printf("[cellPad] SDL2 loaded: controllers are read through SDL%c", 10);
++    fflush(stdout);
++    s_sdl_ok = 1;
++    return 1;
++}
++
++/* Open controllers that have appeared; a device already open is recognised
++ * by its instance id, since device indices shift as things are plugged in. */
++static void pad_sdl_dyn_scan(void)
++{
++    int n = s_sdl.NumJoysticks();
++    for (int d = 0; d < n; d++) {
++        if (!s_sdl.IsGameController(d)) continue;
++        int id = s_sdl.JoystickGetDeviceInstanceID(d), open = 0, slot = -1;
++        for (int i = 0; i < PAD_MAX_HOST_PORTS; i++) {
++            if (!s_sdl_pad[i]) { if (slot < 0) slot = i; continue; }
++            if (s_sdl.JoystickInstanceID(s_sdl.GameControllerGetJoystick(s_sdl_pad[i])) == id) open = 1;
++        }
++        if (open || slot < 0) continue;
++        s_sdl_pad[slot] = s_sdl.GameControllerOpen(d);
++        if (s_sdl_pad[slot]) {
++            const char* nm = s_sdl.GameControllerName(s_sdl_pad[slot]);
++            printf("[cellPad] port %d: %s%c", slot, nm ? nm : "controller", 10);
++            fflush(stdout);
++        }
++    }
++}
++
++static u8 pad_sdl_dyn_axis(int raw)
++{
++    /* the same dead zone the XInput path uses */
++    return pad_xinput_stick_to_u8((short)raw, PAD_STICK_DEADZONE);
++}
++
++static void pad_poll_sdl_dyn(void)
++{
++    static unsigned long long last_scan = 0;
++    unsigned long long now = GetTickCount64();
++    s_sdl.GameControllerUpdate();
++    if (!last_scan || now - last_scan >= 1000) { last_scan = now; pad_sdl_dyn_scan(); }
++
++    for (int i = 0; i < PAD_MAX_HOST_PORTS; i++) {
++        void* gc = s_sdl_pad[i];
++        PadHostState* hs = &s_host_state[i];
++        if (!gc || !s_sdl.GameControllerGetAttached(gc)) {
++            if (gc) { s_sdl.GameControllerClose(gc); s_sdl_pad[i] = NULL;
++                      printf("[cellPad] port %d: controller removed%c", i, 10); fflush(stdout); }
++            hs->connected = 0;
++            continue;
++        }
++        static const struct { int sdl; u16 btn; } map[] = {
++            { 0, CELL_PAD_CTRL_CROSS },    { 1, CELL_PAD_CTRL_CIRCLE },
++            { 2, CELL_PAD_CTRL_SQUARE },   { 3, CELL_PAD_CTRL_TRIANGLE },
++            { 4, CELL_PAD_CTRL_SELECT },   { 6, CELL_PAD_CTRL_START },
++            { 7, CELL_PAD_CTRL_L3 },       { 8, CELL_PAD_CTRL_R3 },
++            { 9, CELL_PAD_CTRL_L1 },       { 10, CELL_PAD_CTRL_R1 },
++            { 11, CELL_PAD_CTRL_UP },      { 12, CELL_PAD_CTRL_DOWN },
++            { 13, CELL_PAD_CTRL_LEFT },    { 14, CELL_PAD_CTRL_RIGHT },
++        };
++        u16 btns = 0;
++        for (unsigned k = 0; k < sizeof map / sizeof map[0]; k++)
++            if (s_sdl.GameControllerGetButton(gc, map[k].sdl)) btns |= map[k].btn;
++        int lt = s_sdl.GameControllerGetAxis(gc, 4), rt = s_sdl.GameControllerGetAxis(gc, 5);
++        if (lt > 3000) btns |= CELL_PAD_CTRL_L2;
++        if (rt > 3000) btns |= CELL_PAD_CTRL_R2;
++
++        hs->connected = 1;
++        hs->buttons = btns;
++        hs->analog_lx = pad_sdl_dyn_axis(s_sdl.GameControllerGetAxis(gc, 0));
++        hs->analog_ly = pad_sdl_dyn_axis(s_sdl.GameControllerGetAxis(gc, 1));
++        hs->analog_rx = pad_sdl_dyn_axis(s_sdl.GameControllerGetAxis(gc, 2));
++        hs->analog_ry = pad_sdl_dyn_axis(s_sdl.GameControllerGetAxis(gc, 3));
++        hs->trigger_l2 = (u8)(lt < 0 ? 0 : lt * 255 / 32767);
++        hs->trigger_r2 = (u8)(rt < 0 ? 0 : rt * 255 / 32767);
++        hs->press_up       = (btns & CELL_PAD_CTRL_UP)       ? 255 : 0;
++        hs->press_down     = (btns & CELL_PAD_CTRL_DOWN)     ? 255 : 0;
++        hs->press_left     = (btns & CELL_PAD_CTRL_LEFT)     ? 255 : 0;
++        hs->press_right    = (btns & CELL_PAD_CTRL_RIGHT)    ? 255 : 0;
++        hs->press_triangle = (btns & CELL_PAD_CTRL_TRIANGLE) ? 255 : 0;
++        hs->press_circle   = (btns & CELL_PAD_CTRL_CIRCLE)   ? 255 : 0;
++        hs->press_cross    = (btns & CELL_PAD_CTRL_CROSS)    ? 255 : 0;
++        hs->press_square   = (btns & CELL_PAD_CTRL_SQUARE)   ? 255 : 0;
++        hs->press_l1       = (btns & CELL_PAD_CTRL_L1)       ? 255 : 0;
++        hs->press_r1       = (btns & CELL_PAD_CTRL_R1)       ? 255 : 0;
++    }
++}
++
++#endif /* PAD_BACKEND_XINPUT: SDL2 at run time */
++
+ /* ---------------------------------------------------------------------------
+  * Poll dispatcher
+  * -----------------------------------------------------------------------*/
+@@ -435,12 +680,17 @@ static void pad_poll_backend(void)
+     for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
+ 
+ #if PAD_BACKEND_XINPUT
+-    pad_poll_xinput();
++    if (pad_sdl_dyn_init()) pad_poll_sdl_dyn();
++    else                    pad_poll_xinput();
+ #elif PAD_BACKEND_SDL2
+     pad_poll_sdl2();
+ #endif
+ #ifdef _WIN32
+-    if (!s_host_state[0].connected) pad_poll_keyboard();
++    /* A PAD_HOLD script drives port 0 even with a controller plugged in;
++     * otherwise an unattended run depends on what is connected. */
++    { static int scripted = -1;
++      if (scripted < 0) scripted = getenv("PAD_HOLD") ? 1 : 0;
++      if (!s_host_state[0].connected || scripted) pad_poll_keyboard(); }
+ #endif
+ }
+ 
 diff --git a/libs/network/cellHttpUtil.c b/libs/network/cellHttpUtil.c
 index 2c557f4..ccaebd6 100644
 --- a/libs/network/cellHttpUtil.c
@@ -6868,3 +7065,17 @@ index b19e240..b60e975 100644
  
          if mn == "bctrl":
              # Indirect call through CTR register. The CTR value is a GUEST
+diff --git a/tools/spu_disasm.py b/tools/spu_disasm.py
+index 2630352..d29c28a 100644
+--- a/tools/spu_disasm.py
++++ b/tools/spu_disasm.py
+@@ -146,6 +146,9 @@ RI10_TABLE: dict[int, str] = {
+     0b00000101: "orhi",   # or halfword immediate            (op8 0x05)
+     0b00010101: "andhi",  # and halfword immediate           (op8 0x15)
+     0b00010110: "andbi",  # and byte immediate               (op8 0x16)
++    0b00000110: "orbi",   # or byte immediate                (op8 0x06)
++    0b01000101: "xorhi",  # xor halfword immediate           (op8 0x45)
++    0b01000110: "xorbi",  # xor byte immediate               (op8 0x46)
+     0b01000100: "xori",   # xor word immediate
+     0b01111100: "ceqi",   # compare equal word immediate
+     0b01111101: "ceqhi",  # compare equal halfword immediate

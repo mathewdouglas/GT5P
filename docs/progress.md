@@ -9,6 +9,69 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 38 - A DualSense, and why a manufacturer never opens (2026-10-14)
+
+Still BCUS98158. A save now exists (`gamedata/dev_hdd0`), so the title boots
+straight to the main menu: no agreement and no "Confirmation". The timed
+scripts that scroll the agreement no longer apply; from a boot with the save,
+`PAD_HOLD=28000-28300:CROSS,34000-34300:CROSS,46000-46300:CROSS` wakes the
+menu, enters Dealerships and picks the first manufacturer.
+
+**Controllers other than Xbox ones.** cellPad's Windows backend was XInput
+only, which does not see a DualSense. `SDL2.dll` is now loaded at run time
+if it is beside the exe or on the path, and every controller is then read
+through SDL (XInput is not polled, so nothing is seen twice). Nothing links
+against SDL and no header is needed: the sixteen functions used are looked
+up by name. Without the DLL the port runs as before. `scripts/get_sdl2.ps1`
+fetches the DLL into `third_party/` (gitignored) and the build copies it
+beside the exe. Checked here: `[cellPad] port 0: DualSense Wireless
+Controller`. `PAD_NO_SDL=1` ignores the DLL. A `PAD_HOLD` script now drives
+port 0 even with a controller connected; before, it ran only when port 0
+was empty, so an unattended run depended on what was plugged in.
+
+**The dealership.** The grid of manufacturers draws correctly
+(`scratch/devrem/deal/inp_035.png`). Choosing one shows its logo on black
+and stays there, at 31 frames a second, for as long as it is left (90 s).
+This is the stop Phases 30 and 31 could not reach reliably; it now happens
+every time, and three layers of it were found.
+
+1. *The render thread waits for a job that is never run.* It spins in
+   `func_00BA97B0` (Phase 31) on queue 3 of the structure at `0x0139C900`:
+   the row at `+0x70` reads `0001 0000 FFFF ...`, one command published and
+   lane 0's counter still 0 (`GT5P_PEEK=0x0139C960`). `[HOTREAD] spinning on
+   0x0139A880` is this loop.
+2. *The job manager had stopped.* Just before, `[pm-end] lane 0 ... pc=0x02F30
+   lr=0x047B8`: the policy module's run ended somewhere other than its exit
+   to the kernel, with a return address inside the job body at local-store
+   `0x4000`, and no `[spurs-pm] poll` follows. `SPU_DUMP_OVL=scratch/ovl,0x4000`
+   shows why: the module streams in a second job body, 75,008 bytes from
+   `0x01376080`, where only the 3,344-byte one at `0x011A4100` was known, so
+   the first body's lifted code ran over the second body's bytes. It is now
+   in `wws_job_bodies` and lifted (606 functions). The dump equals the
+   executable's bytes at that address.
+3. *The new body hit an instruction the disassembler did not know.* `[spu]
+   UNSUPPORTED .word at LS 0x10E9C`: the word is `0x06012142`, `orbi`. The
+   lifter and the runtime both had `orbi`, `xorhi` and `xorbi`;
+   `tools/spu_disasm.py` was missing all three from its table, so each
+   became a `.word` that does nothing. Added. No other undecoded word is in
+   the body's code (the 35 left are tables after it).
+
+**Where it stops now.** `[spu-dma] img=1 pc=0x04560: 256 identical transfers
+to ea=0x00000000 -- halting the SPU`, then `[pm-end] ... pc=0x04560
+lr=0x14F48`. The body's code at `0x4554` to `0x462C` is a polling loop: a
+transfer from an address in main memory, a wait for its tag, a compare of
+what came back, a short delay on the decrementer, and round again. The
+address it polls is 0. Not established: where that address comes from (a
+field of the job's descriptor or of its input buffers that is empty here),
+and whether the runtime's 256-transfer guard is ending a wait that would
+otherwise have finished. That is the next measurement; `lr=0x14F48` names
+the caller.
+
+Re-lifting changed every sound job image as well (the three instructions
+were missing there too). After it: four 20 s headless boots with 129 opens
+and no overrun (`scratch/ab-p38/`), and on the menu 3,187 jobs a second at
+59% of a core with no underrun and no silent block.
+
 ## Phase 37 - Menu images, shade, and the road (2026-10-14)
 
 Still BCUS98158. Compared against screenshots of the same screens in RPCS3

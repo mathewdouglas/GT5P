@@ -89,10 +89,26 @@ re-verified against the disc executable.
 ## Where the disc build stands
 
 As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 37 of
-[docs/progress.md](docs/progress.md); read 37 down to 19 in that order.
+Details and evidence are in Phases 17 to 38 of
+[docs/progress.md](docs/progress.md); read 38 down to 19 in that order.
 Each corrects the one before.
 
+- **A save exists now, so the title boots straight to the main menu**
+  (no agreement, no "Confirmation"). `scratch/menu.ps1` scrolls an
+  agreement that is no longer shown; with the save, drive the dealership
+  with `scratch\inp.ps1 90 "PAD_HOLD=28000-28300:CROSS,34000-34300:CROSS,46000-46300:CROSS"`.
+  Move `gamedata/dev_hdd0` aside to get the first-boot screens back.
+- **Choosing a manufacturer in the dealership never finishes (Phase 38).**
+  The grid draws; after the choice the logo stays on black. A second job
+  body (`0x01376080`, 75 KB) was unknown and is now lifted, and the SPU
+  disassembler was missing `orbi`, `xorhi` and `xorbi`. It now stops in that
+  body polling main-memory address 0 (`[spu-dma] ... 256 identical
+  transfers to ea=0x00000000`). Next: where that address should come from.
+- Controllers: `SDL2.dll` beside the exe is loaded at run time and reads
+  every controller (DualSense included); `scripts/get_sdl2.ps1` fetches it
+  into `third_party/` (gitignored) and the build copies it. Without it,
+  XInput and the keyboard. `PAD_NO_SDL=1` ignores it. A `PAD_HOLD` script
+  now wins over a connected controller.
 - **Menus and scene now match RPCS3 in content (Phase 37, 2026-10-14).**
   Menu images were immediate-mode strips and fans, which were dropped; shade
   was black because sRGB decode on read (`SET_TEXTURE_ADDRESS` bits 20-22)
@@ -284,7 +300,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the dealership's job polling address 0 (Phase 38); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
@@ -312,7 +328,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-three files under `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in thirty-four files under `libs/`, `runtime/` and `tools/`. The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
