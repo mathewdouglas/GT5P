@@ -128,9 +128,21 @@ Each corrects the one before.
   trace a material (46.4); depth test follows the title (`RSX_DEPTH_STATE=0`);
   **the rims now draw (Phase 47)**: ps3recomp's PPU lifter emitted `stvlx`,
   `stvrx`, `lswi`, `stswi` and `vsum4sbs` as no-ops; with them lowered the
-  rims are drawn and the title issues its shadow pass. The shadow map it then
-  binds (unit 13, `DEPTH24_D8`) is still rejected by the backend
-  (`RSX_TEXREJ=1`), so the cars are unshadowed (47.4). After any re-lift,
+  rims are drawn and the title issues its shadow pass. **The shadow map
+  works (Phase 49)**: a pass with colour target NONE draws into its own
+  depth buffer (`RSX_ZONLY=0` to undo), and units bound to it with a depth
+  format compare in the shader (`RSX_SHADOW=0`: always lit;
+  `RSX_SHADOW_SHOW=1..6` views the term; `RSX_CAP` dumps the map;
+  `RSX_CAP_ZB=<n>` and `scratch\capshot.ps1` capture a dealership frame).
+  Debug views must skip programs that only have the unit bound, and the car
+  pass writes three targets (`_out.t0`). Also from Phase 49:
+
+  - one-pixel viewports are honoured (`RSX_VP_MIN2=1` for the old 2x2
+    minimum);
+  - draws of up to 16 pixels are written back into guest memory a frame
+    later (`RSX_RT_WB=0` to stop).
+
+  After any re-lift,
   grep `generated/` for `/* TODO:` other than `.word`; frame captures
   that ignore desktop windows: `CELLMARK_DUMP*` (46.5);
   `RSX_TEXUNITDBG=<n>` lists every bound unit of the first n programs.
@@ -197,6 +209,10 @@ Each corrects the one before.
   turns verbose logging off when its output is a console, and exits when
   the window is closed. Keyboard: arrows, Z Cross, X Circle, A Square,
   S Triangle, Q/W L1/R1, 1/2 L2/R2, Enter Start, Tab Select.
+  `gt5p_settings.toml` (written at the root on first start, Phase 48) sets
+  resolution, MSAA, vsync, shader cache and input. An environment variable
+  wins over it. Measurement scripts set `GT5P_NO_SETTINGS=1`; new ones must
+  too.
 - `RSX_METHHIST=<n>` prints every RSX method sent in the first n, with
   counts and first values: the way to find a register nothing reads.
   `RSX_GAMMADBG=1`, `GCM_REPORTDBG=<n>`. Capture manifests print `gam=` and
@@ -361,7 +377,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: sampling the shadow map (Phase 47.4: depth textures, a depth copy per zeta surface, compare on sample); the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the image is dimmer than RPCS3's (Phase 49.4: the bloom chain comes out near black); the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

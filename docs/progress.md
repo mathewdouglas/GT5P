@@ -9,6 +9,152 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 49 - The shadow map is drawn and sampled (2026-10-15)
+
+### 49.1 Where the shadow pass went
+
+`RSX_ZETADBG=<hex>` (new) lists the first draws that use a depth surface. The
+18 shadow-pass draws into `0x5080000` all have colour target NONE, so the
+backend took them for display draws. They were drawn into the window, with a
+1280x720 viewport and the shared depth buffer, which is cleared at every
+change of target. Nothing ever held the 1024x1024 map.
+
+`TEXREJ` now prints the unit's address register. Unit 13 is `0x60030404`:
+
+- compare GEQUAL (bits 28-30 = 6);
+- border wrap on both axes;
+- linear filter.
+
+RPCS3's capture of this title agrees, in its Vulkan terms:
+
+- a compare sampler with LESS_EQUAL, the guest's GEQUAL reversed, so a
+  pixel is lit where the stored depth is at least the reference;
+- a linear filter;
+- a white border.
+
+Its fragment program samples with uv = `tc9.xy / tc9.w` and reference
+`tc9.z / tc9.w`, and replicates the 0-1 result to all four channels.
+
+### 49.2 The change (`RSX_ZONLY=0` turns all of it off)
+
+- **Depth-only passes.** A draw with colour target NONE and a depth surface
+  gets a depth buffer of its own for that surface. It is created at the
+  surface's clip size, kept across frames, and bound with no colour target
+  (`zb_*`, DSV heap slots 2-5).
+- **Depth formats are bound.** Formats 0x90-0x93, LN forms included, are now
+  accepted. A unit bound to a surface a depth-only pass drew samples that
+  buffer through an R24 view.
+- **The compare.** The fragment program's samples of such a unit become
+  `rsx_shd<u>(coord)`: four Loads, the guest's compare against the reference,
+  and bilinear weights. Texels outside the map read 1.0, the white border.
+  The PSO key carries the shadow units and the compare (`s_pso_shd`).
+- **`RSX_SHADOW=0`** keeps the pass but makes every compare pass, which is the
+  old, unshadowed look.
+
+Checked:
+
+- **The map.** `RSX_CAP` now writes each depth-only buffer as
+  `zb<slot>_<offset>.pgm`. It shows both cars from above, laid out like
+  RPCS3's: 188,000 texels nearer than the far plane, depth 0x36EC80 to
+  0xE7D119.
+- **The term.** `RSX_SHADOW_SHOW=1` paints a program's shadow term green
+  (lit) and red (shadowed). It is lit on top surfaces and shadowed under the
+  rear spoiler lip, in the licence-plate recess, on the lower flanks and in
+  the wheel wells. Grazing flanks show some speckle.
+- **Twelve car programs** compare on unit 13. No sample site went
+  unrewritten, and nothing failed to compile.
+- **Frame rate.** No change: 19.4 fps against 19.4 in a paired run.
+
+Mistakes made while checking, to save the next person:
+
+- **Views of programs that don't sample.** Unit 13 stays bound with the
+  shadow map for programs that never sample it, the final composite among
+  them. A debug view that rewrote every program with the unit bound turned
+  whole screens one colour. The views now apply only to programs with a
+  sample site.
+- **The car pass writes three targets.** Its output is `_out.t0`, not
+  `return _o`, so the first views never reached it.
+- **The capture fires in the logo fade.** The shadow pass already runs
+  there. Use `RSX_CAP_ZB=<n>` to capture n frames after the first
+  depth-only pass, and `scratch\capshot.ps1` to drive it.
+
+**Polygon offset.** It is now decoded (`poly_offset_*` in `rsx_state`;
+`RSX_POLYOFS_DBG=1`, `RSX_POFSDBG=<n>`), but not applied. The title sets
+factor -5 and bias -200 on two 9-vertex draws in the main pass, probably
+decals. The shadow pass uses none.
+
+### 49.3 The dealership stall is not this
+
+A/B with `scratch\ab_env.ps1` (new; one exe, alternating environments, the
+Phase 43 measurement), four pairs. A had the shadows on, B had
+`RSX_ZONLY=0`:
+
+| | A, shadows on | B, `RSX_ZONLY=0` |
+| --- | --- | --- |
+| Runs that stalled | 1 of 4 | 3 of 4 |
+| Window fps, runs that did not stall | 16.5, 17.9, 16.7 | 14.1 |
+
+Both rates are above 46.3's "1 in 3". A RenderDoc replay shared the GPU with
+some of these runs. Several runs that took an `RSX_CAP` capture also
+stalled; plain runs today did not.
+
+Soak (`scripts/soak.py 6 40`) after all of Phase 49: 0 of 6 bad, 152 opens
+and about 1,638 flips each, as before.
+
+### 49.4 The image is dimmer than RPCS3's: the bloom comes out black
+
+The user compared screenshots: our whole dealership is dimmer than RPCS3's.
+In RPCS3's capture the post-processing after the scene is:
+
+- a bright-pass into 512x256, two more downsamples to 256x128 and 128x64,
+  and horizontal blurs through `0x2880000`;
+- the composite, `scene + bloom0 * k + bloom1 + bloom2`, into the
+  1920x1080 display.
+
+RPCS3 runs this title at 1080p. There is no tone curve.
+
+Our chain has the same ops, and our scene target is no darker than RPCS3's.
+Our bloom levels are nearly black: means of 0.2-0.4 out of 255, peaks of
+3-5. RPCS3's 128x64 level is a broad grey glow.
+
+**Measured.** The bright-pass program (`0x057B5501`, `out = scene + k0`,
+`FPK_FP=57B5501`) runs with `k0 = -0.99` for the bright pass and 0 for the
+plain downsamples. With -0.99 almost nothing passes.
+
+**Hypothesis, not confirmed.** The title sets `k0` from its own exposure
+estimate, and that estimate is wrong here. Two candidates were found and
+fixed along the way, neither of which changed the picture:
+
+- **One-pixel viewports were ignored.** The per-draw viewport needed at
+  least 2x2, so the luminance reduction's last passes (2x1, then 1x1 at
+  (0, 716) in `0x2880000`) covered the whole target and overwrote the
+  levels. Fixed; `RSX_VP_MIN2=1` restores the old rule.
+- **Small results never reached guest memory.** The backend never writes
+  GPU results back into guest memory, and a title that reads its 1x1
+  average luminance with the CPU sees stale bytes. Draws of at most 16
+  pixels into an A8R8G8B8 target are now copied out at the end of the frame
+  and written into guest memory when the next frame starts, while the GPU is
+  idle. `RSX_RT_WB=0` turns it off; `RSX_RT_WB_DBG=<surface>|1` lists the
+  copies. The 1x1 now reads `00 26 24 22` (A, R, G, B) in guest memory.
+
+**Not established.** Reading RPCS3's `k0` from the capture gave
+inconsistent values: the constants buffer is bound with dynamic offsets,
+and `scratch/renderdoc/cbuf.py` doesn't resolve them. RPCS3's bright-pass
+output also doesn't line up pixel for pixel with its own scene, so it is
+not yet a trustworthy reference.
+
+**Next.** Find what writes the program's constant at `0xC57B5500` (a guest
+write watch) and trace its inputs back to whatever the title measures. Then
+compare that input with RPCS3's.
+
+Also added:
+
+- `RSX_LUMA_POKE=<word>`, which writes a word into the pixel of the
+  frame's last single-pixel offscreen draw. It hit a reflection cube's mip
+  tail, so it is only a starting point.
+- `scratch\capshot.ps1`, which saves the game's own backbuffer, never the
+  desktop.
+
 ## Phase 48 - Player settings file, and a first look at 1080p (2026-10-15)
 
 `gt5p_settings.toml` (`src/gt5p_settings.*`, toml++ 3.4.0 in
