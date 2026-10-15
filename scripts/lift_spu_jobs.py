@@ -48,6 +48,10 @@ PM_LOAD_BASE = 0xA00
 # 0.85-0.97x (Phase 45; about 70 live registers do not fit in 16 XMM ones).
 REGCACHE = os.environ.get("SPU_REGCACHE", "0") == "1"
 
+# Seed the targets of position-independent jump tables (pic_tables below).
+# SPU_PIC_TABLES=0 lifts without them, as before Phase 47.
+PIC_TABLES = os.environ.get("SPU_PIC_TABLES", "1") != "0"
+
 
 def run(*args):
     r = subprocess.run([sys.executable, *map(str, args)],
@@ -83,6 +87,37 @@ def pic_continuations(raw, lsa):
         rb, ra, rt2 = (nxt >> 14) & 0x7F, (nxt >> 7) & 0x7F, nxt & 0x7F
         if rt2 == rt and {ra, rb} == {rt, 126} and off < len(raw) and off % 4 == 0:
             found.add(lsa + off)
+    return found
+
+
+def pic_tables(raw, lsa):
+    """Targets of position-independent jump tables: `ila rT, table`, then
+    within a few instructions `a rY, rT, r126`, then a load from rY and a `bi`
+    to table + entry. The entries are signed offsets from the table, so the
+    function finder sees data, not branch targets, and handlers only reached
+    through the table are never lifted. At run time they then fall to the
+    SPU interpreter (Phase 47: job j307E5DC7's table at LS 0x1C84, three of
+    its 38 targets unlifted)."""
+    words = [int.from_bytes(raw[i:i + 4], "big") for i in range(0, len(raw) - 3, 4)]
+    found = set()
+    for i, w in enumerate(words):
+        if w >> 25 != 0x21:                                 # ila
+            continue
+        rt, off = w & 0x7F, (w >> 7) & 0x3FFFF
+        if off % 4 or off >= len(raw):
+            continue
+        if not any(nxt >> 21 == 0x0C0 and {(nxt >> 7) & 0x7F, (nxt >> 14) & 0x7F} == {rt, 126}
+                   for nxt in words[i + 1:i + 9]):         # a rY, rT, r126
+            continue
+        targets = []
+        for k in range(off // 4, min(len(words), off // 4 + 512)):
+            e = words[k] - (1 << 32) if words[k] >> 31 else words[k]
+            t = off + e
+            if e == 0 or t % 4 or not 0 <= t < len(raw):
+                break
+            targets.append(lsa + t)
+        if len(targets) >= 2:
+            found.update(targets)
     return found
 
 
@@ -157,7 +192,8 @@ def main():    # --chain: apply chain_forward to the job images already generate
         prefix = f"gt5p_j{fp[:8]}"
         outdir = OUT / f"j{fp[:8]}"
         outdir.mkdir(parents=True, exist_ok=True)
-        n = lift(blob, prefix, outdir)
+        seeds = pic_tables(blob.read_bytes(), 0) if PIC_TABLES else set()
+        n = lift(blob, prefix, outdir, extra=",".join(map(hex, sorted(seeds))) or None)
         total += n
         print(f"  {blob.name}: {n} functions -> {outdir.relative_to(ROOT)}"
               f" ({chain_forward(outdir)} forward transfers made direct)")
@@ -188,6 +224,8 @@ def main():    # --chain: apply chain_forward to the job images already generate
         # in the body branches to, so the function finder needs to be told.
         raw = blob.read_bytes()
         seeds = {lsa + int.from_bytes(raw[0x10:0x14], "big")} | pic_continuations(raw, lsa)
+        if PIC_TABLES:
+            seeds |= pic_tables(raw, lsa)
         n = lift(blob, prefix, outdir, base=lsa, extra=",".join(map(hex, sorted(seeds))))
         total += n
         print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}")

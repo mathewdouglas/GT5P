@@ -126,7 +126,12 @@ Each corrects the one before.
   are render targets (`RSX_CUBE_RT=0`), constant remaps (`RSX_REMAP_CONST=0`),
   sRGB decode on units 4-15 (`RSX_GAMMA_HI=0`); `FP_IDCOLOR=3` and `FP_SHOW`
   trace a material (46.4); depth test follows the title (`RSX_DEPTH_STATE=0`);
-  the rims are never sent by the title (46.5, SPU job lead); frame captures
+  **the rims now draw (Phase 47)**: ps3recomp's PPU lifter emitted `stvlx`,
+  `stvrx`, `lswi`, `stswi` and `vsum4sbs` as no-ops; with them lowered the
+  rims are drawn and the title issues its shadow pass. The shadow map it then
+  binds (unit 13, `DEPTH24_D8`) is still rejected by the backend
+  (`RSX_TEXREJ=1`), so the cars are unshadowed (47.4). After any re-lift,
+  grep `generated/` for `/* TODO:` other than `.word`; frame captures
   that ignore desktop windows: `CELLMARK_DUMP*` (46.5);
   `RSX_TEXUNITDBG=<n>` lists every bound unit of the first n programs.
   **F3 in the game window shows a live profiler** (`GT5P_PROFVIEW=1` shows
@@ -356,7 +361,7 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the car wheels and floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: sampling the shadow map (Phase 47.4: depth textures, a depth copy per zeta surface, compare on sample); the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

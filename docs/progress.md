@@ -9,6 +9,100 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 47 - The rims and the shadow pass: Cell vector stores the lifter skipped (2026-10-15)
+
+### 47.1 The reference: a RenderDoc capture of RPCS3
+
+RPCS3 (Vulkan, RenderDoc compatibility mode on, resolution scale 100%) was
+launched from RenderDoc and the dealership frame captured. RenderDoc 1.46's
+replay API is scriptable from `qrenderdoc.exe --python <script>` (the scripts
+are in `scratch/renderdoc/`, the captures and their output beside them; all
+gitignored, they hold game data). What the frame is made of:
+
+- Six 256x511 cube faces, the reflection group at 640x360, the bloom chain,
+  then **a depth-only pass of 18 draws into a 1024x1024 target at local
+  `0x5080000`** (the shadow map), then the main car pass, then the 2D layer.
+- Pixel history on a rim pixel names the draw: one indexed triangle list of
+  about 49,000 indices per wheel pair, reading the shadow map on unit 13, a
+  64x64 ARGB texture on unit 0, the environment cube on 14 and the 16x16 table
+  on 15. Two more triangle lists and a decal follow it per wheel set.
+- In our frame (`RSX_CAP`, whose manifest now lists all 16 units): no
+  1024x1024 pass, units 12 and 13 always the 1x1 dummy, and no draw with the
+  rim's textures. The disc in our wheels was the brake rotor, as Phase 46.5
+  said, but 46.5's "the title never sends the rims" stopped one step short.
+
+### 47.2 Why the title turned shadows off
+
+Traced in the PPU code with temporary prints in `generated/` (all removed):
+
+- The unit-13 texture comes from a global slot (`G+0x1C44`, G at `0x015F8684`)
+  that `func_00D6D930` binds, falling back to a 1x1 default when it is null.
+- `PDIScene::PassShadow::render` (`func_008107C0`, vtable `0x01261348`; class
+  names from the RTTI) fills it. It runs every frame, but `func_00825780`,
+  which builds the shadow frustum, left its "nothing to shadow" byte
+  (`ctx+0x721C`) set, so the pass took the disabled branch.
+- That byte is cleared only when the caster bounds at `ctx+0x7338` are valid.
+  They held `(0, 0xD00A7790, 4.62)` for both min and max: a guest stack
+  address, not a coordinate.
+- The bounds are grown from points transformed by `func_00BC6748`, which ends
+  in `stvrx v0,r8,r3; stvlx v0,r0,r3`. The lifter emitted both as
+  `/* TODO */` no-ops, so the transformed point was never stored and the
+  bounds were built from whatever the stack held.
+
+On the way, two dead ends worth recording: the data source is not it
+(`boot_from=gamedata` against RPCS3's installed `PDIPFS` gives the same frame;
+note RPCS3 runs the hard-disk `EMAIN.SELF`, 304 bytes larger than the disc's,
+with `boot_from=gamedata`), and neither are the Z-cull report values
+(`GCM_REPORT_FULL=<mask>`, new, answers chosen report types with 0xFFFF).
+
+### 47.3 The fix: instructions the PPU lifter left as no-ops
+
+ps3recomp `tools/ppu_lifter.py` now lowers every instruction it had marked
+TODO in this executable except `.word` data:
+
+| Instruction | Sites | |
+| --- | --- | --- |
+| `stvlx`, `stvrx` (and the `l` cache-hint forms) | 33 + 33 | Cell unaligned vector stores |
+| `lswi`, `stswi` | 48 + 48 | byte strings through consecutive registers |
+| `vsum4sbs` | 3 | signed byte sums per word, saturated |
+
+Re-lifted with the README command, then `setjmp_patch.py` and
+`instrument_alloc.py`. Against the previous tree the only code differences
+are the new lowerings and those two scripts' output (the latter's script has
+changed since; `scratch/instrument_txt.py`'s wrapper of `func_007D3580` is
+gone, as Phase 22 says it would be).
+
+Result at the dealership: **the five-spoke rims are drawn** (with the ACURA
+centre caps), and the shadow pass is issued: 18 draws at 1024x1024, the
+same count as RPCS3's. The rims were not a separate fault; they depended on
+the same missing stores (which path exactly is not traced). Soak
+(`scripts/soak.py 6 40`): 0 of 6 bad, all six at 152 `GT.VOL` opens and
+about 1,640 flips.
+
+### 47.4 Still open: the shadow map is bound but not sampled
+
+The title now binds the shadow map to unit 13 as `DEPTH24_D8` (format `0xB0`,
+linear), and the backend's bind list does not take depth formats, so the
+unit keeps the dummy and the cars are drawn unshadowed. `RSX_TEXREJ=1` (new)
+lists every bind the list rejects. Supporting it needs a depth copy per zeta
+surface (the existing path keeps one, for the text mask) and the RSX's
+compare-on-sample for depth textures. Next.
+
+### 47.5 Also fixed: three unlifted SPU job handlers
+
+Job image 4 (`j307E5DC7`) dispatches through a position-independent jump
+table at LS `0x1C84` (`ila r81,0x1C84; a r66,r81,r126`, entries relative to
+the table). Three of its 38 targets (`0x1DB8`, `0x1E90`, `0x1ED0`) were never
+lifted and ran on the SPU interpreter; those are the `[spu-smc] microstep ...
+handing to the interpreter` lines of 46.5. `scripts/lift_spu_jobs.py` now
+seeds every target of such tables (`SPU_PIC_TABLES=0` to lift without). Only
+that image changed. It made no visible difference; the interpreter had been
+running them correctly.
+
+Diagnostics added: `SPU_PUTVAL=<word>[,lo,hi]` (SPU DMA puts carrying a
+word, the SPU-side `PPU_WVAL`); the FIFO trace (`GCM_FTRACE`) prints each
+header's EA.
+
 ## Phase 46 - Indexed vertex uploads; car reflections; a dealership stall (2026-10-15)
 
 ### 46.1 Where the uploads go (`RSX_VTXSTAT=1`)
