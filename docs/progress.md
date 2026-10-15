@@ -103,6 +103,14 @@ and about 1,638 flips each, as before.
 
 ### 49.4 The image is dimmer than RPCS3's: the bloom comes out black
 
+**Correction, same day: not a fault.** The brighter RPCS3 screenshot was
+captured in HDR and ours in SDR (the user's finding). RPCS3's own
+framebuffer in the RenderDoc capture (`cars_final.png`) is no brighter than
+ours: a deep blue backdrop with no visible glow. The rest of this section is
+kept as a record. The bloom difference it measured is real but has no
+visible effect worth chasing, and the two fixes stay because they are
+correct.
+
 The user compared screenshots: our whole dealership is dimmer than RPCS3's.
 In RPCS3's capture the post-processing after the scene is:
 

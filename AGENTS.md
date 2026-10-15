@@ -377,7 +377,8 @@ Each corrects the one before.
   on solid green) and then no more frames, and the main menu stops answering
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
-- Next: the image is dimmer than RPCS3's (Phase 49.4: the bloom chain comes out near black); the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Compare brightness with RPCS3 from its framebuffer in a RenderDoc capture, never from screenshots: they can be taken in HDR (Phase 49.4, a false lead).
+- Next: the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on
