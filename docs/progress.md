@@ -9,6 +9,38 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 53 - Dealership frame rate: the baseline for a 30 fps plan (2026-10-15)
+
+Measured with `scratch\perf.ps1` (`FS_HIDE`, no settings file), current
+build (shadow pass, rims, glass all drawn):
+
+- **17.6 and 18.1 fps** in the clean runs; one run of three stalled.
+- **Present thread: about 44.5 ms a frame** (FIFO walk 34.5, present 10;
+  `GT5P_PRESENT_PROF`), as in Phase 45. Sampled (`GT5P_SAMPLE=6`): 23% in
+  D3D12/driver calls made from the frame loop, about 34% CPU vertex
+  conversion (`ix_vertex` 21%, `vplan_fetch` 9%, `vplan_build` 3%),
+  `rsx_fp_code_hash` 3% (the fragment ucode hashed every draw),
+  `rsx_vtx_pos_dbg` 1.4% (a debug helper on the hot path), `tex_snap_draw`
+  1.3%. `render_frame_body` begins with `wait_for_gpu()`: the CPU never
+  builds a frame while the GPU draws the last.
+- **Guest-side ceiling: 24.5 fps** with every draw dropped
+  (`RSX_VTX_SKIP=1`; the present thread then needs 5 ms a frame). Up from
+  Phase 45's 20. Main thread 76%: `lv2_syscall` itself 22%, `vm_write64`
+  14%, `spu_coh_notify_write_except` 8%, `sys_mutex` lock/unlock 8%.
+  `PDI:1` 72%, mostly the queue-3 wait (`func_00BA97B0`) polling
+  `cellSpursGetWorkloadInfo`, with `ppu_prof_resolve_host` and `hle_route`
+  on every call. SPU job lanes about 2.6 cores, in threads created per
+  dispatch (`CreateThread`, 1 MB stacks).
+- **The stall, sampled** (a run at 6.6 fps): four `spurs-pm-worker` lanes at
+  100%, each in `spu_rdch` (about 60% of samples) inside job body
+  `b01376080` at `0x462C`/`0x4598`, and `PDI:1` in the queue-3 wait. The
+  lanes wait on an SPU channel nothing writes; which channel is the next
+  question (Phase 46.3).
+
+30 fps needs both ceilings below 33 ms a frame (frames land on 16.7 ms
+vblanks): the present thread from 44.5 ms, and the title's own threads from
+about 41 ms.
+
 ## Phase 52 - An in-game settings page (F1) (2026-10-15)
 
 `src/gt5p_settings_ui.cpp`: F1 over the game window, or the PS button on an
