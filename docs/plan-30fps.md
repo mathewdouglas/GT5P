@@ -46,9 +46,9 @@ channel) inside job body `b01376080` at `0x462C`/`0x4598`, while `PDI:1`
 waits in the queue-3 loop. Find the channel, who should write it, and why
 they do not (a lane hand-off race is the standing hypothesis).
 
-Gate: no stalls in 10 runs. **Met (Phase 54):** the title's ready-count
-kicks were lost to a `PUTLLC` race; 0 stalls in the last 10 runs and 1 in
-29 since the fix, against about 1 in 5 before. One stall is unexplained.
+Gate: no stalls in 10 runs. **Halfway (Phase 54):** the title's ready-count
+kicks were lost to a `PUTLLC` race; with that fixed, 3 stalls in 37 runs
+(one batch of 10 had none), against 7 in 38 before. The rest is open.
 
 ### 2. Cheap fixes on the present thread (about 2-3 ms)
 
@@ -97,6 +97,12 @@ Gate: present thread at 28 ms a frame or less.
   and a fast path for them; the mutexes.
 
 Gate: `RSX_VTX_SKIP=1` reaches 35 fps or more.
+
+**Measured (Phase 55):** 5a (`GT5P_VM_INLINE`) and a pause in the 5c spin
+change nothing within noise; the ceiling stays about 23 fps. The main thread
+is not saturated (77%); `PDI:1` waits for the SPU workloads. The ceiling is
+the SPU job pipeline's latency, so 5b and the job lists' critical path come
+before any more PPU work.
 
 ### 6. Check the result
 

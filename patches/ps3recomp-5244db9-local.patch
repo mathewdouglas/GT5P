@@ -5182,7 +5182,7 @@ index a0d6dce..1f36e9b 100644
  /* Base64 encode/decode (used for HTTP Basic auth) */
  s32 cellHttpUtilBase64Encode(char* out, u32 outSize,
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 688ff04..cc61248 100644
+index 688ff04..f0c460f 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -10,6 +10,8 @@
@@ -6062,7 +6062,7 @@ index 688ff04..cc61248 100644
              return CELL_OK;
          }
      }
-@@ -3009,12 +3555,49 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3009,12 +3555,60 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      u32 se = (u32)spurs_ea;
      *(vm_base + base + 0x20) = *(vm_base + se + SPURS_WKL_CURCONT + wid);  /* contention   */
@@ -6109,6 +6109,17 @@ index 688ff04..cc61248 100644
 +                          (long)InterlockedExchange(&calls[k], 0), last[k] >> 8, last[k] & 0xFF,
 +                          k < 6 ? (long)s_wkl_group[k].busy : -1L);
 +              fprintf(stderr, "\n"); } } }
++    /* A title waiting for a workload to go idle calls this in a tight loop
++     * (GT5 Prologue's func_00BA97B0, on PDI:1). Guest PPU threads share one
++     * core's two hardware threads, so that spin took execution units from the
++     * main thread beside it. While the answer is "still busy", pause before
++     * returning: the loop runs far less often and each answer is at most a few
++     * microseconds late. SPURS_WKLINFO_PAUSE=<n> pauses (e.g. 256); off by
++     * default: measured on the dealership it changed nothing (Phase 55). */
++    { static int np = -1;
++      if (np < 0) { const char* e = getenv("SPURS_WKLINFO_PAUSE"); np = e ? atoi(e) : 0; }
++      if (np > 0 && (*(vm_base + base + 0x20) || *(vm_base + base + 0x23)))
++          for (int i = 0; i < np; i++) YieldProcessor(); }
      return CELL_OK;
  }
  
@@ -12126,7 +12137,7 @@ index edd01d6..c02a7e8 100644
          "}\n");
  
 diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
-index acbaf12..cfdec4e 100644
+index acbaf12..f19cc2c 100644
 --- a/runtime/ppu/ppu_hle.cpp
 +++ b/runtime/ppu/ppu_hle.cpp
 @@ -23,6 +23,7 @@
@@ -12147,9 +12158,12 @@ index acbaf12..cfdec4e 100644
  /* The SPURS SPU kernel spawn hook, whose real definition is per-port
   * (flow_spurs_kernel.c). This used to be a weak extern DECLARATION written at
   * block scope inside ps3_hle_call, guarded by a test of its own address -- so
-@@ -179,6 +183,41 @@ static void ps3_hle_unresolved(uint32_t nid, ppu_context* ctx)
+@@ -177,8 +181,43 @@ static void ps3_hle_unresolved(uint32_t nid, ppu_context* ctx)
+     ctx->gpr[3] = s_fake ? 0u : (uint64_t)(uint32_t)CELL_ERROR_ERROR;
+ }
  
- extern "C" void ppu_prof_stamp(void* ctx, unsigned lr);
+-extern "C" void ppu_prof_stamp(void* ctx, unsigned lr);
++extern "C" void ppu_prof_stamp(void* ctx, unsigned lr); extern "C" void ppu_prof_stamp_ra(void* ctx, void* ra);
  extern "C" uint32_t ppu_prof_resolve_host(void* ra);
 +
 +/* Where a NID goes: a loaded PRX's export, a context handler, or the HLE
@@ -12189,6 +12203,15 @@ index acbaf12..cfdec4e 100644
  extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
  {
      /* HLE_BT_EVERY=<n>: dump the calling thread's guest stack every nth HLE
+@@ -240,7 +279,7 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+         return;
+     }
+     /* Guest-PC breadcrumb for the sampling profiler (see lv2_syscall). */
+-    ppu_prof_stamp(ctx, ppu_prof_resolve_host(__builtin_return_address(0)));
++    ppu_prof_stamp_ra(ctx, __builtin_return_address(0));
+     g_last_hle_nid = nid;
+     /* Stamp the NAME here too, not only where a handler is found below.
+      *
 @@ -329,7 +368,7 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
       * taskset init => the movie decode task is never created. Forcing the HLE
       * (which succeeds) lets the caller proceed. */
@@ -12218,10 +12241,36 @@ index acbaf12..cfdec4e 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index e73a151..a4ef0ca 100644
+index e73a151..234dedc 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -1316,7 +1316,19 @@ static int vm_null_store_report(uint32_t a, uint32_t v, int width, void* ra)
+@@ -270,7 +270,7 @@ extern "C" void ps3_install_guest_ptr_trap(void)
+  * that returns an error is silent, and that is the harder failure to find:
+  * middleware just prints its own complaint and tears down. Optionally filtered
+  * to failures only with PS3_SCTRACE=fail. */
+-static void sc_trace(uint64_t num, ppu_context* ctx, uint64_t a3, uint64_t a4,
++static void sc_trace_impl(uint64_t num, ppu_context* ctx, uint64_t a3, uint64_t a4,
+                      uint64_t a5, uint64_t a6)
+ {
+     static int mode = -1;
+@@ -339,6 +339,16 @@ static void sc_trace(uint64_t num, ppu_context* ctx, uint64_t a3, uint64_t a4,
+             (unsigned)ctx->lr, who);
+     fflush(stderr);
+ }
++/* The test for PS3_SCTRACE in front of the call: sc_trace_impl has a frame
++ * big enough for a stack probe, which every syscall paid before the function
++ * returned at its first line (3% of the main thread on the dealership). */
++static inline int sc_trace_on(void)
++{
++    static int on = -1;
++    if (on < 0) on = getenv("PS3_SCTRACE") ? 1 : 0;
++    return on;
++}
++#define sc_trace(...) do { if (sc_trace_on()) sc_trace_impl(__VA_ARGS__); } while (0)
+ 
+ 
+ #include <stdint.h>
+@@ -1316,7 +1326,19 @@ static int vm_null_store_report(uint32_t a, uint32_t v, int width, void* ra)
        { static uint32_t last_fn = 0; uint32_t fn = ppu_prof_resolve_host(ra);
          if (i < NW_MAX && fn != last_fn && g_active_ctx) {
              last_fn = fn; ppu_dump_guest_stack(g_active_ctx, "nw"); } }
@@ -12242,7 +12291,7 @@ index e73a151..a4ef0ca 100644
      return 1;
  }
  
-@@ -1517,7 +1529,69 @@ static inline void ppu_null_read_report(uint32_t a, int width, void* ra)
+@@ -1517,7 +1539,69 @@ static inline void ppu_null_read_report(uint32_t a, int width, void* ra)
      fflush(stderr);
  }
  
@@ -12313,7 +12362,7 @@ index e73a151..a4ef0ca 100644
      if ((uint32_t)a < 0x10000u) ppu_null_read_report((uint32_t)a, 1, __builtin_return_address(0));
  #ifdef VM_SAMPLE_READS
      { static uint64_t c=0; if ((++c % 2000000ull)==0) fprintf(stderr, "[sample] read8  0x%08X ra0=%p ra1=%p\n", (uint32_t)a, __builtin_return_address(0), __builtin_return_address(1)); }
-@@ -1553,11 +1627,24 @@ uint8_t  vm_read8 (uint64_t a) { if (vm_oob((uint32_t)a,1)) return 0; vm_hotmap(
+@@ -1553,11 +1637,24 @@ uint8_t  vm_read8 (uint64_t a) { if (vm_oob((uint32_t)a,1)) return 0; vm_hotmap(
            n=0; } }
        else { last=(uint32_t)a; n=0; } }
      return vm_base[(uint32_t)a]; }
@@ -12340,7 +12389,7 @@ index e73a151..a4ef0ca 100644
      if ((uint32_t)a < 0x10000u) ppu_null_read_report((uint32_t)a, 4, __builtin_return_address(0));
      /* Raw SPU problem state: reading the outbound mailbox POPS it, so that one
       * cannot be served out of memory. Everything else in the window the SPU
-@@ -1670,7 +1757,13 @@ uint32_t vm_read32(uint64_t a) { if (vm_oob((uint32_t)a,4)) return 0; ppu_rwatch
+@@ -1670,7 +1767,13 @@ uint32_t vm_read32(uint64_t a) { if (vm_oob((uint32_t)a,4)) return 0; ppu_rwatch
        } }
        else { last=(uint32_t)a; n=0; } }
      return __builtin_bswap32(v); }
@@ -12355,7 +12404,7 @@ index e73a151..a4ef0ca 100644
      if ((uint32_t)a < 0x10000u) ppu_null_read_report((uint32_t)a, 8, __builtin_return_address(0)); uint64_t v; memcpy(&v, vm_base + (uint32_t)a, 8);
  #ifdef VM_SAMPLE_READS
      { static uint64_t c=0; if ((++c % 2000000ull)==0) fprintf(stderr, "[sample] read64 0x%08X\n", (uint32_t)a); }
-@@ -1731,6 +1824,21 @@ static void ww_arm_inline_window(uint32_t ww)
+@@ -1731,6 +1834,21 @@ static void ww_arm_inline_window(uint32_t ww)
      g_ww_lo = ww & ~15u;
      g_ww_hi = (ww & ~15u) + len;
  }
@@ -12377,7 +12426,7 @@ index e73a151..a4ef0ca 100644
  static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra)
  {
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
-@@ -1798,7 +1906,15 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1798,7 +1916,15 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
             * between. A page guard catches the writer whatever it is. */
            { static int _g = -1;
              if (_g < 0) { const char* e3 = getenv("PPU_WW_GUARD"); _g = e3 ? 1 : 0; }
@@ -12394,7 +12443,7 @@ index e73a151..a4ef0ca 100644
                  static int _armed = 0;
                  if (!_armed) { _armed = 1;
                      fprintf(stderr, "[GUARD] arming after first set of 0x%08X = 0x%X\n", a, v);
-@@ -1814,6 +1930,21 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1814,6 +1940,21 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
             * -- is dropped without a word. It produced four separate wrong
             * "nothing writes this field" conclusions in one debugging session.
             * Say so when the cap is reached, and let it be raised. */
@@ -12416,7 +12465,7 @@ index e73a151..a4ef0ca 100644
            static long _n = 0;
            static long _cap = -1;
            if (_cap < 0) { const char* e = getenv("PPU_WWATCH_MAX");
-@@ -1857,7 +1988,13 @@ extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* r
+@@ -1857,7 +1998,13 @@ extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* r
  {
      barrier_watch_hit(ea, val, width, ra);
  }
@@ -12431,7 +12480,7 @@ index e73a151..a4ef0ca 100644
  #ifdef _WIN32
      /* PT detector: does this byte-write turn its word into the hunted truncated value? */
      { if(g_pt_val==-2){const char*e=getenv("PT"); g_pt_val=e?(int64_t)strtoul(e,0,16):-1;}
-@@ -1867,9 +2004,22 @@ void vm_write8 (uint64_t a, uint8_t  v) { barrier_watch_hit((uint32_t)a, v, 1, _
+@@ -1867,9 +2014,22 @@ void vm_write8 (uint64_t a, uint8_t  v) { barrier_watch_hit((uint32_t)a, v, 1, _
          else if(((uint32_t)a&3)==0 && v!=0) pt_restore(wa); /* MSB byte set non-zero = restored */ } }
  #endif
      VM_WRITE_COH(a, &v, 1); }
@@ -12456,7 +12505,7 @@ index e73a151..a4ef0ca 100644
  #ifdef _WIN32
      /* PT restore: a full-word store of a valid pointer (high byte set) to a
       * previously-truncated slot clears the record (that truncation was transient). */
-@@ -1882,6 +2032,10 @@ void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, _
+@@ -1882,6 +2042,10 @@ void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, _
         * are guest memory and the PPU reads most of them straight back. */
        if (spu_raw_is_reg((uint32_t)a)) spu_raw_reg_store((uint32_t)a, _v, 4); } }
  void vm_write64(uint64_t a, uint64_t v) {
@@ -12467,7 +12516,7 @@ index e73a151..a4ef0ca 100644
      /* PPU_WWATCH covers the 64-bit store too. It did not, which made the watch
       * blind to exactly the code that matters most for it: every bignum and
       * every 64-bit struct field is written with std, so a watch on one would
-@@ -2338,6 +2492,24 @@ static void icall_hist(ppu_context* ctx, uint32_t tgt, int phase)
+@@ -2338,6 +2502,24 @@ static void icall_hist(ppu_context* ctx, uint32_t tgt, int phase)
      ReleaseSRWLockExclusive(&lk);
  }
  
@@ -12492,7 +12541,7 @@ index e73a151..a4ef0ca 100644
  extern "C" void ps3_indirect_call(ppu_context* ctx)
  {
      static int on = -1;
-@@ -2365,6 +2537,14 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+@@ -2365,6 +2547,14 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
      }
  }
  
@@ -12507,7 +12556,7 @@ index e73a151..a4ef0ca 100644
  static void ps3_indirect_call_impl(ppu_context* ctx)
  {
      g_active_ctx = ctx;
-@@ -2639,11 +2819,20 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2639,11 +2829,20 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
          /* Recursion-depth guard: a malformed/cyclic jump table (or a tail-call
           * chain that never converges) can dispatch recursively without bound
           * and blow the host stack. Cap the depth, log once, then unwind. */
@@ -12530,7 +12579,14 @@ index e73a151..a4ef0ca 100644
              return;
          }
          s_depth++;
-@@ -2952,6 +3141,7 @@ extern "C" void ppu_prof_stamp(void* ctx, unsigned lr);
+@@ -2946,12 +3145,13 @@ extern "C" int lv2_try_syscall(ppu_context* ctx);
+  * A few syscalls the CRT needs at boot are handled inline (boot-tuned); the
+  * rest are dispatched to the real lv2 table, and only genuinely-unregistered
+  * numbers fall through to the return-CELL_OK stub. */
+-extern "C" void ppu_prof_stamp(void* ctx, unsigned lr);
++extern "C" void ppu_prof_stamp(void* ctx, unsigned lr); extern "C" void ppu_prof_stamp_ra(void* ctx, void* ra);
+ /* In-flight lv2 syscall per guest thread; 0 = not in a syscall. See the guard
+  * in lv2_syscall() below. */
  #define PS3_SC_INFLIGHT_MAX 64
  extern "C" uint32_t g_sc_inflight[PS3_SC_INFLIGHT_MAX] = { 0 };
  
@@ -12538,7 +12594,7 @@ index e73a151..a4ef0ca 100644
  extern "C" void lv2_syscall(ppu_context* ctx)
  {
      /* One-shot: PPU_GUARD_EA=<hex> arms the page guard on that address without
-@@ -2962,6 +3152,12 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -2962,6 +3162,12 @@ extern "C" void lv2_syscall(ppu_context* ctx)
        if (!_ge) { _ge = 1;
            const char* e = getenv("PPU_GUARD_EA");
            if (e && *e) ppu_guard_page((uint32_t)strtoul(e, 0, 16)); } }
@@ -12551,7 +12607,16 @@ index e73a151..a4ef0ca 100644
      uint64_t num = ctx->gpr[11];
      /* Milestone: which lv2 calls this title makes, in first-occurrence order.
       * Formatting the key each time is noise next to the profiler stamp below,
-@@ -3202,8 +3398,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -2982,7 +3188,7 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+     /* Guest-PC breadcrumb for the sampling profiler: record the syscall
+      * callsite (lr) in the runtime-side thread info. cia itself is the thread
+      * entry OPD (load-bearing for the entry trampoline) -- do not touch it. */
+-    ppu_prof_stamp(ctx, ppu_prof_resolve_host(__builtin_return_address(0)));
++    ppu_prof_stamp_ra(ctx, __builtin_return_address(0));
+     /* PS3_SCTRACE_TID: trace every lv2 syscall made by the loader/worker thread
+      * (tid=1) so we can see what it does AFTER receiving its q=1 event and why
+      * it never registers handlers / loads assets. */
+@@ -3202,8 +3408,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                      (unsigned long long)ctx->gpr[3], (unsigned long long)ctx->gpr[4],
                      (unsigned)ctx->lr);
              fflush(stderr); } }
@@ -12562,7 +12627,7 @@ index e73a151..a4ef0ca 100644
              static ULONGLONG s_acc[1024]={0}; static uint32_t s_cnt[1024]={0}; static ULONGLONG s_win=0;
              uint32_t _a3=(uint32_t)ctx->gpr[3], _a4=(uint32_t)ctx->gpr[4], _a5=(uint32_t)ctx->gpr[5];
              ULONGLONG _t0 = GetTickCount64();
-@@ -3545,6 +3741,15 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
+@@ -3545,6 +3751,15 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
          s_opd_fixups[s_opd_fixup_n].code = code; s_opd_fixups[s_opd_fixup_n].toc = toc; s_opd_fixup_n++; }
  }
  
@@ -12578,7 +12643,7 @@ index e73a151..a4ef0ca 100644
  extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
                                     uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                                     uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
-@@ -3570,9 +3775,11 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
+@@ -3570,9 +3785,11 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
          return 0; }
  
      /* Private scratch stack high in the guest stack region, distinct from the
@@ -14310,10 +14375,58 @@ index 2e760ea..7788f6f 100644
  
  #ifdef _WIN32
 diff --git a/runtime/syscalls/sys_ppu_thread.c b/runtime/syscalls/sys_ppu_thread.c
-index fb3906a..d53f55a 100644
+index fb3906a..ee4e901 100644
 --- a/runtime/syscalls/sys_ppu_thread.c
 +++ b/runtime/syscalls/sys_ppu_thread.c
-@@ -314,13 +314,188 @@ void ppu_prof_stamp(void* vctx, unsigned lr)
+@@ -275,19 +275,28 @@ unsigned long long ppu_thread_cpu_us(unsigned tid)
+     (void)tid; return 0;
+ #endif
+ }
++static unsigned prof_pc_of(int idx);
+ /* Last syscall/HLE callsite of guest thread `tid` (see prof_pc). */
+ unsigned ppu_thread_prof_pc(unsigned tid)
+ {
+     if (tid < 2 || tid > PPU_THREAD_MAX) return 0;
+     ppu_thread_info* t = &g_ppu_threads[tid - 1];
+     if (t->state == PPU_THREAD_STATE_FREE) return 0;
+-    return t->prof_pc;
++    return prof_pc_of(tid - 1);
+ }
+ 
+ /* Profiler accessor: snapshot slot idx (0-based). Returns 1 if the slot holds
+  * a live thread, filling tid/cia/name. Lets a host-side sampling profiler
+  * iterate guest threads without depending on ppu_thread_info's layout. */
+ static unsigned s_prof_main_pc = 0;   /* main guest thread: ctx lives outside the table */
++static void* volatile s_prof_ra[PPU_THREAD_MAX];   /* ppu_prof_stamp_ra, unresolved */
++static void* volatile s_prof_main_ra;
++extern unsigned ppu_prof_resolve_host(void* ra);   /* ppu_loader.cpp */
++static unsigned prof_pc_of(int idx)
++{
++    void* ra = s_prof_ra[idx];
++    return ra ? ppu_prof_resolve_host(ra) : g_ppu_threads[idx].prof_pc;
++}
+ 
+ int ppu_prof_snapshot(int idx, unsigned* tid, unsigned* cia, const char** name)
+ {
+@@ -296,12 +305,14 @@ int ppu_prof_snapshot(int idx, unsigned* tid, unsigned* cia, const char** name)
+     if (idx == 0 && t->state == PPU_THREAD_STATE_FREE) {
+         /* slot 0 stays FREE (the main thread never registers) -- serve its
+          * dispatcher breadcrumb here so the profiler sees tid 1. */
+-        *tid = 1; *cia = s_prof_main_pc; *name = "main";
+-        return s_prof_main_pc != 0;
++        unsigned pc = s_prof_main_ra ? ppu_prof_resolve_host((void*)s_prof_main_ra) : s_prof_main_pc;
++        *tid = 1; *cia = pc; *name = "main";
++        return pc != 0;
+     }
+     if (t->state == PPU_THREAD_STATE_FREE) return 0;
+     *tid  = (unsigned)(idx + 1);
+-    *cia  = t->prof_pc ? t->prof_pc : (unsigned)t->ctx.cia;
++    { unsigned pc = prof_pc_of(idx);
++      *cia = pc ? pc : (unsigned)t->ctx.cia; }
+     *name = t->name;
+     return 1;
+ }
+@@ -314,13 +325,204 @@ void ppu_prof_stamp(void* vctx, unsigned lr)
      ppu_thread_info* t = (ppu_thread_info*)p;
      int in_range = (t >= g_ppu_threads && t < g_ppu_threads + PPU_THREAD_MAX);
      if (!in_range) { s_prof_main_pc = lr; return; }
@@ -14328,6 +14441,22 @@ index fb3906a..d53f55a 100644
          t->prof_pc = lr;
  }
  
++/* The same breadcrumb, stored as the host return address and resolved to a
++ * guest function only when something reads it (the sampling profiler, the
++ * thread dump, the lwmutex holder report). Resolving it at every syscall and
++ * HLE call was a binary search over every lifted function: 6% of a busy
++ * guest thread on the dealership page. PPU_PROF_EAGER=1: resolve at once. */
++void ppu_prof_stamp_ra(void* vctx, void* ra)
++{
++    static int eager = -1;
++    if (eager < 0) eager = getenv("PPU_PROF_EAGER") ? 1 : 0;
++    if (eager) { ppu_prof_stamp(vctx, ppu_prof_resolve_host(ra)); return; }
++    char* p = (char*)vctx - offsetof(ppu_thread_info, ctx);
++    ppu_thread_info* t = (ppu_thread_info*)p;
++    if (t >= g_ppu_threads && t < g_ppu_threads + PPU_THREAD_MAX) s_prof_ra[t - g_ppu_threads] = ra;
++    else s_prof_main_ra = ra;
++}
++
 +/* Priority hand-off at thread creation (opt-in: ppu_thread_set_prio_handoff).
 + *
 + * lv2 schedules PPU threads by strict priority, lower number first. Creating a
@@ -14505,7 +14634,7 @@ index fb3906a..d53f55a 100644
  int64_t sys_ppu_thread_create(ppu_context* ctx)
  {
      uint32_t tid_out_addr = LV2_ARG_PTR(ctx, 0);
-@@ -441,6 +616,9 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+@@ -441,6 +643,9 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
      unsigned _initflag = STACK_SIZE_PARAM_IS_A_RESERVATION;
      int _gate_this = (g_gate_on > 0 && entry >= 0x10000 && entry < 0x10000000);
      if (_gate_this) _initflag |= CREATE_SUSPENDED;
@@ -14515,7 +14644,7 @@ index fb3906a..d53f55a 100644
      t->host_thread = (HANDLE)_beginthreadex(NULL, 256u * 1024 * 1024,
                                    (unsigned (__stdcall*)(void*))ppu_host_thread_proc, t,
                                    _initflag, (unsigned*)&t->host_tid);
-@@ -460,6 +638,8 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+@@ -460,6 +665,8 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
       * ponytail: two host levels only; map the full range if a title needs it. */
      if (priority < 256)
          SetThreadPriority(t->host_thread, THREAD_PRIORITY_ABOVE_NORMAL);
@@ -14524,7 +14653,7 @@ index fb3906a..d53f55a 100644
  #else
      /* Same reservation, for the same reason. This is the HOST stack the
       * recompiled C frames run on, not the guest stack (allocated above out of
-@@ -499,6 +679,12 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+@@ -499,6 +706,12 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
  #endif
  
      table_unlock();
@@ -14537,7 +14666,7 @@ index fb3906a..d53f55a 100644
      return CELL_OK;
  }
  
-@@ -1155,6 +1341,9 @@ int64_t sys_ppu_thread_set_priority(ppu_context* ctx)
+@@ -1155,6 +1368,9 @@ int64_t sys_ppu_thread_set_priority(ppu_context* ctx)
      }
  
      t->priority = priority;

@@ -9,14 +9,61 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 55 - PPU-side speed-ups measured: none moves the dealership (2026-10-16)
+
+Plan steps 5a and part of 5c, measured with `scratch\perf.ps1` against the
+Phase 54 exe (normal: 5 runs; title-only, `RSX_VTX_SKIP=1 -MinDraws 0`: 3):
+
+| Build | Car Dealer page | Title-only ceiling | Main menu |
+| --- | --- | --- | --- |
+| Phase 54 (baseline) | 16.47 fps (15.07-17.13) | 23.4 | 31.27 |
+| 5a: guest memory access inline | 16.93 (16.8-17.53) | 23.07 | 31.27 |
+| 5c: pause in the workload-info spin | 15.93 (15-17.33) | 22.73 | - |
+
+All within run-to-run noise. `soak.py`: 152 `GT.VOL` opens on every boot
+(more than the 129 above, because the save now boots to the main menu), no
+bad boots.
+
+- **5a** (`ppu_vm_inline.h`, force-included into the lifted chunks by the
+  CMake option `GT5P_VM_INLINE`; `VM_INLINE=0` at run time sends every
+  access out of line again).
+  - It compiled first time, and `vm_write64` and `vm_read32` left the main
+    thread's samples.
+  - The exe grows from 97 MB to 176 MB, and the option needs a full rebuild.
+    Left off by default.
+  - The 8% `spu_coh_notify_write_except` in Phase 53's profile comes from
+    SPU DMA PUTs, not PPU stores, so 5a could not move it.
+- **What sets the title's pace.** Sampled title-only (`GT5P_SAMPLE=4`):
+  - The main thread is at 77% and not saturated: `lv2_syscall` 24%,
+    mutexes 11%.
+  - `PDI:1` (85%) waits in `func_00BA97B0` for the SPU workloads to finish.
+  - The lanes use about 2.5 cores in threads made per dispatch.
+  - So the ~23 fps ceiling is the SPU job pipeline's latency (dispatch, job
+    run, the hand-offs between them), not PPU work. Step 5b and the
+    critical path through the job lists are next.
+- **5c, the pause.** `cellSpursGetWorkloadInfo` can pause before answering
+  "busy" (`SPURS_WKLINFO_PAUSE=<n>`). The idea: guest PPU threads share one
+  physical core (mask 3), so `PDI:1`'s spin competes with the main thread.
+  It measured no better, so it is off by default. Much of the wait is
+  `func_00BA97B0`'s first loop, a guest spin on memory with no call in it.
+- **Kept, cheaper on every syscall and HLE call** (a few % of the busy guest
+  threads; too small to show in fps):
+  - The profiler breadcrumb is stored as the host return address and
+    resolved only when a diagnostic reads it. It was a binary search over
+    every lifted function on each call. `PPU_PROF_EAGER=1` restores it.
+  - `sc_trace`'s "is tracing on" test runs before the call, so its stack
+    probe is no longer paid every syscall.
+- `perf.ps1 -MinDraws <n>`: with every draw dropped, the title bar never
+  shows 1,000 draws.
+
 ## Phase 54 - The dealership stall: a lost ready-count kick (2026-10-16)
 
-**Result.** Since the fix below, 1 stall in 29 runs on the Car Dealer page
-(0 in the last 10), against 7 in 38 before it, each run watched for about a
-minute. At the old rate, one or fewer in 29 would happen about 2% of the
-time. The lane and contention changes listed under "Ruled out" were also on
+**Result.** The stall rate about halves; it is not gone. On builds with the
+fix below: 3 stalls in 37 runs on the Car Dealer page (8%; 0 in one batch
+of 10), against 7 in 38 before it (18%), each run watched for about a
+minute. The lane and contention changes listed under "Ruled out" were also on
 in a batch before the fix, which still stalled once in 6; the store fix is
-what moved it. The remaining stall (one run, with no diagnostics on) is not
+what moved it. The stalls that remain had no diagnostics on and are not
 explained.
 
 **What a stall is.** Two shapes, as in 46.3:

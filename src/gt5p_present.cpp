@@ -34,6 +34,7 @@
  * anything" is exactly the shape a wedged worker produces, and nothing else
  * shows which thread is where. */
 extern "C" const char* g_hle_inflight[];
+extern "C" unsigned ppu_thread_prof_pc(unsigned tid);
 
 static void dump_threads(void)
 {
@@ -53,7 +54,7 @@ static void dump_threads(void)
         if (t->state == PPU_THREAD_STATE_FREE) continue;
         fprintf(stderr, "   tid=%d %-9s entry=0x%08llX prof_pc=0x%08X hle=%-26s name=\"%s\"\n",
                 i, kState[t->state & 3],
-                (unsigned long long)t->entry_addr, t->prof_pc,
+                (unsigned long long)t->entry_addr, ppu_thread_prof_pc((unsigned)i + 1),
                 (i < 64 && g_hle_inflight[i]) ? g_hle_inflight[i] : "-",
                 t->name);
         /* GT5P_THREADS=2: also some registers and the 16 bytes at r9, read
