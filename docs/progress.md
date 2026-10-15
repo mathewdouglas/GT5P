@@ -9,6 +9,62 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 51 - Car paint, floor reflection and glass against RPCS3 (2026-10-15)
+
+The task from the user's screenshots (Acura NSX, Car Dealer page): hard-edged
+black areas on the cars, a faint floor reflection, and (added during the
+work) glass that is not transparent enough. The page alternates car colours
+per visit, so captures were compared by colour name, not by position.
+
+### 51.1 Black panels: `log2` of a negative number
+
+Pixel history without RenderDoc: `FP_IDCOLOR=3` showed the black roof, door
+and deck and the correctly painted rear panel come from one program
+(`0x05D3E001`, the body paint of 46.4), the same constants and the same ramp
+texture (`TEXRACE_FP=<fp>`, new: unit checksums at each draw, 85 draws one
+checksum). So the difference was per pixel. The paint takes `log2` of a dot
+product with the reflection vector (a `pow` spelled out); our decompiler
+emitted `log2(x)`, which is NaN for x < 0, and the output guard
+(`_o == _o ? _o : 0`) turns NaN into black: every panel facing the "wrong"
+way. `LG2` now takes `|x|`, as `RSQ` already did (`RSX_LG2_ABS=0` for the
+old form). Red, silver and black cars now read as on RPCS3; the rims show
+their spokes too. Ruled out on the way: the shadow term (`RSX_SHADOW=0`),
+the RT write-back (`RSX_RT_WB=0`), one-pixel viewports (`RSX_VP_MIN2=1`), and
+a mid-frame rewrite of the ramp texture.
+
+### 51.2 Floor reflection
+
+Not a separate fault. The title draws the cars mirrored at 640x360 into the
+scene target (ops 631-1088), copies that corner into `0x2880000` with a mip
+chain (op 1089), and the floor (`0x05D21181`, unit 3) samples it with the
+right scale (`FP_SHOW=r[2]` shows the mirrored cars in place). The mirrored
+cars had the same black panels as 51.1. After it, with the same colours as
+RPCS3's capture (red behind, black in front) the red car's reflection and its
+wheel show on the floor as in RPCS3, at a similar level. RPCS3's own copy of
+that texture is as dim as ours (brightest 35/255 in both).
+
+### 51.3 Glass: the blend constant was never set
+
+The glass (`0x05EFBEC1`) outputs a reflection with constant alpha and blends
+`src + dst * (1 - CONSTANT_COLOR)`. `NV4097_SET_BLEND_COLOR` (`0x031C`) was
+never decoded and the D3D12 backend never called `OMSetBlendFactor`, so the
+constant was D3D12's default and the windows hid what is behind them. It is
+decoded now, kept per draw and set at replay (`RSX_BLEND_COLOR=0` to leave it
+unset; `RSX_BLENDCOLDBG=1` lists the values: `0xFFB0B0B0`, `0xFF555555`
+...). The seats and the backdrop now show through the windows as on RPCS3.
+
+### 51.4 Checks
+
+The main menu scene is identical with both fixes off and on; the agreement
+screen draws; `soak.py 6 40`: 0 of 6 bad, 152 asset opens each, as before;
+a 300 s dealership session logged no `PSO FAIL` or device removal and ran at
+16.7 fps, but its window stopped updating at about 255 s (the 46.3 stall;
+the log was overwritten before it was read).
+
+Open: the user sees the front car's reflection flash in the live window.
+Eight consecutive `RSX_CAP` frames show no change beyond normal motion
+(0.25% of the car's pixels), so it does not show under capture.
+
 ## Phase 50 - The opening movie plays (2026-10-15)
 
 ### 50.1 Where the movie is, and why it never played

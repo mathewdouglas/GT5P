@@ -388,6 +388,12 @@ Each corrects the one before.
   `DMUX_PTS_FILL=0`, `RSX_TEX_SNAP=0`; traces `DMUX_TRACE`, `VDEC_TRACE`,
   `ADEC_TRACE`, `RSX_TEX_SNAPDBG`. A job body the SPU interpreter runs can
   stall a title silently: grep for `[spu-smc]` first.
+- **Car paint, glass (Phase 51).** `LG2` takes `|x|` (`RSX_LG2_ABS=0`): a
+  NaN from `log2` of a negative turned whole panels black. The blend
+  constant (`0x031C`) reaches D3D12 now (`RSX_BLEND_COLOR=0`): the glass
+  blends with it. The dealership alternates car colours per visit; compare
+  captures by colour name. `TEXRACE_FP=<fp>` checksums a program's bound
+  textures at each draw.
 - Next: the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
