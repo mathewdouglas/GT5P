@@ -34,6 +34,7 @@
 #include "sys_mutex.h"        /* g_sys_mutexes: who holds what */
 
 #include "elf_loader.h"
+#include "gt5p_settings.h"
 
 /* The lifter's function table, defined in the generated sources. Declared here
  * rather than including generated/ppu_recomp.h: that header defines its own
@@ -60,6 +61,7 @@ unsigned int ps3_hle_count(void);
 void cellfs_set_root_path(const char* root);
 void cellfs_add_path_mapping(const char* ps3_prefix, const char* host_path);
 void cellGame_init_from_paramsfo(const char* sfo_path);
+void cellVideoOut_set_resolution(uint8_t resolutionId);   /* cellVideoOut.c */
 void vm_write32(uint64_t addr, uint32_t val);   /* big-endian guest store */
 uint32_t vm_read32(uint64_t addr);
 extern uint32_t ppu_hle_inject_base;      /* HLE-visible GCM window base */
@@ -680,6 +682,20 @@ static int locate_project_root(void)
 
 int main(int argc, char* argv[])
 {
+    /* Buffer both streams, first thing: setvbuf has to come before any output.
+     * Unbuffered stdio issues a write per conversion, so with several guest
+     * threads logging at once lines interleave mid-token and a message that IS
+     * in the log reads as absent to grep. The crash filter flushes, so a fault
+     * still shows the tail; the flush thread below covers a killed run. */
+    static char out_buf[1 << 16], err_buf[1 << 16];
+    setvbuf(stdout, out_buf, _IOFBF, sizeof out_buf);
+    setvbuf(stderr, err_buf, _IOFBF, sizeof err_buf);
+
+    /* gt5p_settings.toml, before anything below reads the environment: the
+     * settings are handed to the runtime as environment variables that are
+     * not already set (see gt5p_settings.h). */
+    gt5p_settings_load();
+
     /* Someone started this by hand if its output is a console window rather
      * than a file. Verbose logging serialises every guest thread on one lock
      * (the sound stutters and the menu drops frames), so it is off for them
@@ -725,13 +741,6 @@ int main(int argc, char* argv[])
         if (!tr || tr[0] != '0') timeBeginPeriod(1);
     }
 
-    /* Buffer both streams. Unbuffered stdio issues a write per conversion, so
-     * with several guest threads logging at once lines interleave mid-token and
-     * a message that IS in the log reads as absent to grep. The crash filter
-     * flushes, so a fault still shows the tail. */
-    static char out_buf[1 << 16], err_buf[1 << 16];
-    setvbuf(stdout, out_buf, _IOFBF, sizeof out_buf);
-    setvbuf(stderr, err_buf, _IOFBF, sizeof err_buf);
     /* A run that is killed, as the test scripts stop one, loses whatever is
      * still in those buffers: up to 64 KB, which hid everything the title
      * logged after choosing a manufacturer (Phase 41). Flush both every
@@ -814,6 +823,15 @@ int main(int argc, char* argv[])
             snprintf(sfo, sizeof sfo, "%s/%sPARAM.SFO", vfs, game_dir);
             cellGame_init_from_paramsfo(sfo);
         }
+    }
+
+    /* video.resolution = "1080p": tell the game the display is 1080p. The
+     * runtime reports 720p unless told otherwise, and the game renders at what
+     * it is told; it supported 1080p on the console. The present window
+     * follows (gt5p_present.cpp). */
+    if (gt5p_settings().resolution == 1080) {
+        cellVideoOut_set_resolution(1 /* CELL_VIDEO_OUT_RESOLUTION_1080 */);
+        printf("[GT5P] reporting a 1920x1080 display\n");
     }
 
     lv2_register_all_syscalls(&g_lv2_syscalls);

@@ -27,6 +27,7 @@
 #include "sys_ppu_thread.h"
 #include "vm.h"
 #include "ps3emu/thread_name.h"
+#include "gt5p_settings.h"
 
 /* GT5P_THREADS=1: every 2 s, print each PPU thread's state and the guest
  * address of its last syscall/HLE call. "Runs its job loop but never loads
@@ -120,9 +121,12 @@ static const uint8_t* live_guest_ptr(void*, uint32_t location, uint32_t offset,
 
 static int backend_init(const char* title)
 {
+    /* Window and swap chain at the display mode main() reported to the game. */
+    const uint32_t w = gt5p_settings().resolution == 1080 ? 1920 : 1280;
+    const uint32_t h = gt5p_settings().resolution == 1080 ? 1080 : 720;
     if (rsx_live_draw_enabled()) {
-        if (rsx_null_backend_init(1280, 720, title) == 0 &&
-            rsx_live_draw_init(rsx_null_backend_get_hwnd(), 1280, 720,
+        if (rsx_null_backend_init(w, h, title) == 0 &&
+            rsx_live_draw_init(rsx_null_backend_get_hwnd(), w, h,
                                live_guest_ptr, nullptr) == 0) {
             s_rsx_live = 1;
             rsx_null_backend_suppress_present(1);
@@ -131,7 +135,7 @@ static int backend_init(const char* title)
         }
         fprintf(stderr, "[rsx] live-draw init FAILED -- falling back to the D3D12 backend\n");
     }
-    return rsx_d3d12_backend_init(1280, 720, title);
+    return rsx_d3d12_backend_init(w, h, title);
 }
 
 /* Present the buffer the guest flipped to, not buffer 0: a double-buffered

@@ -1,0 +1,50 @@
+/* Player settings, read from gt5p_settings.toml at start-up.
+ *
+ * The file lives beside the game: the first gt5p_settings.toml found in the
+ * exe's folder or the folders above it (where input\EMAIN.ELF is), else the
+ * working directory. If there is none, one is written with the defaults and
+ * a comment on every key, so there is always a file to edit.
+ *
+ * Most settings are switches the runtime already reads from the environment
+ * (RSX_MSAA, PAD_NO_SDL, ...). Loading sets those variables, but only when
+ * they are not set already: a variable set by hand or by a script still wins
+ * over the file. The rest are read through gt5p_settings().
+ *
+ *   GT5P_SETTINGS=<path>  read this file instead (written if missing)
+ *   GT5P_NO_SETTINGS=1    ignore the file; built-in defaults, nothing applied.
+ *                         For measurement runs that must not depend on it.
+ */
+#pragma once
+
+#include <string>
+
+struct Gt5pSettings {
+    /* [video] */
+    int resolution = 720;       /* 720 or 1080: the display mode the game is told */
+    int msaa       = 4;         /* samples for targets the game antialiases: 1 (off), 2, 4, 8 */
+    bool vsync        = true;   /* wait for the monitor's vblank when presenting */
+    bool shader_cache = true;   /* keep compiled shaders in shadercache/ between runs */
+
+    /* [input] */
+    bool sdl_controllers = true;    /* PlayStation / Switch / generic pads via SDL2.dll */
+    bool keyboard        = true;    /* keyboard as pad 1 when no controller is connected */
+
+    /* [debug] */
+    int verbose_log = -1;       /* -1 auto (quiet when started by hand), 0 off, 1 on */
+};
+
+/* The settings in effect, environment overrides included. Built-in defaults
+ * until gt5p_settings_load(). */
+const Gt5pSettings& gt5p_settings();
+
+/* The file loaded or created, or "" when none was used. */
+const std::string& gt5p_settings_path();
+
+/* Find, parse and apply the file. Call first thing in main(), before anything
+ * reads the environment or starts a thread. Never fails: a missing key keeps
+ * its default, and a bad file or value is reported on stderr and skipped. */
+void gt5p_settings_load();
+
+/* Write `s` to `path` in the commented layout. Returns false on I/O failure.
+ * For a settings screen to persist changes; load uses it for the default file. */
+bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path);

@@ -1,0 +1,316 @@
+/* Player settings: gt5p_settings.toml. See gt5p_settings.h. */
+#include "gt5p_settings.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+/* toml++ reports parse errors through its result type instead of throwing,
+ * so a broken file can never take the game down with it. */
+#define TOML_EXCEPTIONS 0
+#include "toml.hpp"
+
+namespace fs = std::filesystem;
+
+namespace {
+
+constexpr const char* kFileName = "gt5p_settings.toml";
+
+Gt5pSettings g_settings;
+std::string  g_path;     /* UTF-8 */
+
+/* fs::path <-> UTF-8 std::string, the same in C++17 and C++20 (where
+ * u8string() returns std::u8string). */
+std::string to_utf8(const fs::path& p)
+{
+    const auto s = p.u8string();
+    return std::string(s.begin(), s.end());
+}
+
+fs::path from_utf8(const std::string& s)
+{
+#if defined(__cpp_char8_t)
+    return fs::path(std::u8string(s.begin(), s.end()));
+#else
+    return fs::u8path(s);
+#endif
+}
+
+void warn(const std::string& msg)
+{
+    fprintf(stderr, "[settings] %s\n", msg.c_str());
+}
+
+fs::path exe_dir()
+{
+    std::error_code ec;
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(NULL, buf, MAX_PATH);
+    if (!n || n >= MAX_PATH) return fs::current_path(ec);
+    return fs::path(buf).parent_path();
+#else
+    fs::path p = fs::read_symlink("/proc/self/exe", ec);
+    return ec ? fs::current_path(ec) : p.parent_path();
+#endif
+}
+
+/* Only when unset: anything already in the environment wins over the file. */
+void set_default_env(const char* name, const char* value)
+{
+    if (getenv(name)) return;
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 0);
+#endif
+}
+
+/* GT5P_SETTINGS names the file outright. Otherwise the first existing file in
+ * the exe's folder and up to five folders above it, then the working directory.
+ * With none, a new file goes in the first of those folders that holds the game
+ * (input/EMAIN.ELF), else beside the exe. `exists` says which case it was. */
+fs::path find_settings_file(bool& exists)
+{
+    std::error_code ec;
+    if (const char* forced = getenv("GT5P_SETTINGS"); forced && *forced) {
+        exists = fs::exists(forced, ec);
+        return fs::path(forced);
+    }
+
+    const fs::path start = exe_dir();
+    fs::path game_root;
+    fs::path dir = start;
+    for (int up = 0; up <= 5 && !dir.empty(); up++) {
+        if (fs::exists(dir / kFileName, ec)) { exists = true; return dir / kFileName; }
+        if (game_root.empty() && fs::exists(dir / "input" / "EMAIN.ELF", ec)) game_root = dir;
+        fs::path parent = dir.parent_path();
+        if (parent == dir) break;
+        dir = parent;
+    }
+    const fs::path cwd = fs::current_path(ec);
+    if (!ec && fs::exists(cwd / kFileName, ec)) { exists = true; return cwd / kFileName; }
+    if (game_root.empty() && !ec && fs::exists(cwd / "input" / "EMAIN.ELF", ec)) game_root = cwd;
+
+    exists = false;
+    return (game_root.empty() ? start : game_root) / kFileName;
+}
+
+/* ---- reading values: wrong type or out of range keeps the default ---- */
+
+void read_resolution(toml::node_view<const toml::node> v, int& out)
+{
+    if (!v) return;
+    if (auto s = v.value<std::string>()) {
+        if (*s == "720p" || *s == "720")   { out = 720;  return; }
+        if (*s == "1080p" || *s == "1080") { out = 1080; return; }
+    } else if (auto n = v.value<int64_t>()) {
+        if (*n == 720 || *n == 1080) { out = (int)*n; return; }
+    }
+    warn("video.resolution must be \"720p\" or \"1080p\"; keeping " +
+         std::to_string(out) + "p");
+}
+
+void read_msaa(toml::node_view<const toml::node> v, int& out)
+{
+    if (!v) return;
+    if (auto n = v.value<int64_t>()) {
+        if (*n == 0 || *n == 1) { out = 1;       return; }
+        if (*n == 2 || *n == 4 || *n == 8) { out = (int)*n; return; }
+    }
+    warn("video.msaa must be 1 (off), 2, 4 or 8; keeping " + std::to_string(out));
+}
+
+void read_bool(toml::node_view<const toml::node> v, const char* key, bool& out)
+{
+    if (!v) return;
+    if (auto b = v.value_exact<bool>()) { out = *b; return; }
+    warn(std::string(key) + " must be true or false; keeping " + (out ? "true" : "false"));
+}
+
+void read_tristate(toml::node_view<const toml::node> v, const char* key, int& out)
+{
+    if (!v) return;
+    if (auto b = v.value_exact<bool>()) { out = *b ? 1 : 0; return; }
+    if (auto s = v.value<std::string>(); s && *s == "auto") { out = -1; return; }
+    warn(std::string(key) + " must be \"auto\", true or false; keeping the default");
+}
+
+/* Keys this version knows, so a misspelt one is reported instead of ignored. */
+bool known_key(std::string_view section, std::string_view key)
+{
+    static const struct { const char* section; const char* key; } kKnown[] = {
+        {"video", "resolution"},     {"video", "msaa"},
+        {"video", "vsync"},          {"video", "shader_cache"},
+        {"input", "sdl_controllers"}, {"input", "keyboard"},
+        {"debug", "verbose_log"},
+    };
+    for (const auto& k : kKnown)
+        if (section == k.section && key == k.key) return true;
+    return false;
+}
+
+void report_unknown_keys(const toml::table& tbl)
+{
+    for (const auto& [section, node] : tbl) {
+        const toml::table* sub = node.as_table();
+        if (!sub) {
+            warn("unknown setting \"" + std::string(section.str()) + "\" (outside any [section])");
+            continue;
+        }
+        for (const auto& [key, value] : *sub) {
+            (void)value;
+            if (!known_key(section.str(), key.str()))
+                warn("unknown setting " + std::string(section.str()) + "." +
+                     std::string(key.str()) + " -- ignored");
+        }
+    }
+}
+
+void parse_into(const toml::table& tbl, Gt5pSettings& s)
+{
+    report_unknown_keys(tbl);
+    read_resolution(tbl["video"]["resolution"], s.resolution);
+    read_msaa(tbl["video"]["msaa"], s.msaa);
+    read_bool(tbl["video"]["vsync"], "video.vsync", s.vsync);
+    read_bool(tbl["video"]["shader_cache"], "video.shader_cache", s.shader_cache);
+    read_bool(tbl["input"]["sdl_controllers"], "input.sdl_controllers", s.sdl_controllers);
+    read_bool(tbl["input"]["keyboard"], "input.keyboard", s.keyboard);
+    read_tristate(tbl["debug"]["verbose_log"], "debug.verbose_log", s.verbose_log);
+}
+
+/* Hand the settings the runtime reads from the environment over to it. */
+void apply_env(const Gt5pSettings& s)
+{
+    char buf[16];
+    snprintf(buf, sizeof buf, "%d", s.msaa);
+    set_default_env("RSX_MSAA", buf);
+    set_default_env("RSX_PRESENT_SYNC", s.vsync ? "1" : "0");
+    /* "0" turns the cache off; when on, leave RSX_SHADER_CACHE unset so the
+     * backend keeps its own default folder. */
+    if (!s.shader_cache) set_default_env("RSX_SHADER_CACHE", "0");
+    /* The pad switches test for presence, so only the "off" case sets one. */
+    if (!s.sdl_controllers) set_default_env("PAD_NO_SDL", "1");
+    if (!s.keyboard)        set_default_env("PAD_NO_KEYBOARD", "1");
+    if (s.verbose_log >= 0) set_default_env("PS3_VERBOSE", s.verbose_log ? "1" : "0");
+}
+
+/* After apply_env: make the struct say what is actually in effect, so code
+ * reading gt5p_settings() agrees with the runtime when a variable overrode
+ * the file. Values the runtime itself would reject are left as they were. */
+void reflect_env(Gt5pSettings& s)
+{
+    if (const char* e = getenv("RSX_MSAA")) {
+        const int n = atoi(e);
+        s.msaa = (n == 2 || n == 4 || n == 8) ? n : (n <= 1 ? 1 : 4);   /* as rsx_msaa_samples() */
+    }
+    if (const char* e = getenv("RSX_PRESENT_SYNC")) s.vsync = atoi(e) != 0;   /* as the backend reads it */
+    if (const char* e = getenv("RSX_SHADER_CACHE")) s.shader_cache = !(e[0] == '0' && !e[1]);
+    s.sdl_controllers = getenv("PAD_NO_SDL") == nullptr;
+    s.keyboard        = getenv("PAD_NO_KEYBOARD") == nullptr;
+    if (const char* e = getenv("PS3_VERBOSE")) s.verbose_log = (e[0] && e[0] != '0') ? 1 : 0;
+}
+
+}  // namespace
+
+const Gt5pSettings& gt5p_settings() { return g_settings; }
+const std::string& gt5p_settings_path() { return g_path; }
+
+bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
+{
+    std::ofstream f(from_utf8(path), std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    const char* verbose = s.verbose_log < 0 ? "\"auto\"" : s.verbose_log ? "true" : "false";
+    f << "# Gran Turismo 5 Prologue (ps3recomp) settings.\n"
+         "# Read when the game starts; restart the game after changing anything.\n"
+         "# A setting also given as an environment variable (shown in brackets)\n"
+         "# takes the variable's value instead. Delete this file to get the defaults back.\n"
+         "\n"
+         "[video]\n"
+         "# Display mode the game is told it has, and the window size:\n"
+         "# \"720p\" (1280x720) or \"1080p\" (1920x1080). The game renders natively at it.\n"
+         "resolution = \"" << s.resolution << "p\"\n"
+         "# Antialiasing samples for what the game antialiases: 1 (off), 2, 4 or 8.\n"
+         "# The console used 2. [RSX_MSAA]\n"
+         "msaa = " << s.msaa << "\n"
+         "# Wait for the monitor's refresh when showing a frame. false can tear,\n"
+         "# but never holds the game back. [RSX_PRESENT_SYNC]\n"
+         "vsync = " << (s.vsync ? "true" : "false") << "\n"
+         "# Keep compiled shaders in the shadercache folder so they aren't rebuilt\n"
+         "# every run (the first visit to a screen can stutter while they are).\n"
+         "# [RSX_SHADER_CACHE, \"0\" = off]\n"
+         "shader_cache = " << (s.shader_cache ? "true" : "false") << "\n"
+         "\n"
+         "[input]\n"
+         "# PlayStation, Switch and other controllers through SDL2.dll beside the exe.\n"
+         "# Xbox controllers work either way. [PAD_NO_SDL]\n"
+         "sdl_controllers = " << (s.sdl_controllers ? "true" : "false") << "\n"
+         "# Keyboard as controller 1 when none is connected. [PAD_NO_KEYBOARD]\n"
+         "keyboard = " << (s.keyboard ? "true" : "false") << "\n"
+         "\n"
+         "[debug]\n"
+         "# Full runtime log: \"auto\" (off when started by hand, on when output goes\n"
+         "# to a file), true or false. On makes the game stutter. [PS3_VERBOSE]\n"
+         "verbose_log = " << verbose << "\n";
+    return (bool)f.flush();
+}
+
+void gt5p_settings_load()
+{
+    g_settings = Gt5pSettings{};
+    g_path.clear();
+    if (getenv("GT5P_NO_SETTINGS")) {
+        printf("[settings] GT5P_NO_SETTINGS: built-in defaults, file ignored\n");
+        return;
+    }
+
+    bool exists = false;
+    const fs::path path = find_settings_file(exists);
+    g_path = to_utf8(path);
+
+    if (!exists) {
+        if (gt5p_settings_save(g_settings, g_path))
+            printf("[settings] wrote defaults to %s\n", g_path.c_str());
+        else
+            warn("could not write " + g_path + "; using defaults");
+    } else {
+        /* Read it here rather than with toml::parse_file, which opens a
+         * narrow path and so fails on a non-ASCII folder name on Windows. */
+        std::ifstream f(path, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        toml::parse_result res = toml::parse(text, g_path);
+        if (!res) {
+            const auto& err = res.error();
+            warn(g_path + ":" + std::to_string(err.source().begin.line) + ": " +
+                 std::string(err.description()) + " -- using defaults");
+        } else {
+            parse_into(res.table(), g_settings);
+        }
+    }
+
+    /* GT5P_RESOLUTION overrides the file, like the runtime's own variables. */
+    if (const char* r = getenv("GT5P_RESOLUTION"); r && *r) {
+        if (!strcmp(r, "1080p") || !strcmp(r, "1080")) g_settings.resolution = 1080;
+        else if (!strcmp(r, "720p") || !strcmp(r, "720")) g_settings.resolution = 720;
+        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p or 1080p; ignored");
+    }
+
+    apply_env(g_settings);
+    reflect_env(g_settings);
+    printf("[settings] %s: resolution=%dp msaa=%d vsync=%d shader_cache=%d sdl_controllers=%d keyboard=%d\n",
+           g_path.c_str(), g_settings.resolution, g_settings.msaa,
+           g_settings.vsync ? 1 : 0, g_settings.shader_cache ? 1 : 0,
+           g_settings.sdl_controllers ? 1 : 0, g_settings.keyboard ? 1 : 0);
+}

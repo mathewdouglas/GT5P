@@ -39,7 +39,7 @@ def nid_names():
 def main():
     args = sys.argv[1:]
     secs = int(args.pop(0)) if args and args[0].isdigit() else 20
-    env = dict(os.environ, PS3_HEADLESS="1")
+    env = dict(os.environ, PS3_HEADLESS="1", GT5P_NO_SETTINGS="1")
     env.setdefault("GT5P_MAINSTACK", "5")
     for a in args:
         k, _, v = a.partition("=")

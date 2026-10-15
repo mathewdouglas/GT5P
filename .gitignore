@@ -124,3 +124,6 @@ vsh_curves
 *.idb
 # Third-party binaries fetched by scripts (SDL2.dll: scripts/get_sdl2.ps1)
 third_party/
+
+# Player settings, written beside the game on first run
+gt5p_settings.toml

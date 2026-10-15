@@ -93,6 +93,7 @@ endif()
 add_executable(gt5p
     src/main.cpp
     src/gt5p_present.cpp
+    src/gt5p_settings.cpp
     src/gt5p_profview.cpp
     src/gt5p_allocwatch.cpp
     src/gt5p_bbcount.cpp
@@ -129,6 +130,11 @@ else()
     list(APPEND GT5P_MAIN_DEFS "GT5P_SPURS_SYNTH_DONE=0")
 endif()
 set_source_files_properties(src/main.cpp PROPERTIES COMPILE_DEFINITIONS "${GT5P_MAIN_DEFS}")
+# toml++ (MIT, external/tomlplusplus, v3.4.0) for gt5p_settings.toml. Scoped to
+# the one file that uses it, like the definitions above, so adding it does not
+# change the lifted chunks' command lines and rebuild them.
+set_source_files_properties(src/gt5p_settings.cpp PROPERTIES
+    INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/external/tomlplusplus")
 
 target_link_libraries(gt5p PRIVATE ps3recomp_runtime)
 

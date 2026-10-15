@@ -9,6 +9,42 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 48 - Player settings file, and a first look at 1080p (2026-10-15)
+
+`gt5p_settings.toml` (`src/gt5p_settings.*`, toml++ 3.4.0 in
+`external/tomlplusplus`) is read at the top of `main()`. Its keys are
+`video.resolution`, `msaa`, `vsync`, `shader_cache`,
+`input.sdl_controllers`, `keyboard` and `debug.verbose_log`. Each is
+handed to the runtime as the environment variable it already reads, and
+only when that variable is unset. `GT5P_NO_SETTINGS=1` ignores the file;
+`boot.py`, `soak.py` and the `scratch\*.ps1` run scripts set it.
+
+Tested here, from the log of short headless starts:
+
+- defaults written to the repo root;
+- a broken header reported with its line;
+- `msaa = 3`, `vsync = 1`, `keyboard = "yes"` and an unknown `fov` each
+  reported and defaulted;
+- `RSX_MSAA=2` beating `msaa = 8`;
+- an older file without the new keys;
+- `GT5P_NO_SETTINGS`;
+- `GT5P_RESOLUTION=1080p`.
+
+Not tried:
+
+- `vsync`, `shader_cache` and the input switches in play;
+- starting from Explorer.
+
+**1080p.** With `resolution = "1080p"` the title configures `resId=1` itself
+and renders at 1920x1080. A windowed run to the dealership showed the cars,
+rims and floor reflection at about 17 fps, the same as 720p. The Showroom
+and Event icons and the Cross glyph beside "Enter" were missing; they draw
+at 720p.
+
+Hypothesis, not checked: the backend's rule that binds the frame copy for
+any texture of display size (`SCREEN_AS_TEX`) or another 1280x720
+assumption.
+
 ## Phase 47 - The rims and the shadow pass: Cell vector stores the lifter skipped (2026-10-15)
 
 ### 47.1 The reference: a RenderDoc capture of RPCS3

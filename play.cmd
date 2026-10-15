@@ -3,6 +3,9 @@ rem Run the built game in a window, for playing rather than measuring.
 rem   play.cmd [NAME=VALUE ...]     extra switches, e.g. play.cmd AUDIO_RATE=1
 rem The log goes to scratch\play.out and scratch\play.err (both gitignored).
 rem Double-clicking build\gt5p.exe works too; this adds the log files.
+rem Settings (resolution, antialiasing, vsync, controllers) are in
+rem gt5p_settings.toml here, written on first start; a NAME=VALUE given
+rem here wins over it, and deleting the file restores the defaults.
 setlocal
 cd /d "%~dp0"
 if not exist build\gt5p.exe (
