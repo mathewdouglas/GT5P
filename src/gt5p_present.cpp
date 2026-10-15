@@ -56,6 +56,42 @@ static void dump_threads(void)
                 (unsigned long long)t->entry_addr, t->prof_pc,
                 (i < 64 && g_hle_inflight[i]) ? g_hle_inflight[i] : "-",
                 t->name);
+        /* GT5P_THREADS=2: also some registers and the 16 bytes at r9, read
+         * racily from the live context. A thread spinning in a loop with no
+         * calls shows what it is comparing (func_00BA97B0: r9 = the job
+         * queue's row of per-SPU counters, r5 = the target). */
+        if (t->state == PPU_THREAD_STATE_RUNNING && getenv("GT5P_THREADS")[0] == '2') {
+            const ppu_context* c = &t->ctx;
+            uint32_t r9 = (uint32_t)c->gpr[9];
+            fprintf(stderr, "      r3=%08X r4=%08X r5=%08X r9=%08X r31=%08X lr=%08X",
+                    (uint32_t)c->gpr[3], (uint32_t)c->gpr[4], (uint32_t)c->gpr[5], r9,
+                    (uint32_t)c->gpr[31], (uint32_t)c->lr);
+            if (r9 >= 0x10000 && r9 < 0xF0000000u) {
+                const uint8_t* m = (const uint8_t*)vm_base + r9;
+                fprintf(stderr, " [r9]=");
+                for (int k = 0; k < 16; k += 2) fprintf(stderr, " %02X%02X", m[k], m[k + 1]);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+    /* GT5P_PEEK=<ea>[,<ea>...] (hex): with each dump, follow the pointer
+     * stored at each address and print the 0xC0 bytes behind it as rows of
+     * eight u16. For the job manager object func_00BA97B0 takes in r3 (r31):
+     * rows from +0x40 are its queues, each a head index and the progress
+     * counters it waits on. */
+    if (const char* pk = getenv("GT5P_PEEK")) {
+        for (const char* s = pk; s && *s; ) {
+            uint32_t ea = (uint32_t)strtoul(s, nullptr, 16);
+            uint32_t base = (ea >= 0x10000) ? _byteswap_ulong(*(const uint32_t*)((const uint8_t*)vm_base + ea)) : 0;
+            fprintf(stderr, "   peek [%08X] = %08X\n", ea, base);
+            if (base >= 0x10000 && base < 0xF0000000u)
+                for (uint32_t r = 0; r < 0xC0; r += 16) {
+                    fprintf(stderr, "     +%02X:", r);
+                    for (uint32_t k = 0; k < 16; k += 2) fprintf(stderr, " %04X", _byteswap_ushort(*(const uint16_t*)((const uint8_t*)vm_base + base + r + k)));
+                    fprintf(stderr, "\n");
+                }
+            s = strchr(s, ','); if (s) s++;
+        }
     }
 }
 

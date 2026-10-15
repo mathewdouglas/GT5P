@@ -9,6 +9,101 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 54 - The dealership stall: a lost ready-count kick (2026-10-16)
+
+**Result.** Since the fix below, 1 stall in 29 runs on the Car Dealer page
+(0 in the last 10), against 7 in 38 before it, each run watched for about a
+minute. At the old rate, one or fewer in 29 would happen about 2% of the
+time. The lane and contention changes listed under "Ruled out" were also on
+in a batch before the fix, which still stalled once in 6; the store fix is
+what moved it. The remaining stall (one run, with no diagnostics on) is not
+explained.
+
+**What a stall is.** Two shapes, as in 46.3:
+
+- **Presents stop (about 2.4 cores busy).** The FIFO is fully drained
+  (`GCM_DRAINDBG`: getoff = put), so the title has stopped issuing commands,
+  and no workload is ready or running. With `GT5P_THREADS=2` and `GT5P_PEEK`,
+  the thread `PDI:1:200c3b40` sits in `func_00BA97B0` waiting on workload 4,
+  the one-SPU job manager (`maxContention 1`, data `0x0139C900`). The guest
+  object is at `0x0139A880`; queue 3's row is at `+0x70`.
+  - `func_00BA97B0` first waits until the smallest of seven per-SPU u16
+    progress counters (row `+2..+0xE`) reaches the queue's head plus its
+    non-empty entries. It then calls `cellSpursGetWorkloadInfo` until
+    `readyCount` (+0x23) and `contention` (+0x20) are both 0.
+  - Here the row read `0001 0000 FFFF ...`: one entry queued, SPU 0's
+    counter at 0, unused SPUs at FFFF. So the entry was queued, but workload
+    4 was never made ready to run it.
+- **Lanes spin (6.5 cores).** Four lanes of workload 0 wait for ring space
+  in job body `b01376080`; the walker is parked at an unfilled `0xFFFFFFFF`
+  block.
+  - The wait at `0x4598`: when a job's write window `[r12, r5]` would pass
+    the end of its lane's 1 MB ring (lane k's ring starts at
+    `0x2A2BDF80 + k MB`), it wraps and waits until the label passes
+    base + size.
+  - Every spinning lane saw its label at exactly the ring base. The display
+    lists set all five labels to the bases (`RSX_LABELWATCH=1` prints where:
+    `0x09A6...` for workload 0, `0x0959...` for workload 1), about 290 times
+    a lane in a run.
+  - Workload 0 then waits for a block nothing fills. The likely filler is
+    workload 4's job. That is a hypothesis: no captured run tied the
+    unfilled block to it.
+
+**The cause.**
+- Workload 4 is kicked with `cellSpursReadyCountStore(4, 1)`, about 150
+  times a second.
+- The HLE wrote the ready byte with a plain host store. Policy modules
+  update the same 128-byte line with `GETLLAR`/`PUTLLC`, and our `PUTLLC`
+  compares and commits under the lock-line lock.
+- A store landing between that compare and the commit was written back
+  over, and the kick was lost.
+- Now the store, and the lane-retry increment of Phase 41, take the lock
+  line and notify reserving SPUs (`spurs_ready_store`, `spurs_ready_inc`),
+  as a PPU store does on the console. `SPURS_READY_COH=0` restores the plain
+  writes.
+
+**Ruled out along the way:**
+- **Contention reported as 0 while lanes still run.** It happens 1 to 4
+  times a run, in the instant between a group clearing contention and
+  clearing busy; stall-free runs have it too. Reporting at least 1 while the
+  group is busy is kept (`SPURS_CONT_BUSY=0` to undo); it costs nothing.
+- **Lanes leaving after doing work.** About 3,000 times a run, in good runs
+  as well. `SPURS_LANE_STAY=0` keeps the old exit; the default now sends
+  such a lane back in while others still work.
+- **Workload priorities.** SPUs 0-4 are all allowed (priority bytes
+  `04 04 04 04 04 00 00 00`).
+
+**Open:** lane 3 of workloads 0 and 1 never gets a job: 512 of 512
+dispatches end with "ran 0 ms". Without the 3 ms lane stagger, the page
+never draws and lane 3 is the lane that leaves. The lists run on four lanes.
+
+**Diagnostics added:**
+- `SPURS_KEVLOG=<wid>`: one workload's last 48 ready stores, dispatches
+  and exits, printed after 3 s with no dispatch.
+- `SPURS_WKLINFO_DBG=1`: `cellSpursGetWorkloadInfo` calls per workload,
+  with the values returned.
+- `SPURS_LANE_DBG=1`: each lane leaving, with why.
+- `RSX_LABELWATCH=1`: labels `0x400-0x5F0` moving backwards, and the FIFO
+  position of each ring-base write.
+- `SPU_SPINDBG=1`: an SPU repeating one GET, with its thresholds.
+- `GCM_SEMALOG=1`: NV406E semaphore releases per label.
+- `GCM_DRAINDBG` now prints the word at getoff.
+- `GT5P_THREADS=2`: registers and `[r9]` per guest thread.
+- `GT5P_PEEK=<ea>,...`: the 0xC0 bytes behind a guest pointer, with each
+  thread dump.
+
+**Faster test runs.** The exe prints `[milestone] <name> at <ms> ms` the
+first time the title reads each screen's `.gpb` (`cellFs` stat/open;
+`PAD_MILESTONES=0` for none).
+- `PAD_HOLD` presses can count from a milestone
+  (`@TopMenuTemplate+8000-8300:CROSS`). `!<other>` skips a retry once that
+  milestone has appeared.
+- `scratch\perf.ps1`, `cpu3.ps1`, `pvshot.ps1` and `capshot.ps1` now wait
+  for `DealerTopRoot` and over 1,000 draws instead of fixed sleeps. The
+  page comes up about 29 s after launch, against 47 s.
+- `perf.ps1` ends a run at the first 5 s block with no presents, and counts
+  stalls; `-Watch <s>` keeps watching after the measurement.
+
 ## Phase 53 - Dealership frame rate: the baseline for a 30 fps plan (2026-10-15)
 
 Measured with `scratch\perf.ps1` (`FS_HIDE`, no settings file), current

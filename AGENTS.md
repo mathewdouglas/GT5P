@@ -120,8 +120,18 @@ Each corrects the one before.
   `SPU_REGCACHE=1` lifts SPU code with registers in locals: correct, slower.
   **Phase 46:** indexed draws keep an index buffer (`RSX_VTX_INDEXED=0` to
   expand as before; `RSX_VTXSTAT=1` for per-path upload stats), about 19.5
-  fps. **A dealership stall now hits about 1 run in 3** (lanes spin at ~1 fps,
-  or presents stop); the pre-session exe never did. Not found yet; see 46.3.
+  fps. **The dealership stall (Phase 54) is down to 1 run in 29** from
+  about 1 in 5: the title's kicks of its one-SPU workload
+  (`cellSpursReadyCountStore`) were lost to a race with the policy module's
+  `PUTLLC`; ready-count stores now take the lock line (`SPURS_READY_COH=0`
+  undoes it). The one stall left is unexplained; `SPURS_KEVLOG=4`,
+  `GT5P_THREADS=2` and `GT5P_PEEK=016FA5E0,0139A880` are the tools.
+  **Test runs follow milestones (Phase 54):** `[milestone] <screen>` lines,
+  `PAD_HOLD` presses relative to one (`@TopMenuTemplate+8000-8300:CROSS`,
+  `!<other>` for a retry), and `scratch\milestone.ps1` (`$DealerHold`,
+  `Wait-Milestone`) used by `perf.ps1`, `cpu3.ps1` and `capshot.ps1`. The
+  page is up about 29 s after launch; `perf.ps1` counts and cuts short
+  stalled runs (`-Watch <s>` to look for them).
   Car materials: cube maps on units 4-15 (`RSX_CUBE_HI=0`), cubes whose faces
   are render targets (`RSX_CUBE_RT=0`), constant remaps (`RSX_REMAP_CONST=0`),
   sRGB decode on units 4-15 (`RSX_GAMMA_HI=0`); `FP_IDCOLOR=3` and `FP_SHOW`
@@ -404,7 +414,7 @@ Each corrects the one before.
   blends with it. The dealership alternates car colours per visit; compare
   captures by colour name. `TEXRACE_FP=<fp>` checksums a program's bound
   textures at each draw.
-- Next: the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
+- Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in, step 5a is written behind `GT5P_VM_INLINE`, untested); the last dealership stall (Phase 54, 1 run in 29); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
   dealership, not re-examined since Phase 33 beyond seeing it draw text on

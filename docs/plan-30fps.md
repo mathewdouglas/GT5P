@@ -46,14 +46,19 @@ channel) inside job body `b01376080` at `0x462C`/`0x4598`, while `PDI:1`
 waits in the queue-3 loop. Find the channel, who should write it, and why
 they do not (a lane hand-off race is the standing hypothesis).
 
-Gate: no stalls in 10 runs.
+Gate: no stalls in 10 runs. **Met (Phase 54):** the title's ready-count
+kicks were lost to a `PUTLLC` race; 0 stalls in the last 10 runs and 1 in
+29 since the fix, against about 1 in 5 before. One stall is unexplained.
 
 ### 2. Cheap fixes on the present thread (about 2-3 ms)
 
-- `rsx_vtx_pos_dbg` runs on every draw: off the normal path.
-- `rsx_fp_code_hash`: cache per program address and generation instead of
-  hashing the ucode every draw.
-- `tex_snap_draw`: return at once when no texture is volatile.
+- `rsx_vtx_pos_dbg` runs once per draw and returns at once; its 1.4% is more
+  likely an unnamed static function after it, charged to the nearest name by
+  `scratch/maplook.py`. Left alone.
+- `rsx_fp_code_hash`: cached per program address while the program's
+  instruction slots are unchanged (`RSX_FPHASH_CACHE=0` to undo), instead of
+  two byte-at-a-time walks every draw.
+- `tex_snap_draw`: returns at once when no texture is volatile.
 
 ### 3. CPU/GPU overlap (up to about 10 ms)
 
@@ -67,8 +72,8 @@ checked with captures.
 ### 4. Vertex conversion (about 15 ms, a third of the frame)
 
 - **4a** Keep converted vertex data from frame to frame. The showroom and the
-  cars barely change: hash each source range cheaply and convert only what
-  changed.
+  cars barely change: find a candidate by draw metadata, compare its source
+  bytes, and convert only what changed (as the Yakuza port does, below).
 - **4b** If 4a falls short: let the GPU decode the guest's vertex formats
   (upload raw streams, decode in the vertex shader), as RPCS3 does.
 
@@ -116,6 +121,35 @@ vblanks, not three; no stalls; captures match the Phase 51 ones;
 - **The SPU lifter.** Lane code spends most of its time in channel and MFC
   helpers (`spu_rdch`, `mfc_submit`, `mfc_for`); fast paths for the common
   channels help every SPU workload, sound included.
+
+## What another ps3recomp port does
+
+[Yakuza: Dead Souls EX](https://github.com/canersaka/Yakuza-Dead-Souls-EX)
+(MIT, a fork of the same ps3recomp) reaches its game's 30 fps cap in light
+scenes and about 20 fps in its crowded opening, which its README calls the
+open problem. Read on 2026-10-16; ideas only, nothing copied.
+
+- **Guest memory access inline** (5a). Loads are `vm_base + addr` and a byte
+  swap in a header; stores are inline with one SPU-coherence range test. Its
+  build notes say inlining these helpers is most of the optimiser's gain.
+- **Whole-program optimisation** of the lifted code (`/O2 /Ob3 /GL` and
+  link-time code generation, on the lifted objects only). Worth most after 5a,
+  when the helpers can be inlined.
+- **Geometry reuse** (4a). A cache entry is chosen by metadata, then every
+  source byte is compared before the converted output, kept on the GPU, is
+  reused; a miss snapshots the input. Comparing bytes is exact and cheaper
+  than converting. Conversion runs attribute by attribute over contiguous
+  spans. Pipeline state is cached by register state and checked byte for byte
+  (step 2's hashing).
+- **Frames in flight** (3). Submission does not wait for the GPU; upload sets
+  rotate per frame.
+- **SPU jobs on persistent workers** (5b), two by default. It replaces SPURS
+  job chains with its own runner, which does not carry over: GT5P's render
+  jobs run under the title's own job manager (the lifted policy module).
+  Some hot SPU jobs (visibility, poses) are rewritten as native AVX2 code: a
+  later, title-specific option.
+- **Thread placement**: an option puts the RSX consumer and the main SPU worker
+  on two separate physical cores of the fastest class.
 
 ## Risks
 

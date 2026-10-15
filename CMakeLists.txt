@@ -63,6 +63,26 @@ endif()
 list(LENGTH GENERATED_SOURCES N_CHUNKS)
 message(STATUS "lifted PPU chunks: ${N_CHUNKS}")
 
+# Guest loads and stores inline in the lifted chunks (plan-30fps step 5a).
+# ppu_vm_inline.h is force-included ahead of the generated ppu_recomp.h and
+# turns each vm_read*/vm_write* call into a range test and a byte-swapped
+# access, calling the out-of-line accessor only for the null page, the raw SPU
+# registers, the GCM ref register and SPU-reserved lines. VM_INLINE=0 at run
+# time sends every access out of line again. Changing this option recompiles
+# all the chunks: set CMAKE_BUILD_PARALLEL_LEVEL=4 first.
+option(GT5P_VM_INLINE "Inline guest memory access in the lifted PPU code" OFF)
+if(GT5P_VM_INLINE)
+    set(GT5P_VM_INLINE_H "${PS3RECOMP_DIR}/runtime/ppu/ppu_vm_inline.h")
+    if(MSVC)
+        set_source_files_properties(${GENERATED_SOURCES} PROPERTIES
+            COMPILE_OPTIONS "/FI${GT5P_VM_INLINE_H}")
+    else()
+        set_source_files_properties(${GENERATED_SOURCES} PROPERTIES
+            COMPILE_OPTIONS "SHELL:-include ${GT5P_VM_INLINE_H}")
+    endif()
+    message(STATUS "lifted PPU chunks: guest memory access inline")
+endif()
+
 # The runtime library does not bundle the PPU loader/HLE/VFS translation units;
 # each title compiles them so it can supply its own function_table and boot
 # harness.
