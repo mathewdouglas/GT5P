@@ -181,6 +181,14 @@ comments) wins over it; delete the file to get the defaults back.
 `GT5P_SETTINGS=<path>` names another file, and `GT5P_NO_SETTINGS=1` ignores it,
 as `scripts/boot.py` and `scripts/soak.py` do.
 
+**Movies.** The opening movie is decoded with FFmpeg, loaded at run time. Run
+`scripts\get_ffmpeg.ps1` once (it fetches a pinned LGPL build into
+`third_party\ffmpeg`), then rebuild; without it movies play black and silent.
+The movie itself is part of the game's TV content, which the title installs to
+its hard-disk folder (`gamedata\dev_hdd0\game\BCUS98158\USRDIR\grim\file\contents`).
+This port does not yet perform that install; copy it from an RPCS3 install of
+the same game.
+
 ## Building from source
 
 ```bash

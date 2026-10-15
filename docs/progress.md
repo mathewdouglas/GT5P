@@ -9,6 +9,95 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 50 - The opening movie plays (2026-10-15)
+
+### 50.1 Where the movie is, and why it never played
+
+On boots after the agreement has been accepted, RPCS3 plays
+`grim/file/contents/tv_50_519336755.pam` (a PAMF file: 1920x1088 H.264 at
+59.94 fps, six-channel ATRAC3plus, 141 s) from the game's hard-disk install.
+The disc's `USRDIR/MOVIE/34.pam` and `52.pam` are not opened. The title copies
+that folder from `TV.DAT` itself on its first boot, before the agreement; this
+port's first boot goes to the agreement without installing (not investigated:
+RPCS3 waits about 20 s after `BootRoot.gpb` and then installs, ours loads the
+save). The copy of RPCS3's install that Phase 41 put aside under
+`gamedata/contents_aside` is now back in
+`gamedata/dev_hdd0/game/BCUS98158/USRDIR/grim/file/contents` (gitignored game
+data). The files are encrypted on disk; the title decrypts them and hands
+plain PAMF to the libraries.
+
+ps3recomp's movie libraries were stubs: `cellPamf` parsed an invented header
+layout (hence Phase 41's "0 streams"), `cellDmux` handed the whole input over
+as one AU, `cellVdec`/`cellAdec` produced nothing, and 15 of the title's
+imports from them were unregistered (`cellDmuxOpenEx`, `cellVdecOpenEx`,
+`cellAdecOpenEx`, `cellPamfGetHeaderSize` and others).
+
+### 50.2 What is in ps3recomp now (`libs/codec/`)
+
+- `cellPamf`: reads the real header (stream table at `0x88`, 0x30 per
+  stream, entry-point tables) and implements every function the title imports.
+  `PAMF_DUMP=<dir>` writes the decrypted headers; `PAMF_OFF=1` refuses them.
+- `cellDmux`: a program-stream demultiplexer on its own thread. AVC is cut at
+  access-unit delimiters, ATRAC3plus at ATS headers (`0F D0`, frame size in
+  the low 10 bits of bytes 2-3); AUs are copied into the title's ES buffer and
+  announced with AU_FOUND; DEMUX_DONE when a chunk is used up.
+  `DMUX_TRACE=1`, `DMUX_DUMP=<dir>`.
+- `cellVdec`, `cellAdec` (ATRAC3plus): decoder threads with command queues;
+  pictures and PCM wait in queues until GetPicture/GetPcm. Decoding is FFmpeg
+  7.1 (libavcodec), loaded at run time from DLLs beside the exe
+  (`scripts/get_ffmpeg.ps1` fetches a pinned LGPL build into
+  `third_party/ffmpeg`, gitignored; the build passes its headers to
+  `codec_ffmpeg.c` only). Without the DLLs: black pictures and silence.
+  `CODEC_FFMPEG=0`, `VDEC_TRACE=1`, `ADEC_TRACE=1`. The old silent `cellAdec`
+  path is kept for every other codec type.
+- Library threads call the title's callbacks on guest stacks of their own
+  (`ppu_guest_call_set_stack`, new in `ppu_loader.cpp`): every host thread
+  used to start on the same scratch stack at `0xCFFE0000`.
+
+### 50.3 Four things between "it opens" and "it plays"
+
+1. **An SPU job nobody had lifted.** After the first picture the player waited
+   for ever in `func_00BA97B0` on job-manager queue 3 -- the same wait Phase 31
+   found for the dealership. The movie's job body (`0x011A4E80`, 9,968 bytes,
+   DMA'd to LS `0x4000`; `SPU_DUMP_OVL` found it) ran on the SPU interpreter
+   (`[spu-smc] ... handing to the interpreter`) and never finished. It is in
+   `wws_job_bodies` now and lifted. That job turns each YUV picture into a
+   1920x1080 DXT1 texture, alternating between two at `0x1C3D00` and
+   `0x3BE500`.
+2. **Missing timestamps.** Only the first AU of each group of pictures carries
+   a PTS. With the rest invalid the player displayed pictures the moment they
+   arrived and discarded most (`GetPicture` with no buffer 3,565 of 3,704
+   times): about six times real speed. `cellVdec` now gives such a picture the
+   previous one's PTS plus a frame, as RPCS3 does (`VDEC_PTS_FILL=0` to stop);
+   2,000 pictures then took 33.9 s of wall time for 34.4 s of movie. Audio had
+   the same gap: an audio PES packet holds about 1.2 frames, so one AU in five
+   had no PTS, and the movie's sound sped up and slowed down; measured, the
+   title drew audio 15% faster than real time. `cellDmux` now fills those in
+   (+3840 ticks, `DMUX_PTS_FILL=0`): 922 of 922 AUs carry one and the title
+   draws exactly 100 frames per 4.27 s.
+3. **Video ES buffer too small.** At 6 MB the demuxer filled it about 17 s in
+   and waited, the audio starved, and the player's clock stopped. The title
+   keeps 1.6 s or more of audio ahead; the buffer is 16 MB now.
+4. **Tearing.** The D3D12 backend reads textures when it replays a frame,
+   after the FIFO walk; the RSX reads them when it executes the draw. The
+   SPU job had already started rewriting the movie texture by replay time on
+   2,455 of 2,700 uploads (`RSX_TEX_SNAPDBG=1`). A texture seen changing
+   between uploads is now copied at each draw that binds it, and the replay
+   uploads that copy (`RSX_TEX_SNAP=0` to stop). Static textures are untouched.
+
+### 50.4 Measurement runs
+
+With the TV content installed the title plays the movie at boot, and the main
+menu then ignores the scripted presses at their old times. `FS_HIDE=<text>`
+(new, `cellFs`) looks a path up with `_hidden` after `<text>`, so
+`FS_HIDE=grim/file/contents` makes the folder look empty without moving it.
+`scripts/boot.py`, `scripts/soak.py` and the drive scripts in `scratch/` set
+it; with it the Phase 43 presses reach the dealership again.
+
+Not yet heard by a person after the timestamp fix; the tearing fix is
+measured, not yet seen. Two dealership runs on the way stalled (2.6 and 6.8
+fps): Phase 46.3's stall, next.
+
 ## Phase 49 - The shadow map is drawn and sampled (2026-10-15)
 
 ### 49.1 Where the shadow pass went

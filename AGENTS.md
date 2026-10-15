@@ -378,6 +378,16 @@ Each corrects the one before.
   a few seconds after the first Right press. `wait_for_gpu STUCK` is printed
   to stdout, not stderr; keep both streams.
 - Compare brightness with RPCS3 from its framebuffer in a RenderDoc capture, never from screenshots: they can be taken in HDR (Phase 49.4, a false lead).
+- **The opening movie plays (Phase 50).** It is the TV content under
+  `gamedata/.../grim/file/contents` (RPCS3's install; this port does not run
+  the title's own `TV.DAT` install). Decoding needs FFmpeg:
+  `scripts\get_ffmpeg.ps1`, then rebuild. Measurement runs must set
+  `FS_HIDE=grim/file/contents` (`boot.py`, `soak.py` and `scratch\*.ps1` do):
+  with the content visible the movie plays and the menu misses the scripted
+  presses. Switches: `PAMF_OFF`, `CODEC_FFMPEG=0`, `VDEC_PTS_FILL=0`,
+  `DMUX_PTS_FILL=0`, `RSX_TEX_SNAP=0`; traces `DMUX_TRACE`, `VDEC_TRACE`,
+  `ADEC_TRACE`, `RSX_TEX_SNAPDBG`. A job body the SPU interpreter runs can
+  stall a title silently: grep for `[spu-smc]` first.
 - Next: the dealership stall (Phase 46.3, now about 1 run in 3); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

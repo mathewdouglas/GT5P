@@ -38,7 +38,8 @@ def main():
     out_dir = ROOT / "scratch" / "soak"
     out_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, PS3_HEADLESS="1", PS3_VERBOSE="0", GT5P_MAINSTACK=str(SAMPLE),
-               GT5P_NO_SETTINGS="1")
+               GT5P_NO_SETTINGS="1",
+               FS_HIDE="grim/file/contents")   # no boot movie: AGENTS.md, Phase 50
     for a in sys.argv[3:]:                      # extra NAME=VALUE for the game
         k, _, v = a.partition("=")
         env[k] = v

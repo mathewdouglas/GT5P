@@ -21,6 +21,14 @@ if(NOT EXISTS "${PS3RECOMP_DIR}/CMakeLists.txt")
         "Or set -DPS3RECOMP_DIR=/path/to/ps3recomp")
 endif()
 
+# FFmpeg decodes the title's movies (PAMF: H.264 and ATRAC3plus). Its DLLs
+# are loaded at run time; scripts/get_ffmpeg.ps1 fetches headers and DLLs into
+# third_party/ffmpeg (gitignored). Without them movies play black and silent.
+set(GT5P_FFMPEG_DIR "${CMAKE_SOURCE_DIR}/third_party/ffmpeg")
+if(EXISTS "${GT5P_FFMPEG_DIR}/include/libavcodec/avcodec.h")
+    set(PS3RECOMP_FFMPEG_INCLUDE "${GT5P_FFMPEG_DIR}/include")
+endif()
+
 add_subdirectory(${PS3RECOMP_DIR} ps3recomp EXCLUDE_FROM_ALL)
 
 # =============================================================================
@@ -149,6 +157,12 @@ if(WIN32)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_SOURCE_DIR}/third_party/SDL2.dll" "$<TARGET_FILE_DIR:gt5p>/SDL2.dll")
     endif()
+    file(GLOB GT5P_FFMPEG_DLLS "${GT5P_FFMPEG_DIR}/bin/*.dll")
+    foreach(dll ${GT5P_FFMPEG_DLLS})
+        get_filename_component(dll_name "${dll}" NAME)
+        add_custom_command(TARGET gt5p POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:gt5p>/${dll_name}")
+    endforeach()
 else()
     target_link_libraries(gt5p PRIVATE pthread m)
 endif()
