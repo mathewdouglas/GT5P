@@ -173,9 +173,14 @@ content yet.
 Always set `PS3_VERBOSE=0` when a number matters: verbose logging serialises
 every guest thread on one stderr lock and changes what the title does.
 
-**Settings.** The first start writes `gt5p_settings.toml` beside the game (the
-folder with `input\EMAIN.ELF`): resolution (720p or 1080p), antialiasing, vsync,
-the shader cache, controllers and the keyboard, each with a comment. Edit it and
+**Settings.** Press **F1** in the game (or the PS button on a PlayStation
+controller) for the settings page: arrows or the d-pad to choose, Left/Right or
+Cross to change, Esc or Circle to close. Changes are saved at once; vsync and
+the keyboard-as-controller switch apply immediately, the rest after a restart,
+which the page offers. The settings live in `gt5p_settings.toml` beside the
+game (the folder with `input\EMAIN.ELF`), written on the first start with a
+comment on each: resolution (720p or 1080p), antialiasing, vsync, the shader
+cache, controllers and the keyboard. You can also edit it by hand and
 restart. An environment variable for the same switch (shown in the file's
 comments) wins over it; delete the file to get the defaults back.
 `GT5P_SETTINGS=<path>` names another file, and `GT5P_NO_SETTINGS=1` ignores it,

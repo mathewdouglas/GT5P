@@ -48,3 +48,19 @@ void gt5p_settings_load();
 /* Write `s` to `path` in the commented layout. Returns false on I/O failure.
  * For a settings screen to persist changes; load uses it for the default file. */
 bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path);
+
+/* For the in-game settings page (F1, gt5p_settings_ui.cpp). */
+
+/* The values as the file has them, before environment overrides: what the
+ * page edits and saves. Built-in defaults when there is no file. */
+const Gt5pSettings& gt5p_settings_file();
+
+/* True when `env_name` (RSX_MSAA, PAD_NO_SDL, GT5P_RESOLUTION, ...) was
+ * already set when the file was loaded, so it overrides the file's value. */
+bool gt5p_settings_overridden(const char* env_name);
+
+/* False under GT5P_NO_SETTINGS: there is no file to save to. */
+bool gt5p_settings_enabled();
+
+/* Save `s` as the file's values (and remember them as such). */
+bool gt5p_settings_store(const Gt5pSettings& s);

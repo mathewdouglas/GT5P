@@ -29,7 +29,17 @@ namespace {
 constexpr const char* kFileName = "gt5p_settings.toml";
 
 Gt5pSettings g_settings;
+Gt5pSettings g_file;     /* as the file has them: what the settings page saves */
 std::string  g_path;     /* UTF-8 */
+bool         g_enabled = false;
+
+/* The variables a setting maps to; those set before the file is applied
+ * override it, and the settings page says so. */
+const char* const kEnvNames[] = {
+    "GT5P_RESOLUTION", "RSX_MSAA", "RSX_PRESENT_SYNC", "RSX_SHADER_CACHE",
+    "PAD_NO_SDL", "PAD_NO_KEYBOARD", "PS3_VERBOSE",
+};
+bool g_env_set[sizeof kEnvNames / sizeof kEnvNames[0]];
 
 /* fs::path <-> UTF-8 std::string, the same in C++17 and C++20 (where
  * u8string() returns std::u8string). */
@@ -227,6 +237,23 @@ void reflect_env(Gt5pSettings& s)
 
 const Gt5pSettings& gt5p_settings() { return g_settings; }
 const std::string& gt5p_settings_path() { return g_path; }
+const Gt5pSettings& gt5p_settings_file() { return g_file; }
+bool gt5p_settings_enabled() { return g_enabled; }
+
+bool gt5p_settings_overridden(const char* env_name)
+{
+    for (size_t i = 0; i < sizeof kEnvNames / sizeof kEnvNames[0]; i++)
+        if (!strcmp(kEnvNames[i], env_name)) return g_env_set[i];
+    return false;
+}
+
+bool gt5p_settings_store(const Gt5pSettings& s)
+{
+    if (!g_enabled || g_path.empty()) return false;
+    if (!gt5p_settings_save(s, g_path)) return false;
+    g_file = s;
+    return true;
+}
 
 bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
 {
@@ -234,7 +261,8 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
     if (!f) return false;
     const char* verbose = s.verbose_log < 0 ? "\"auto\"" : s.verbose_log ? "true" : "false";
     f << "# Gran Turismo 5 Prologue (ps3recomp) settings.\n"
-         "# Read when the game starts; restart the game after changing anything.\n"
+         "# Read when the game starts. Press F1 in the game (or the PS button on a\n"
+         "# controller) to change them there; some take effect only after a restart.\n"
          "# A setting also given as an environment variable (shown in brackets)\n"
          "# takes the variable's value instead. Delete this file to get the defaults back.\n"
          "\n"
@@ -270,11 +298,15 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
 void gt5p_settings_load()
 {
     g_settings = Gt5pSettings{};
+    g_file = Gt5pSettings{};
     g_path.clear();
+    for (size_t i = 0; i < sizeof kEnvNames / sizeof kEnvNames[0]; i++)
+        g_env_set[i] = getenv(kEnvNames[i]) != nullptr;
     if (getenv("GT5P_NO_SETTINGS")) {
         printf("[settings] GT5P_NO_SETTINGS: built-in defaults, file ignored\n");
         return;
     }
+    g_enabled = true;
 
     bool exists = false;
     const fs::path path = find_settings_file(exists);
@@ -299,6 +331,8 @@ void gt5p_settings_load()
             parse_into(res.table(), g_settings);
         }
     }
+
+    g_file = g_settings;
 
     /* GT5P_RESOLUTION overrides the file, like the runtime's own variables. */
     if (const char* r = getenv("GT5P_RESOLUTION"); r && *r) {

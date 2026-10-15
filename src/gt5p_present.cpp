@@ -439,6 +439,7 @@ extern "C" void gt5p_start_sampler(void)
 }
 
 extern "C" void gt5p_start_profview(void);
+extern "C" void gt5p_start_settings_ui(void);   /* F1 settings page: gt5p_settings_ui.cpp */
 extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total);
 
 static DWORD WINAPI present_thread(LPVOID)
@@ -472,7 +473,7 @@ static DWORD WINAPI present_thread(LPVOID)
      * (gt5p_profview.cpp), which takes the difference at each present. */
     double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0;
 #define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_; } while (0)
-    if (rsx_ok) gt5p_start_profview();
+    if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); }
 
     /* GT5P_PRESENT_SLEEP=<ms>: the outer cadence, 4 by default. The FIFO is
      * only walked once per pass, so the sleep is time the guest's command

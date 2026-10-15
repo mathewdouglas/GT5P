@@ -9,6 +9,46 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 52 - An in-game settings page (F1) (2026-10-15)
+
+`src/gt5p_settings_ui.cpp`: F1 over the game window, or the PS button on an
+SDL controller, opens a page listing every setting of `gt5p_settings.toml`
+by section (Video, Input, Debug). Keyboard, d-pad and mouse drive it. A
+change is written to the file at once (`gt5p_settings_store`). Vsync and the
+keyboard-as-controller switch apply live, through new setters
+(`rsx_d3d12_set_present_sync`, `pad_set_keyboard_enabled`); the rest are
+marked "after restart", and a "Restart now" row relaunches the exe with the
+same command line, first clearing the variables loading the old file had
+set, so the new process reads the new file. A setting an environment
+variable overrides is shown greyed, `set by <VAR>` (the settings code now
+records which were set before it applied the file, and keeps the file's own
+values apart from the effective ones).
+
+Like the F3 profiler it is a GDI window owned by the game window, so the
+D3D12 backend is untouched. While it is open, `cellPad` hands the title every
+pad at rest (`g_pad_input_blocked`) and publishes the buttons, all ports
+ORed with the PS button as bit 16 (`g_pad_menu_buttons`), for the page to
+read.
+
+Two faults found by driving it with posted keys and `PAD_HOLD`
+(`scratch\settings_test.ps1`, `scratch\settings_restart_test.ps1`):
+
+- The page repositioned itself every 16 ms with a synchronous
+  `SetWindowPos(HWND_TOP)`. That waits on the owner window's thread, the
+  present thread, and froze the page for 1.7 s during a shader compile,
+  losing a press. It now moves only when the game window moved,
+  asynchronously, without touching z-order.
+- It polled the pads itself as well, which would run SDL's controller update
+  on two threads at once; it now reads what the game's own polls publish.
+
+After both: three of three scripted runs of Down, Down, Cross turned vsync
+off in the file; "Restart now" ended the old process and started a new one
+on the new file.
+
+Switches: `GT5P_SETTINGS_UI=0` (no page), `=1` (open at start, for tests),
+`GT5P_SETTINGS_UI_DBG=1` (the buttons the page sees). Graphics options will
+need the page to scroll: seven settings fill it.
+
 ## Phase 51 - Car paint, floor reflection and glass against RPCS3 (2026-10-15)
 
 The task from the user's screenshots (Acura NSX, Car Dealer page): hard-edged

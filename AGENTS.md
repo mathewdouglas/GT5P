@@ -388,6 +388,12 @@ Each corrects the one before.
   `DMUX_PTS_FILL=0`, `RSX_TEX_SNAP=0`; traces `DMUX_TRACE`, `VDEC_TRACE`,
   `ADEC_TRACE`, `RSX_TEX_SNAPDBG`. A job body the SPU interpreter runs can
   stall a title silently: grep for `[spu-smc]` first.
+- **F1 settings page (Phase 52)**, `src/gt5p_settings_ui.cpp`: a GDI window
+  over the game like the F3 profiler; the PS button opens it too. A new
+  setting is a field, its TOML key and one row in `items()`. While it is open
+  the title sees every pad at rest (`g_pad_input_blocked`, cellPad.c).
+  `GT5P_SETTINGS_UI=0` none, `=1` open at start; `scratch\settings_test.ps1`
+  drives it with posted keys against a scratch settings file.
 - **Car paint, glass (Phase 51).** `LG2` takes `|x|` (`RSX_LG2_ABS=0`): a
   NaN from `log2` of a negative turned whole panels black. The blend
   constant (`0x031C`) reaches D3D12 now (`RSX_BLEND_COLOR=0`): the glass
