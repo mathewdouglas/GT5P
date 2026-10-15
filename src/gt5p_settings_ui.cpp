@@ -39,6 +39,7 @@ extern volatile int g_pad_input_blocked;        /* cellPad.c */
 extern volatile uint32_t g_pad_menu_buttons;    /* cellPad.c: bit 16 = PS button */
 void pad_set_keyboard_enabled(int on);          /* cellPad.c */
 void rsx_d3d12_set_present_sync(int interval);  /* rsx_d3d12_backend.c */
+void gt5p_shader_indicator_enable(int on);      /* gt5p_shaderbusy.cpp */
 }
 
 namespace {
@@ -90,6 +91,13 @@ const std::vector<Item>& items()
           "RSX_SHADER_CACHE", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_cache ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_cache = v != 0; }, nullptr },
+        { L"VIDEO", L"Shader compile indicator",
+          L"Show \"Compiling shaders\" in the corner while the game builds shaders. The picture "
+          L"stops meanwhile; this says why.",
+          "GT5P_SHADER_INDICATOR", kOnOff,
+          [](const Gt5pSettings& s) { return s.shader_indicator ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.shader_indicator = v != 0; },
+          [](int v) { gt5p_shader_indicator_enable(v); } },
         { L"INPUT", L"PlayStation / other controllers",
           L"Read DualSense, DualShock, Switch and other controllers through SDL2.dll. Xbox "
           L"controllers work either way.",
@@ -113,7 +121,7 @@ const std::vector<Item>& items()
     return v;
 }
 
-const int kW = 660, kH = 600;
+const int kW = 660, kH = 634;
 const int kTop = 70, kRowH = 34, kSectionH = 26, kValX = 400;
 
 HWND s_game, s_wnd;

@@ -47,7 +47,26 @@ on the new file.
 
 Switches: `GT5P_SETTINGS_UI=0` (no page), `=1` (open at start, for tests),
 `GT5P_SETTINGS_UI_DBG=1` (the buttons the page sees). Graphics options will
-need the page to scroll: seven settings fill it.
+need the page to scroll: eight settings fill it.
+
+### 52.1 A "Compiling shaders" badge
+
+The backend builds shaders and pipelines on the thread that replays frames,
+so the picture stops while it does. `src/gt5p_shaderbusy.cpp` shows a badge
+in the bottom-right corner of the game window meanwhile ("Compiling shaders
+(n)", a spinner), from its own thread and window so it animates while the
+frame is frozen. The backend now counts the work: `g_rsx_shader_busy` is
+raised around an HLSL compile that missed the shader cache and around a guest
+pipeline build, with totals of each. The badge appears after 0.2 s of work,
+so one quick pipeline does not flash it, and stays until 0.7 s after the
+last, so a burst reads as one. It moves only asynchronously (52's lesson:
+the game window's thread is the busy one).
+
+On an empty shader cache a boot showed it four times (3, 13, 18 and 107
+shaders and pipelines; 0.6-1.9 s each) and hid it after each. New setting
+`[video] shader_indicator` (default on), on the F1 page and live;
+`GT5P_SHADER_INDICATOR=0` overrides. `scratch\badge_test.ps1` repeats the
+test.
 
 ## Phase 51 - Car paint, floor reflection and glass against RPCS3 (2026-10-15)
 

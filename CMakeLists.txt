@@ -104,6 +104,7 @@ add_executable(gt5p
     src/gt5p_settings.cpp
     src/gt5p_profview.cpp
     src/gt5p_settings_ui.cpp
+    src/gt5p_shaderbusy.cpp
     src/gt5p_allocwatch.cpp
     src/gt5p_bbcount.cpp
     src/gt5p_longjmp.cpp

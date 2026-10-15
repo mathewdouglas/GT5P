@@ -180,8 +180,12 @@ the keyboard-as-controller switch apply immediately, the rest after a restart,
 which the page offers. The settings live in `gt5p_settings.toml` beside the
 game (the folder with `input\EMAIN.ELF`), written on the first start with a
 comment on each: resolution (720p or 1080p), antialiasing, vsync, the shader
-cache, controllers and the keyboard. You can also edit it by hand and
-restart. An environment variable for the same switch (shown in the file's
+cache, the shader indicator, controllers and the keyboard. You can also edit
+it by hand and restart.
+
+While the game builds shaders the picture stops for a moment (several seconds
+the first time a screen is seen); a "Compiling shaders" badge in the corner
+says so. It can be turned off on the settings page. An environment variable for the same switch (shown in the file's
 comments) wins over it; delete the file to get the defaults back.
 `GT5P_SETTINGS=<path>` names another file, and `GT5P_NO_SETTINGS=1` ignores it,
 as `scripts/boot.py` and `scripts/soak.py` do.

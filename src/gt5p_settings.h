@@ -24,6 +24,7 @@ struct Gt5pSettings {
     int msaa       = 4;         /* samples for targets the game antialiases: 1 (off), 2, 4, 8 */
     bool vsync        = true;   /* wait for the monitor's vblank when presenting */
     bool shader_cache = true;   /* keep compiled shaders in shadercache/ between runs */
+    bool shader_indicator = true;   /* "Compiling shaders" over the game while it is busy */
 
     /* [input] */
     bool sdl_controllers = true;    /* PlayStation / Switch / generic pads via SDL2.dll */

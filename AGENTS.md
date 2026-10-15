@@ -393,7 +393,11 @@ Each corrects the one before.
   setting is a field, its TOML key and one row in `items()`. While it is open
   the title sees every pad at rest (`g_pad_input_blocked`, cellPad.c).
   `GT5P_SETTINGS_UI=0` none, `=1` open at start; `scratch\settings_test.ps1`
-  drives it with posted keys against a scratch settings file.
+  drives it with posted keys against a scratch settings file. The
+  "Compiling shaders" badge (`src/gt5p_shaderbusy.cpp`, 52.1) reads
+  `g_rsx_shader_busy` from the backend; `GT5P_SHADER_INDICATOR=0` hides it.
+  Windows over the game must not call synchronous `SetWindowPos` each tick:
+  the game window's thread is the present thread, often busy.
 - **Car paint, glass (Phase 51).** `LG2` takes `|x|` (`RSX_LG2_ABS=0`): a
   NaN from `log2` of a negative turned whole panels black. The blend
   constant (`0x031C`) reaches D3D12 now (`RSX_BLEND_COLOR=0`): the glass
