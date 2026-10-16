@@ -111,6 +111,24 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.keyboard ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.keyboard = v != 0; },
           [](int v) { pad_set_keyboard_enabled(v); } },
+        { L"PERFORMANCE", L"Frame clock",
+          L"The vblank the game paces its frames to. 59.94 Hz is the console's (30 fps at "
+          L"most). 62.5 Hz allows 31 fps, but a frame that just misses two vblanks drops to 20.",
+          "GT5P_VBLANK_HZ", { {5994, L"59.94 Hz"}, {6250, L"62.5 Hz"} },
+          [](const Gt5pSettings& s) { return s.vblank_hz100; },
+          [](Gt5pSettings& s, int v) { s.vblank_hz100 = v; }, nullptr },
+        { L"PERFORMANCE", L"SPU lanes on own cores",
+          L"Experimental. Keep each SPU render lane on a CPU core of its own. Hint is a "
+          L"preference; Strict was faster at best but has frozen the dealer pages.",
+          "SPURS_LANE_CPUS", { {0, L"Off"}, {1, L"Hint"}, {2, L"Strict"} },
+          [](const Gt5pSettings& s) { return s.lane_cores; },
+          [](Gt5pSettings& s, int v) { s.lane_cores = v; }, nullptr },
+        { L"PERFORMANCE", L"Fifth SPU lane",
+          L"Experimental. Let the render jobs use SPU 3 as well, five lanes instead of four. "
+          L"Currently freezes the dealer pages; for testing only.",
+          "SPURS_JL_SPU3", kOnOff,
+          [](const Gt5pSettings& s) { return s.fifth_spu_lane ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.fifth_spu_lane = v != 0; }, nullptr },
         { L"DEBUG", L"Runtime log",
           L"The full runtime log. Auto keeps it off when the game is started by hand. On makes "
           L"the game stutter.",
@@ -121,8 +139,8 @@ const std::vector<Item>& items()
     return v;
 }
 
-const int kW = 660, kH = 634;
-const int kTop = 70, kRowH = 34, kSectionH = 26, kValX = 400;
+const int kW = 660, kH = 712;   /* fits a 1280 x 720 window */
+const int kTop = 70, kRowH = 30, kSectionH = 26, kValX = 400;
 
 HWND s_game, s_wnd;
 bool s_open;

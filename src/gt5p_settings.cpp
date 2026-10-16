@@ -38,6 +38,7 @@ bool         g_enabled = false;
 const char* const kEnvNames[] = {
     "GT5P_RESOLUTION", "RSX_MSAA", "RSX_PRESENT_SYNC", "RSX_SHADER_CACHE", "GT5P_SHADER_INDICATOR",
     "PAD_NO_SDL", "PAD_NO_KEYBOARD", "PS3_VERBOSE",
+    "GT5P_VBLANK_HZ", "SPURS_LANE_CPUS", "SPURS_JL_SPU3",
 };
 bool g_env_set[sizeof kEnvNames / sizeof kEnvNames[0]];
 
@@ -143,6 +144,38 @@ void read_msaa(toml::node_view<const toml::node> v, int& out)
     warn("video.msaa must be 1 (off), 2, 4 or 8; keeping " + std::to_string(out));
 }
 
+void read_vblank(toml::node_view<const toml::node> v, int& out)
+{
+    if (!v) return;
+    double hz = 0;
+    if (auto d = v.value<double>()) hz = *d;
+    if (hz > 59.0 && hz < 61.0)  { out = 5994; return; }
+    if (hz > 62.0 && hz < 63.0)  { out = 6250; return; }
+    warn("performance.vblank_hz must be 59.94 or 62.5; keeping " + std::to_string(out / 100.0));
+}
+
+void read_lane_cores(toml::node_view<const toml::node> v, int& out)
+{
+    if (!v) return;
+    if (auto s = v.value<std::string>()) {
+        if (*s == "off")    { out = 0; return; }
+        if (*s == "hint")   { out = 1; return; }
+        if (*s == "strict") { out = 2; return; }
+    }
+    warn("performance.lane_cores must be \"off\", \"hint\" or \"strict\"; keeping the default");
+}
+
+/* One logical CPU per physical core for the render lanes: the first thread of
+ * cores 1 to 5, leaving core 0 to the PPU threads (PS3_PPU_CORES mask 3). */
+std::string lane_cpu_list()
+{
+    SYSTEM_INFO si; GetSystemInfo(&si);
+    const int n = (int)si.dwNumberOfProcessors;
+    std::string out;
+    for (int c = 2; c < n && c <= 10; c += 2) { if (!out.empty()) out += ","; out += std::to_string(c); }
+    return out.empty() ? std::string("1") : out;
+}
+
 void read_bool(toml::node_view<const toml::node> v, const char* key, bool& out)
 {
     if (!v) return;
@@ -166,6 +199,8 @@ bool known_key(std::string_view section, std::string_view key)
         {"video", "vsync"},          {"video", "shader_cache"},
         {"video", "shader_indicator"},
         {"input", "sdl_controllers"}, {"input", "keyboard"},
+        {"performance", "vblank_hz"}, {"performance", "lane_cores"},
+        {"performance", "fifth_spu_lane"},
         {"debug", "verbose_log"},
     };
     for (const auto& k : kKnown)
@@ -200,6 +235,9 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
     read_bool(tbl["video"]["shader_indicator"], "video.shader_indicator", s.shader_indicator);
     read_bool(tbl["input"]["sdl_controllers"], "input.sdl_controllers", s.sdl_controllers);
     read_bool(tbl["input"]["keyboard"], "input.keyboard", s.keyboard);
+    read_vblank(tbl["performance"]["vblank_hz"], s.vblank_hz100);
+    read_lane_cores(tbl["performance"]["lane_cores"], s.lane_cores);
+    read_bool(tbl["performance"]["fifth_spu_lane"], "performance.fifth_spu_lane", s.fifth_spu_lane);
     read_tristate(tbl["debug"]["verbose_log"], "debug.verbose_log", s.verbose_log);
 }
 
@@ -218,6 +256,13 @@ void apply_env(const Gt5pSettings& s)
     if (!s.sdl_controllers) set_default_env("PAD_NO_SDL", "1");
     if (!s.keyboard)        set_default_env("PAD_NO_KEYBOARD", "1");
     if (s.verbose_log >= 0) set_default_env("PS3_VERBOSE", s.verbose_log ? "1" : "0");
+    set_default_env("GT5P_VBLANK_HZ", s.vblank_hz100 == 6250 ? "62.5" : "59.94");
+    if (s.lane_cores) {
+        set_default_env("SPURS_LANE_CPUS", lane_cpu_list().c_str());
+        if (s.lane_cores == 2) set_default_env("SPURS_LANE_CPU_HARD", "1");
+    }
+    /* SPU 3 only gets jobs if its lane is sent every time. */
+    if (s.fifth_spu_lane) { set_default_env("SPURS_JL_SPU3", "1"); set_default_env("SPURS_LANE_PRUNE", "0"); }
 }
 
 /* After apply_env: make the struct say what is actually in effect, so code
@@ -235,6 +280,10 @@ void reflect_env(Gt5pSettings& s)
     s.sdl_controllers = getenv("PAD_NO_SDL") == nullptr;
     s.keyboard        = getenv("PAD_NO_KEYBOARD") == nullptr;
     if (const char* e = getenv("PS3_VERBOSE")) s.verbose_log = (e[0] && e[0] != '0') ? 1 : 0;
+    if (const char* e = getenv("GT5P_VBLANK_HZ")) s.vblank_hz100 = atof(e) > 62.0 ? 6250 : 5994;
+    if (const char* e = getenv("SPURS_LANE_CPUS"))
+        s.lane_cores = !*e ? 0 : getenv("SPURS_LANE_CPU_HARD") ? 2 : 1;
+    s.fifth_spu_lane = getenv("SPURS_JL_SPU3") != nullptr;
 }
 
 }  // namespace
@@ -294,6 +343,19 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "sdl_controllers = " << (s.sdl_controllers ? "true" : "false") << "\n"
          "# Keyboard as controller 1 when none is connected. [PAD_NO_KEYBOARD]\n"
          "keyboard = " << (s.keyboard ? "true" : "false") << "\n"
+         "\n"
+         "[performance]\n"
+         "# The game paces its frames to the vblank. 59.94 is the console's rate\n"
+         "# (30 fps at most); 62.5 is the port's old clock (31.25 fps at most, but a\n"
+         "# frame that only just misses two vblanks drops to 20). [GT5P_VBLANK_HZ]\n"
+         "vblank_hz = " << (s.vblank_hz100 == 6250 ? "62.5" : "59.94") << "\n"
+         "# Experimental. Give each SPU render lane a CPU core of its own:\n"
+         "# \"off\", \"hint\" (a preference the scheduler may ignore) or \"strict\"\n"
+         "# (faster at best, but has frozen the dealer pages). [SPURS_LANE_CPUS]\n"
+         "lane_cores = \"" << (s.lane_cores == 2 ? "strict" : s.lane_cores == 1 ? "hint" : "off") << "\"\n"
+         "# Experimental. Let the render jobs use a fifth SPU lane, as many as the\n"
+         "# console has. Currently freezes the dealer pages. [SPURS_JL_SPU3]\n"
+         "fifth_spu_lane = " << (s.fifth_spu_lane ? "true" : "false") << "\n"
          "\n"
          "[debug]\n"
          "# Full runtime log: \"auto\" (off when started by hand, on when output goes\n"

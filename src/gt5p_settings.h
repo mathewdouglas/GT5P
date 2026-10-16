@@ -30,6 +30,11 @@ struct Gt5pSettings {
     bool sdl_controllers = true;    /* PlayStation / Switch / generic pads via SDL2.dll */
     bool keyboard        = true;    /* keyboard as pad 1 when no controller is connected */
 
+    /* [performance] */
+    int vblank_hz100 = 5994;    /* the vblank clock, in 1/100 Hz: 5994 (console) or 6250 */
+    int lane_cores   = 0;       /* SPU render lanes on cores of their own: 0 off, 1 hint, 2 strict */
+    bool fifth_spu_lane = false;    /* let the render lists use SPU 3 too (experimental) */
+
     /* [debug] */
     int verbose_log = -1;       /* -1 auto (quiet when started by hand), 0 off, 1 on */
 };
