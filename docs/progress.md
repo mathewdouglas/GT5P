@@ -9,6 +9,51 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 59 - The FIFO walker's per-draw costs: 25.1 to 27.4 fps (2026-10-16)
+
+### Where the walker's time went
+
+`GT5P_SAMPLE=6`, resolved with `scratch/maplook.py`. The walker (the
+`present` host thread) was about 62% busy. Of its busy samples:
+
+| Work | Samples |
+| --- | --- |
+| Index handling: `d3d12_draw_indexed`, the strip path, and `ix_vertex` (419 on its own) | about 1,000 |
+| Copying the SPU ring's vertex data (`vraw_put`, `vgpu_finish`) | about 330 |
+| FIFO decode | about 300 |
+| `vp_record_cb`, with `rsx_fp_collect_constants` | about 290 |
+| `vp_get_vs_mode` | 150 |
+| `tex_snap_draw` | 125 |
+| `vc_frame_end` | 50 |
+
+`ix_vertex` only returns its argument in GPU-fetch mode, but it was an
+out-of-line call made per index.
+
+### The changes
+
+- **Indices.** In GPU-fetch mode, triangle lists decode their guest indices
+  in one tight loop. Strips store the guest indices directly, without the
+  per-index `ix_vertex` call.
+- **Vertex-shader lookup memo** (`RSX_VS_MEMO`, default on). The microcode
+  store has a write counter (`rsx_state.vp_ucode_gen`). The lookup's last
+  answer per variant (CPU or GPU fetch) is reused while the counter, the
+  program start and the store size are unchanged. Before, every record
+  found its program's END, hashed it and searched the cache.
+- **Vertex constants** (`RSX_VCB_REUSE`, default on). Every record copied the
+  whole 8 KB constant bank into its own constant-buffer slot, about 20 MB of
+  upload-heap writes a frame. The records now have `vcb_slot`, the slot
+  whose bank b0 binds. A record whose bank (`rsx_state.vc_gen`, advanced by
+  every constant write), viewport z terms and projection-fallback class
+  match the previous record of the same frame binds that record's slot.
+  `DBG_ZOOM` and `VP_FIXPROJ` turn the reuse off.
+
+### Results
+
+- `perf.ps1 -N 3`: 28.1, 27.4 and 25.6 fps, median **27.4**; no stalls.
+- The walker is now 41% busy, against 62 to 66%.
+- The busiest threads are now the guest main thread (87%) and `PDI:1` (76%).
+- `RSX_VTX_GPU=check`: 0 of 1.7 billion fetches differ. Captures are clean.
+
 ## Phase 58 - Present: descriptor writes, then its own thread: 19.6 to 25.1 fps (2026-10-16)
 
 ### Where the present's time went
