@@ -9,6 +9,76 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 60 - Dealers other than Acura froze on entry (2026-10-16)
+
+**Symptom.** Choosing any manufacturer but Acura showed its logo and then
+nothing: presents stopped at `draws: 331`, about 2.4 cores busy (`PDI:1` and
+Main near 90%). Aston Martin sometimes got through. Every run into Mercedes
+and Ferrari froze. Three separate faults were behind it.
+
+1. **A job body nobody had lifted.** `[spu-smc] microstep img=1 pc=0x08348
+   ... handing to the interpreter`, then `[pm-end] lane 0 ... pc=0x02F30`.
+   `SPU_DUMP_OVL=scratch/ovl_fer,0x4000` showed the job manager streaming in
+   a fourth body: 17,936 bytes from `0x01371A00`. The dump is byte for byte
+   the executable's. It is in `wws_job_bodies` now and lifted (297
+   functions). Its 26 undecoded words are an ASCII message table, not code.
+2. **The FIFO walker abandoned an SPU display list (the freeze).** With the
+   body lifted the page still froze, now with the FIFO drained
+   (`GCM_DRAINDBG`: getoff = put).
+   - `PDI:1:200c3b40` sat in `func_00BA97B0`'s second loop. That loop
+     polls `cellSpursGetWorkloadInfo` until a workload's contention and
+     ready count are 0. `SPURS_WKLINFO_DBG=1` named the workload as 0, the
+     render jobs, held at contention 5. Queue 3's row read `0001 0001`: the
+     job of Phase 54 had run, so this is not that stall.
+   - Each frozen run had one `FIFO resync (jump-park)` from an SPU ring
+     (`0x0957...`) to the PPU's `put` (`0x00012080`). No good run had one.
+   - The walker treats a self-JUMP as a park. If `put` is elsewhere, it
+     assumes the title has left that segment, and jumps to `put` (a rule
+     added for another title).
+   - This title's SPU jobs write display lists into rings of their own,
+     with a park at each one's write head, and patch it when they append.
+     `put` is always in the PPU's ring, so the rule fired whenever the walker
+     caught up with a job.
+   - The jump dropped the rest of the list, including the label writes the
+     jobs wait on for ring space, and workload 0 waited for ever.
+   - A park now resyncs only when it lies in the same ring as `put`: one run
+     of mapped IO pages that are contiguous in EA (`gcm_io_same_ring`).
+     Otherwise it waits, and prints `park at io ... kept` the first four
+     times. `GCM_PARK_RESYNC=1` restores the old rule; `=0` never resyncs
+     on a park.
+3. **Texture slots.** These pages bind more than 96 distinct textures a
+   frame. The cache had 96 slots, and Mercedes left 486,001 binds unbound in
+   a minute (`[TEX] texture slots full`). The table now has 1,024 slots;
+   `RSX_TEX_SLOTS=<n>` sets how many are used (default 512). A hashed hint
+   is checked before the scan, and an empty slot is taken before one that
+   still holds a texture.
+
+**Result:**
+- Mercedes and Ferrari load and draw their cars, at 22 to 23 fps.
+- The Acura page is unchanged: median 30.73 fps over 3 runs (30.75, 30,
+  30.73), none stalled.
+- The opening movie plays.
+- A first entry into a new dealer still compiles 500 to 800 shaders. That
+  takes 20 to 28 s with the badge up, and looks like a freeze.
+- With warm shaders, Ferrari's first frame still took 7.9 s. That is the
+  first-entry stall of Phase 42, not this fault.
+
+**Measuring it:**
+- `scratch\dealer.ps1 -Tag t -Moves "DOWN,RIGHT,RIGHT,RIGHT,RIGHT" -Enter`
+  drives to the manufacturer list, moves, enters, and takes a window shot
+  every few seconds. That sequence is Ferrari.
+- A scripted direction used to push the left stick as well as the D-pad.
+  The menu reads both, so each press moved the cursor twice: runs meant
+  for Ferrari landed on Mercedes. Scripted presses are D-pad only now;
+  `PAD_HOLD_STICK=1` restores the old behaviour.
+
+**Open:**
+- 22 to 23 fps on these pages against 30.7 on Acura: replay is 6.5 ms a
+  frame against 2 ms, with about 3,000 draws.
+- The cost of first entry.
+- Whether the Phase 54 stalls on Acura are related. No saved Acura log has
+  a jump-park resync, so probably not.
+
 ## Phase 59 - The FIFO walker, its sleep, the SPU job code and the shader caches: 25.1 to 30.6 fps (2026-10-16)
 
 ### Where the walker's time went

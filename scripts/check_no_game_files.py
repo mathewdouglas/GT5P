@@ -24,6 +24,10 @@ import sys
 
 MAX_BYTES = 1_000_000          # largest legitimate file today is ~160 KB of text
 MAX_BINARY_BYTES = 64_000      # no binary file belongs here at all, bar a small image
+# The ps3recomp local-changes patch (patches/*.patch) is our own source diff and
+# passed 1 MB in Phase 60. Text diffs there get a larger limit; anything else
+# keeps MAX_BYTES.
+MAX_PATCH_BYTES = 4_000_000
 
 # Lower-cased. Extensions of game data, licences, keys, and analysis databases.
 EXTENSIONS = {
@@ -68,8 +72,11 @@ def verdict(path, size, head):
     for magic, what in MAGIC.items():
         if head.startswith(magic):
             return what
-    if size > MAX_BYTES:
-        return "larger than %d bytes" % MAX_BYTES
+    is_patch = (low.startswith("patches/") and low.endswith(".patch")
+                and head.startswith(b"diff --git") and b"\x00" not in head)
+    limit = MAX_PATCH_BYTES if is_patch else MAX_BYTES
+    if size > limit:
+        return "larger than %d bytes" % limit
     if b"\x00" in head and size > MAX_BINARY_BYTES:
         return "binary and larger than %d bytes" % MAX_BINARY_BYTES
     return None

@@ -448,6 +448,16 @@ Each corrects the one before.
   others index by slot: the vertex-shader cache (4,096) never evicts, and the
   pipeline cache (8,192, hashed) is emptied whole at a frame start when full.
   Cache sizes print on the `[present-thread]` line.
+- **Phase 60 (dealers other than Acura):** they froze on entry. Three
+  fixes:
+  - a fourth job body (`0x01371A00`) is in `wws_job_bodies`;
+  - the FIFO walker no longer abandons an SPU display list parked at its
+    write head (`GCM_PARK_RESYNC=1` for the old rule);
+  - there are 512 texture slots (`RSX_TEX_SLOTS`).
+
+  Mercedes and Ferrari now run at 22-23 fps. `scratch\dealer.ps1 -Moves
+  "DOWN,RIGHT,RIGHT,RIGHT,RIGHT" -Enter` is Ferrari. Scripted directions are
+  D-pad only (`PAD_HOLD_STICK=1`): the stick doubled every move.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

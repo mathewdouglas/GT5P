@@ -61,6 +61,7 @@ extern void gt5p_jE65DBDFF_spu_recomp_register(void);
 extern void gt5p_b011A4100_spu_recomp_register(void);
 extern void gt5p_b011A4E80_spu_recomp_register(void);
 extern void gt5p_b01376080_spu_recomp_register(void);
+extern void gt5p_b01371A00_spu_recomp_register(void);
 
 #define WWS_JOB_PM_EA   0x01238F00u
 #define WWS_JOB_PM_SIZE 11648u
@@ -161,6 +162,11 @@ void gt5p_spu_register_all(void)
     spu_begin_image(16);
     gt5p_b01376080_spu_recomp_register();
     spu_overlay_register_region(0x01376080u, 75008u, 16);
+
+    /* job body at 0x01371A00, 17936 bytes, runs at LS 0x4000 */
+    spu_begin_image(17);
+    gt5p_b01371A00_spu_recomp_register();
+    spu_overlay_register_region(0x01371A00u, 17936u, 17);
 
     spu_begin_image(0);
 
