@@ -79,6 +79,14 @@ start at `2A2BDF80`) with separate heads and labels, as our lane contexts
 are per (workload, SPU); on the console both workloads would share the SPU's
 local store.
 
+**And without either.** In a 10-visit Ferrari check of this build (warm
+cache, nothing compiled in any run), run 8 froze in the same shape. A
+missed Right press had taken it to Daihatsu, so the race is not Ferrari's.
+All four of workload 0's lanes needed to wrap, each with its label at its
+ring's start. Its header showed the list's first 16 bytes (`+0x80`) as all
+`FF`: SPU 4's bookkeeping row (`+0x40 + 16 * 4`) lies on them, as SPU 3's
+lay on queue 3's row. Not followed up yet. The other nine: median 26.6 fps.
+
 **Settings page:** "Precompile shaders" (VIDEO, on; key
 `video.shader_precompile`). "Fifth SPU lane" is no longer on the page (it
 cannot work, Phase 64); its file key stays for testing.
