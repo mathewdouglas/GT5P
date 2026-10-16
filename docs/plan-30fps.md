@@ -5,6 +5,34 @@ Each step names its gate: the measurement that says it is done. Measure with
 `scratch\perf.ps1 -Tag <t> -N 3` (median of three, `FS_HIDE` on, no settings
 file) unless a step says otherwise. Every change gets a switch to undo it.
 
+## Status after Phase 63 (2026-10-17)
+
+- **Acura page:** a median of 29.6 fps against a cap of 29.97 (the vblank
+  now runs at 59.94 Hz).
+- **Ferrari page:** 25.1 fps median, 20 to 30 depending on the car pair.
+  The other dealers with more than two cars behave the same way.
+- **The critical path is the SPU render pass.** Frames take whole vblanks,
+  so a frame is 2 vblanks (33.4 ms) only while the pass, plus about 2 ms
+  around it, fits in that.
+- **Done:** steps 0 (stall detection), 2, 4 and 5b.
+- **Dropped:** step 3 (no GPU wait to hide). 5a and 5c measured nothing.
+- **Open:**
+  - step 1 (the stalls, now traced to two shapes of a ring-space deadlock,
+    Phase 63);
+  - 5d;
+  - GPU timestamps;
+  - step 6;
+  - pipelines built ahead of time;
+  - step 7 below.
+- **The step 5 gate (35 fps with drawing off) cannot be reached under
+  vblank pacing.** Read it as "the render pass in 28 ms or less on the
+  heaviest pair". Today that pair takes about 36 ms.
+- **The SPU runtime is done for now.** Phase 62 took 1.15x off the lanes'
+  time, and what is left of it is about 22%. Lane pinning (Phase 63) is
+  another 1.14x but waits on step 1.
+- **About 69% of the lanes' busy time is the render job's own code** (job
+  body `b01376080`). Step 7 is about that code.
+
 ## Where the time goes
 
 Frames are shown on a 16.7 ms vblank, so 30 fps needs every frame done in under
@@ -128,6 +156,88 @@ change nothing within noise; the ceiling stays about 23 fps. The main thread
 is not saturated (77%); `PDI:1` waits for the SPU workloads. The ceiling is
 the SPU job pipeline's latency, so 5b and the job lists' critical path come
 before any more PPU work.
+
+### 7. Native versions of the hot code
+
+The game's code runs natively compiled but as a faithful PS3: every SPU job
+runs on an emulated SPU, with 128 registers kept in memory, a 256 KB local
+store and DMA copies in and out. x86 has 16 vector registers, so the hot SIMD
+loops spill constantly; Phase 45 measured that a register cache cannot fix
+that.
+
+A native version is written for the PC from what the code does. It keeps
+its data in host registers and host memory, and can be split over more
+threads than the four lanes the title uses. The Yakuza port does this for
+its hottest SPU jobs.
+
+**Candidates.** Shares are of the render lanes' busy samples on the Ferrari
+page (`GT5P_SAMPLE=all GT5P_SAMPLE_GRAIN=16`, Phase 62's build). Lifted
+"functions" are fragments split at branch targets, so the units are address
+ranges of job body `b01376080`, which runs at LS `0x4000`.
+
+| # | Code | Share | What it looks like | Why it is a candidate |
+| --- | --- | --- | --- | --- |
+| 7a | Routine at `0xF400` (called from `0x8E4C` and `0x8F54`): setup `0xF620`, loop `0xF8C0`, tail `0xFDE0` | 22.6% | `0xF8C0` is a 146-instruction loop: 36% byte shuffles, 23% integer, 16% float (`fma`, `fnms`, `fcgt`), 8% selects, 12% local-store loads and stores, and a compare against `0xFFFF` (a strip-restart index). **Hypothesis:** a per-triangle test over an index buffer (facing and zero-area tests from cross products) that compacts the surviving indices. | One routine, one hot loop, the largest single share. If it is culling, the PC's GPU culls anyway, so a native version could also pass every triangle through (a deliberate, visible change, behind its own switch). |
+| 7b | `0x10418`-`0x10F80` (`0x10EE0` 6.8%, `0x10C18` 4.7%, `0x10418` 2.8%, `0x10938` 1.4%, ...) | 17.7% | Branchy, no loops inside the fragments; memory 25-32%, selects 13-16%, little float. No direct `brsl` callers, so it is entered by jumps. **Hypothesis:** per-vertex or per-attribute output formatting. | Second largest. Find its entry and its loop first. |
+| 7c | `0xB140`-`0xBCA0` (entries `0xB140`, `0xB640`, `0xBC80`; hot `0xBB50`, `0xB3E0`, `0xB240`) | 13.5% | Mixed float and shuffle, small loops. | Three small entry points, easier to check one at a time. |
+| 7d | `0xD0F8`-`0xD500` (entries `0xD0F8`, `0xD200`, `0xD340`, `0xD440`, `0xD500`) | 5.0% | Short float and memory loops (`0xD480`: 37% memory, 25% float). | Small and self-contained: a good first one to prove the method on. |
+| 7e | The ring-space wait at `0x4554`-`0x462C` | part of 5.9% | Polls a ring label by DMA, reading the decrementer each time. | Replace the poll with a wait on the label write (the FIFO walker writes it). Frees lane time while waiting, and is the place to break the Phase 63 deadlock. |
+| 7f | The sound job chain (`j65DD2F53` `0x1E8`, `0x220`, `0x234`; `jA95EC7E4` `0xA890`, `0xAD68`) | about a quarter of a core, always | The mixer and its DSP jobs. | Not on the frame's critical path, but always running; a native mixer frees most of that core on a 4- to 6-thread CPU. Risk: audible differences. |
+| 7g | PPU waits: `PDI:1` in `func_00BA97B0` and `func_00BA9510` (job-list counters, then `cellSpursGetWorkloadInfo` in a loop); Main's poll loop (`func_0091312C`, `func_00912E30`, `func_009131E0`, `func_0092CD68`) | about 1.6 cores of spinning | Busy-wait loops on guest memory. | A blocking wait, woken by the lane or group-end event, gives no fps here (12 threads) but frees cores on smaller CPUs. Small and checkable. |
+
+Regions 7a to 7d are about 59% of the lanes' busy time. At 2 to 4 times
+faster natively, the pass would be about 1.4 to 1.8 times shorter: the
+heaviest pair from about 36 ms to 20-26 ms, inside the 28 ms target.
+
+**How each one is done:**
+1. **Understand it first.**
+   - From the disassembly (`scratch/fnmix.py` for the instruction mix, the
+     callers and the loops; `tools/spu_disasm.py`), and from its inputs and
+     outputs in local store, traced on a live run.
+   - Write the behaviour up in `progress.md`: what it reads, what it writes,
+     the edge cases.
+   - The native code is written from that description, not pasted from the
+     lifted C (which is generated from the game and stays out of tracked
+     files).
+2. **Swap it in at the function registry.** A native function registered
+   for the same image and LS address replaces the lifted one, so the job
+   manager and the rest of the body are untouched.
+   - One switch for all of them, `SPU_NATIVE=0`, and one per candidate
+     (`SPU_NATIVE_OFF=7a,...`).
+   - A native version must leave registers and local store exactly as the
+     original would wherever later code reads them.
+3. **Check it against the lifted original:**
+   - **offline:** the Phase 45 harness (`scratch/rc/bench.c`) runs both on
+     the same random register and local-store state and compares every
+     register and every local-store byte (NaN payloads aside);
+   - **in game:** `SPU_NATIVE=check` runs both on copies of the context for
+     every call and reports the first difference, as `RSX_VTX_GPU=check`
+     does for vertices;
+   - **frames:** captures compared with the lifted build's, on the same car
+     pair.
+4. **Measure it within one boot** with an A/B switch (Phase 62's method:
+   `SPURS_LANE_CYC=1`, `scratch/abcyc.py`).
+
+**Order:**
+1. 7d, to prove the method on something small.
+2. 7a, the largest share.
+3. 7b and 7c.
+4. 7e together with step 1.
+5. 7g and 7f, for smaller CPUs.
+
+**Gate:** the heaviest car pair's render pass in 28 ms or less on the Ferrari
+page, and frames of two vblanks; no new stalls; captures match.
+
+**Risks:**
+- A native version that differs in a corner case (a degenerate triangle, a
+  NaN, a buffer boundary) corrupts geometry only now and then. The checker
+  mode and the captures are there for that.
+- Each version is specific to this executable (BCUS98158 v03.00); another
+  build needs its addresses found again (`config/targets.json` is the place
+  for them).
+- Copyright: the native code is new code written from observed behaviour,
+  like the HLE libraries; no game code or decompiled text goes into the
+  repository.
 
 ### 6. Check the result
 
