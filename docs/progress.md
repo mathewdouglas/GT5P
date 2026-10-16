@@ -9,6 +9,60 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 62 - The SPU runtime around the job code: 1.15x on the lanes (2026-10-17)
+
+**Result:**
+- On the Ferrari page the render lanes need 1.15 to 1.16 times less CPU per
+  pass, measured within one boot.
+- `perf.ps1 -Ferrari -N 6`: median 25.1 fps (24.3 to 29.2), against 23.3,
+  with no stalls.
+- Acura: 29.67, 29.47 and 29.6 fps (cap 29.97).
+
+**Measuring within one boot.** The car pair changes per visit, so builds
+compared across boots differ by more than the changes do.
+- `SPU_FAST_AB=1` with `SPURS_LANE_CYC=1` flips the new paths (`g_spu_fast`)
+  at every 5 s lane window. `scratch/abcyc.py <run.err>` compares the mean
+  lane CPU per run in "fast" windows against "slow" ones.
+- Two boots agree within about 2%.
+
+**Measuring where it goes.**
+- `GT5P_SAMPLE_GRAIN=16` makes the sampler's buckets 16 bytes; at 256 a
+  bucket was named after the function before the hot one (for example
+  `spu_recent_pcs` for `spu_task_launch_check`).
+- `GT5P_SAMPLE_TOP=<n>` sets how many buckets each table prints.
+- `scratch/lanesum.py` sums the lane tables of several rounds.
+- Before this phase, about 37% of a lane's busy samples were runtime around
+  the job code.
+
+**Changes**, all behind `g_spu_fast` (`SPU_FAST=0` restores the old paths):
+
+| Change | Cumulative, within one boot |
+| --- | --- |
+| Depth guard only past depth 1,000; lockstep tick only with lockstep on; tail-return test reordered; `SPU_ARGWATCH` read once (`getenv` per lane run); stack-reset and IRQ-restore checks only when armed | 1.04 to 1.05x |
+| `spu_indirect_branch` fast path: with no taskset registered, no switch set and no reserved address, resolve and tail-call before the long list of other titles' checks | 1.055 to 1.07x |
+| `spu_task_launch_check`'s common case inline (`spu_tlc`) in `SPU_DRAIN` and `spu_drain_call` | 1.10 to 1.13x |
+| `spu_drain_call` and `spu_img_restore` inline: after almost every call nothing is pending and the pc is the return address | 1.125x (one boot) |
+| The lifter turns `ila $rN,X` + `bi $rN` into a direct transfer to `X` (82 sites, the job code's interrupt windows); `SPU_LIFT_CONST_BI=0` at lift time | 1.12 to 1.14x |
+| `gcm_note_spu_put` uses the page tables instead of scanning the IO mappings on every SPU `PUT`; inline lookup memo in the fast path | 1.15 to 1.16x |
+
+**Also:**
+- `GCM_PARK_TIMEOUT_MS` (500): a kept park in an SPU ring that stays
+  unpatched that long is followed to `put` after all. It has not fired in
+  14 runs.
+- The entry stall (about 1 in 8) did not come back in 13 runs with
+  everything on. One earlier run stalled with only some of the changes in;
+  the shape was the same as before.
+- **Zero-size `PUT`s.** The rejected ones come from job body `0x01371A00` at
+  `0x762C`, a DMA issue whose size is `r88`, computed as end minus start.
+  They land on the park addresses the walker then waits at. Good runs show
+  them too, so they look like empty blocks; not settled.
+
+**Left:**
+- About 25% of lane time is still runtime: `spu_drain_call_impl`'s loop, the
+  fast path itself, DMA (`mfc_do_transfer` plus `memcpy`), channel reads,
+  and `longjmp` for interrupt returns (about 2%).
+- The rest is job code. `b01376080` `0xF8C0` alone is 15.6%.
+
 ## Phase 61 - The Ferrari page: what holds it under 30 fps (2026-10-16)
 
 **Result so far:**

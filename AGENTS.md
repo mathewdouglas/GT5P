@@ -471,6 +471,16 @@ Each corrects the one before.
 
   `SPURS_JL_SPU3`, `SPURS_LANE_CPUS` and `SPURS_LANE_STAGGER_US` are
   experiments that stall; leave them off.
+- **Phase 62 (SPU runtime):** the bookkeeping around lifted SPU code has
+  fast paths behind `g_spu_fast` (`SPU_FAST=0` for the old ones): render
+  lanes need 1.15 times less CPU, and Ferrari runs at a median 25 fps.
+  - Measure SPU changes within one boot: `SPU_FAST_AB=1 SPURS_LANE_CYC=1`,
+    then `scratch/abcyc.py`. Across boots the car pair changes the numbers
+    more than any change does.
+  - Profile with `GT5P_SAMPLE=all GT5P_SAMPLE_GRAIN=16 GT5P_SAMPLE_TOP=1500`
+    and `scratch/lanesum.py`; 256-byte buckets misname functions.
+  - The SPU lifter turns `ila $rN,X; bi $rN` into a direct transfer
+    (`SPU_LIFT_CONST_BI=0` at lift time to stop).
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

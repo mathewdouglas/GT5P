@@ -219,7 +219,16 @@ static int sample_rip(HANDLE th, unsigned long long base, unsigned long long* rv
     }
     ResumeThread(th);
     if (!ok) return 0;
-    *rva = ((c.Rip - base) & ~0xFFull) | tag;
+    /* GT5P_SAMPLE_GRAIN=<bytes> (a power of two, 2 to 256; default 256): the
+     * bucket size. A bucket is named after the symbol at its start, so with
+     * 256 a hot function starting mid-bucket is charged to the one before. */
+    static unsigned long long grain_mask = 0;
+    if (!grain_mask) {
+        unsigned g = 256;
+        if (const char* e = getenv("GT5P_SAMPLE_GRAIN")) { unsigned v = (unsigned)atoi(e); if (v >= 2 && v <= 256 && !(v & (v - 1))) g = v; }
+        grain_mask = ~(unsigned long long)(g - 1);
+    }
+    *rva = ((c.Rip - base) & grain_mask) | tag;
     return 1;
 }
 
@@ -446,7 +455,9 @@ static DWORD WINAPI sampler_all_thread(LPVOID)
         B* b = bt[t]; unsigned nb = nbt[t];
         fprintf(stderr, "[ps-sample] round=%d tid=%d cpu=%s %u samples, %u buckets, base 0x%llX\n",
                 round, t, t ? "lanes" : "rest", tot[t], nb, base);
-        for (int r = 0; r < 150; r++) {
+        static int s_top = -1;   /* GT5P_SAMPLE_TOP=<n>: buckets printed per table (150) */
+        if (s_top < 0) { const char* e = getenv("GT5P_SAMPLE_TOP"); s_top = e ? atoi(e) : 150; if (s_top < 1) s_top = 150; }
+        for (int r = 0; r < s_top; r++) {
             unsigned best = 0;
             for (unsigned q = 1; q < nb; q++) if (b[q].n > b[best].n) best = q;
             if (!nb || !b[best].n) break;
