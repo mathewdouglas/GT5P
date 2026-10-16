@@ -104,6 +104,7 @@ int  rsx_d3d12_backend_pump_messages(void);
 void cellGcmTickVBlank(void);
 void cellGcmTickFlip(void);
 void cellGcm_rsx_process_fifo(void);
+void cellGcm_fifo_kick_wait(unsigned ms);
 int  cellGcm_take_flip_pending(void);
 
 /* Live NV4097->D3D12 engine (libs/video/rsx_live_draw.c), RSX_LIVE_DRAW=1. */
@@ -237,6 +238,9 @@ struct SampThread {
 };
 struct ThreadCpu { DWORD tid; unsigned long long cpu, d; };
 
+/* GT5P_SAMPLE_PRESENT=1: the per-thread sampler always takes the present
+ * (FIFO walker) thread as one of its n, busy or not. */
+static DWORD s_samp_force_tid;
 static DWORD WINAPI sampler_thread(LPVOID p)
 {
     const int want = (int)(uintptr_t)p;
@@ -305,6 +309,9 @@ static DWORD WINAPI sampler_thread(LPVOID p)
         ns = 0;
         for (int pick = 0; pick < want; pick++) {
             int best = -1;
+            if (pick == 0 && s_samp_force_tid)
+                for (int j = 0; j < ncur; j++) if (cur[j].tid == s_samp_force_tid) { best = j; break; }
+            if (best < 0)
             for (int j = 0; j < ncur; j++)
                 if (cur[j].d && (best < 0 || cur[j].d > cur[best].d)) best = j;
             if (best < 0) break;
@@ -473,6 +480,7 @@ extern "C" void gt5p_start_sampler(void)
         return;
     }
     int n = atoi(e); if (n <= 0) n = 4; if (n > 8) n = 8;
+    if (getenv("GT5P_SAMPLE_PRESENT")) s_samp_force_tid = GetCurrentThreadId();
     CreateThread(NULL, 0, sampler_thread, (LPVOID)(uintptr_t)n, 0, NULL);
 }
 
@@ -524,11 +532,24 @@ static DWORD WINAPI present_thread(LPVOID)
     const char* sl = getenv("GT5P_PRESENT_SLEEP");
     const DWORD outer_sleep = sl ? (DWORD)atoi(sl) : 1;
 
-    ULONGLONG next_tick = GetTickCount64();
+    /* The sleep waits on the walker's kick event: a fence poll, or an SPU
+     * write to the block the walker is parked at (Phase 60), ends it early.
+     * GCM_FIFO_KICK=0 / GCM_WALK_WAKE=0 undo those. */
+    /* GT5P_VBLANK_HZ=<hz>: the vblank rate, 59.94 by default (the console's
+     * NTSC rate). It was a 16 ms step from GetTickCount64, 62.5 Hz, so the
+     * two vblanks a 30 fps frame has came to 32.0 ms instead of 33.4: a
+     * dealer page whose render pass took 31 ms flipped between two and three
+     * vblanks (Phase 60). 62.5 gives the old clock (a 31.25 fps ceiling). */
+    double vbl_hz = 59.94;
+    if (const char* e = getenv("GT5P_VBLANK_HZ")) { double h = atof(e); if (h >= 10 && h <= 240) vbl_hz = h; }
+    const LONGLONG vbl_period = (LONGLONG)((double)qf.QuadPart / vbl_hz);
+    auto qpc_now = []() { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; };
+    LONGLONG next_tick = qpc_now();
     for (;;) {
-        Sleep(outer_sleep);
+        cellGcm_fifo_kick_wait(outer_sleep);
         ps3_tl_tick();
         ULONGLONG now = GetTickCount64();
+        const LONGLONG now_q = qpc_now();
 
         /* Catch up on missed ticks, but not for longer than 100 ms at a
          * time: when one tick's work takes more than its 16 ms the backlog
@@ -536,7 +557,7 @@ static DWORD WINAPI present_thread(LPVOID)
          * thread away from the message pump for so long that Windows marked
          * the window "not responding". */
         int fired = 0;
-        while ((long long)(now - next_tick) >= 0 && fired < 240) {
+        while (now_q - next_tick >= 0 && fired < 240) {
             PROF_T(p_vbl, cellGcmTickVBlank());
             PROF_T(p_flip, cellGcmTickFlip());
             if (rsx_ok && cellGcm_take_flip_pending()) {
@@ -545,12 +566,12 @@ static DWORD WINAPI present_thread(LPVOID)
             }
             if (drain)
                 PROF_T(p_fifo, cellGcm_rsx_process_fifo());
-            next_tick += 16;          /* ~60 Hz */
+            next_tick += vbl_period;
             fired++; p_ticks++;
             if (GetTickCount64() - now >= 100) { fired = 240; break; }
         }
         if (fired >= 240)
-            next_tick = GetTickCount64();   /* fell behind -- resync */
+            next_tick = qpc_now();   /* fell behind -- resync */
 
         dump_threads();
 

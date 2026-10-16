@@ -458,6 +458,19 @@ Each corrects the one before.
   Mercedes and Ferrari now run at 22-23 fps. `scratch\dealer.ps1 -Moves
   "DOWN,RIGHT,RIGHT,RIGHT,RIGHT" -Enter` is Ferrari. Scripted directions are
   D-pad only (`PAD_HOLD_STICK=1`): the stick doubled every move.
+- **Phase 61 (Ferrari):** the cars change per visit, and with them the frame
+  rate: 20 to 28 fps. The SPU render pass costs 30.5 to 41 ms of CPU per
+  lane, against about 31 ms for 30 fps. `perf.ps1 -Ferrari` saves a window
+  shot per run. Changes:
+  - the contention byte is stored under the lock line (`SPURS_CONT_COH=0`);
+    this was a stall;
+  - texture-slot views sit past the per-draw windows;
+  - three more job bodies are lifted (`scratch/find_bodies.py`);
+  - the vblank runs at 59.94 Hz (`GT5P_VBLANK_HZ`);
+  - the walker wakes on the SPU write it waits for (`GCM_WALK_WAKE=0`).
+
+  `SPURS_JL_SPU3`, `SPURS_LANE_CPUS` and `SPURS_LANE_STAGGER_US` are
+  experiments that stall; leave them off.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

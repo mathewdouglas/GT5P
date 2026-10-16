@@ -9,6 +9,118 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 61 - The Ferrari page: what holds it under 30 fps (2026-10-16)
+
+**Result so far:**
+- Ferrari runs at 20 to 28 fps, depending on the car pair.
+- Two stalls are fixed and one is left.
+- Three more job bodies are lifted.
+- The vblank runs at 59.94 Hz.
+- The page is not at 30 fps yet.
+
+**The cars change per visit, and the speed with them.** Each visit shows a
+different pair, and every dealer with more than two cars does the same
+(reported by the user).
+- One boot is steady within ±3%. Boots differ from 20 to 30 fps, and the
+  draw count varies from 2,500 to 3,700.
+- `perf.ps1` now saves a window shot per run (`runN.png`), so a number can be
+  matched to its pair, and `-Ferrari` drives to the page (`$FerrariHold` in
+  `milestone.ps1`).
+- Measured pairs:
+
+| Pair | CPU per lane per render pass | fps |
+| --- | --- | --- |
+| F430 and F2007 (F1) | 30.5 ms | 27.3 |
+| 599 and F40 | 41.2 ms | 20.9 |
+
+**Where a frame goes** (`PS3_TIMELINE`, 43 ms frames):
+- The title kicks one render list per frame, workloads 0 and 1 in turn.
+- The pass runs on four lanes and lasts about 39 ms.
+- At the end, `PDI:1` sleeps (`usleep` about 6 ms) to the next vblank, flips
+  and kicks the next pass. A pass over two vblanks costs three.
+- With every draw skipped the pass is about 31 ms, but the slowest boot was
+  still 20 fps. The SPU work alone is over budget on the heavy pairs.
+- `SPURS_LANE_CYC=1` prints, per workload, the mean lane run in wall time
+  against the lane's own CPU time. They agree within 2% in every run: the
+  lanes compute for the whole pass and do not wait.
+- The FIFO walker keeps up. `GCM_WALK_STATS=1` counts about 9,300 parks a
+  second at unfilled blocks, so it waits on the jobs and not the other way
+  round.
+- `PDI:1` (80%) spins in `func_00BA97B0` on the pass. Main (80%) spins in a
+  polling loop of 75 code buckets. Neither is on the critical path.
+
+**Changes:**
+1. **Contention under the lock line** (`SPURS_CONT_COH=0` undoes it). This
+   is the stall the sampler and the timeline provoked.
+   - A thread polled workload 3 35 million times while it showed contention 3
+     with no lane busy.
+   - The kernel set and cleared the contention byte with plain stores. The
+     byte shares a line with the ready counts, which the policy modules
+     update by `GETLLAR`/`PUTLLC`. A store between a `PUTLLC`'s compare and
+     its commit was written back over, as Phase 54 found for the ready count.
+   - Now `spurs_cont_store` takes the lock line.
+   - Provoked runs, before: 1 stall in 4 with the sampler, 2 in 2 with the
+     timeline. After: 0 in 6 and 0 in 2.
+2. **Texture-slot views moved out of the way.** Each slot's view was written
+   at heap index `1 + slot`. That is over the render-target views (5 to 20)
+   and, from slot 31 on, over the per-draw windows. With Phase 60's 512 slots
+   it reached draw 30's window. Slot views now live past the per-draw
+   windows (`TEXSLOT_SRV_BASE`); `RSX_TEXSLOT_SRV_LOW=1` restores the old
+   place.
+3. **Three more job bodies lifted.**
+   - The bodies carry `0xC0DEC0DE` at +0x20. `scratch/find_bodies.py` scans
+     the executable for them: seven in all, four already listed.
+   - `0x0133A300` (944 bytes), `0x0133A700` (98,640) and `0x01360100`
+     (57,600) are in `wws_job_bodies` now, at LS `0x4000`, sized from their
+     headers: 89, 1,388 and 838 functions, no undecoded words. Each is
+     referenced from a data table. They have not been seen streaming yet;
+     races are the likely place.
+   - All 12 SPURS job images in the executable (header `4400A850 32000080`
+     at +0x10) are already captured.
+   - Two SPU ELFs, `deep_spucore.elf` and `ipc_spucore.elf`, are embedded.
+     No run so far creates a task or SPU thread group, so their use is
+     unknown.
+4. **The vblank at 59.94 Hz** (`GT5P_VBLANK_HZ`, 62.5 for the old clock).
+   - The tick was a 16 ms step, 62.5 Hz, so two vblanks were 32.0 ms against
+     the console's 33.4.
+   - The ceiling is now 29.97 fps. Acura: 29.53, 29.47 and 29.8 fps.
+5. **The walker wakes on the write it waits for** (`GCM_WALK_WAKE=0`).
+   - A parked walker records the address. An SPU `PUT` that covers it sets
+     the kick event, and the present loop now waits on that event
+     (`cellGcm_fifo_kick_wait`) instead of sleeping.
+   - 96% of parks end that way. No frame-rate change could be measured
+     through the per-boot spread.
+6. `spu_depth_guard`'s ring of recent drain sites is per thread. Every lane
+   wrote the shared one on every drain. The lockstep tick is skipped when
+   lockstep is off. No measurable change.
+
+**Tried and dropped:**
+- **`SPURS_JL_SPU3=1`** opens the render lists' SPU mask (`0F EF` at +0x2E
+  of the list line fetched into LS `0x80`) to SPU 3, for a fifth lane. The
+  page stalled as soon as SPU 3 took jobs. `SPURS_LLAR_LIST=1` lists the
+  `GETLLAR` lines that found it.
+- **`SPURS_LANE_CPUS=<list>`** gives each render lane its own core: a hint by
+  default, `SPURS_LANE_CPU_HARD=1` for a hard mask, `SPURS_LANE_CPU_WIDS`
+  for which workloads. One run reached 30.3 fps, but with the hard mask 1
+  run in 4 stalled, and the hint gave nothing measurable.
+- **`SPURS_LANE_STAGGER_US=<us>`** starts all later lanes together. At
+  300 µs, 4 of 5 runs never drew the page.
+- **An inline fast path for `spu_task_launch_check`** in `SPU_DRAIN`. Taken
+  out after 2 of 6 runs stalled at page entry (cause not shown).
+
+**Still open:**
+- A stall at page entry, about 1 run in 8 to 10: presents stop, and only
+  workload 4 is polled, idle. It looks like Phase 54's lost kick. It did not
+  appear in 8 runs with `SPURS_KEVLOG=4 GT5P_THREADS=2` on.
+- **SPU throughput.** The heavy pair needs about 1.35 times more for
+  30 fps.
+  - About 27% of a lane's busy samples are runtime bookkeeping around the
+    job code: the indirect-branch resolve and its debug checks, the
+    task-launch check, MFC transfers, the SPU write hook.
+  - The rest is job code; `b01376080` `0xF8C0` alone is 14%.
+- **Diagnostics added:** `GT5P_SAMPLE_PRESENT=1` keeps the present thread in
+  the per-thread sampler.
+
 ## Phase 60 - Dealers other than Acura froze on entry (2026-10-16)
 
 **Symptom.** Choosing any manufacturer but Acura showed its logo and then
