@@ -442,6 +442,12 @@ Each corrects the one before.
   wait plus a 30 ms SPU pass; the title alone does 29.3.
   `scratch\movshot.ps1` captures the opening movie, and
   `scratch\winping.ps1` checks that the window answers messages.
+- **Phase 59:** `GT5P_PRESENT_SLEEP` defaults to 1 ms, and lifted SPU code is
+  built with `SPU_LS_NO_PROBES` (`-DGT5P_SPU_PROBES=ON` keeps the probes).
+  That gives about 30.6 fps at the page. Never evict by shifting a cache that
+  others index by slot: the vertex-shader cache (4,096) never evicts, and the
+  pipeline cache (8,192, hashed) is emptied whole at a frame start when full.
+  Cache sizes print on the `[present-thread]` line.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

@@ -9,7 +9,7 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 59 - The FIFO walker, its sleep, and the SPU job code: 25.1 to 29.5 fps (2026-10-16)
+## Phase 59 - The FIFO walker, its sleep, the SPU job code and the shader caches: 25.1 to 30.6 fps (2026-10-16)
 
 ### Where the walker's time went
 
@@ -77,6 +77,46 @@ out-of-line call made per index.
 - **Result:** `perf.ps1 -N 4`: 30.3, 29.5, 29.7 and 29.5 fps, median
   **29.5**, no stalls. The vblank-paced maximum is 31.25. `RSX_VTX_GPU=check`
   is clean and captures are clean.
+
+### A run at 8 fps: the pipeline cache
+
+A user run fell to 8.4 fps at the Car Dealer page. The F3 overlay showed
+`fifo` at 109 ms a frame and the "Compiling shaders" badge on. That run had
+1080p, MSAA 2 and vsync off. The `fifo` time includes the walker waiting for
+the present thread at the frame handoff.
+
+- **The pipeline cache grows for a long time on one page.** The
+  `[present-thread]` line now prints the cache sizes. With those settings the
+  cache reached 449 pipelines in a minute, still growing as the cars change
+  colour. At 720p with MSAA 4 it reached 727. Vertex shaders stay at 56.
+- **The old 1,024-entry cache misbehaved when full.**
+  - It evicted its oldest entry, which could still be in use.
+  - It shifted every entry after it down one.
+  - It released the pipeline at once, while a frame in flight might hold it.
+  - It searched linearly.
+
+  A session over 1,024 pipelines would rebuild them in a cycle. Forcing that
+  (`RSX_PSO_CACHE_MAX=100`) gives 1.5 fps with the badge on. That is the
+  user's symptom; their run itself was not captured (no log when the exe is
+  started directly).
+- **The vertex-shader cache had the same eviction, worse.** At 256 entries it
+  shifted every slot, and records, pipelines and the new lookup memo name a
+  shader by slot. GPU fetch doubles the entries a program can take. This one
+  was not seen filling.
+
+**The fix.**
+- The pipeline cache holds 8,192 entries behind a hash index (`s_fpi`), and
+  entries never move. When full it stops caching, keeps the pipelines built
+  meanwhile aside, and is emptied whole at the next frame start after the
+  GPU wait.
+- The vertex-shader cache holds 4,096 entries and never evicts. When full, a
+  draw is dropped, with a log line.
+- Switches: `RSX_PSO_LINEAR=1` uses the linear search, and
+  `RSX_PSO_CACHE_MAX=<n>` tests the full path.
+
+`perf.ps1 -N 4 -Watch 15` with this: 30.8, 30.1 and 30.6 fps, median
+**30.6**. One run stalled: presents stopped with the walker idle (`fifo 0.00s`,
+ticks normal), the Phase 54 stall. `RSX_VTX_GPU=check` is clean.
 
 ### Results
 
