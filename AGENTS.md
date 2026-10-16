@@ -489,6 +489,18 @@ Each corrects the one before.
     walker 3 s and 8 s into any stall.
   - The freezes are the ring-space deadlock (lanes spinning at `0x4560`) or
     a list whose lanes all left with jobs queued; see Phase 63.
+- **Phase 64: the dealer-page freeze is fixed** (0 in 20 Ferrari visits).
+  - A WWS job list's header names its allowed SPUs at `+0x2F` (the render
+    lists say `0xEF`, no SPU 3). Each SPU writes a bookkeeping row at
+    `+0x40 + 16 * spuNum` with plain `PUT`s, and SPU 3's is queue 3's
+    progress row. Lanes outside the mask are no longer sent
+    (`SPURS_LANE_MASK=0` sends them).
+  - The SPU coherence registry holds 32 contexts (`SPU_COH_CTX_MAX`); it held
+    8 and this title has 17.
+  - `RSX_GPU_TIME` (on): the GPU's time per frame, on `[present-prof]` and in
+    F3. `SPU_ROWLOG=<line>,...` logs the writes to a line for the stall dump.
+  - The lifter's `stvx`, `stvlx`, `stvrx` and `dcbz` still bypass the
+    lock-line lock: suspect them if an SPU line ever loses a PPU write.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

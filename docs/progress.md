@@ -9,6 +9,75 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 64 - The dealer-page freeze: SPU 3 wrote over the progress row (2026-10-17)
+
+**Result:** 0 freezes in 20 Ferrari visits (`perf.ps1 -Ferrari -N 20`),
+against 5 in 26 over the two batches before the fix. Step 1's gate (no
+freezes in 10 runs) is met.
+
+**How a WWS job list reports progress** (the policy module's code at
+`0x3320`-`0x3540` and the title's wait at `func_00BA97B0`):
+- The header is the workload's data (`0x20022080` and `0x2002A100` for the
+  render lists). A list pointer per queue at `+0x30 + 4q`; the render lists
+  use queue 3 only, with its list at `+0x80`.
+- Queue 3's row is at `+0x70`. Halfword 0 is the head the PPU has
+  published. Halfword `spuNum + 2` is written by that SPU with a
+  `GETLLAR`/`PUTLLC` loop at `0x3488`: the lowest index among the jobs it
+  still has in flight on the queue, or `FFFF` when it has none.
+- The title waits until the smallest of halfwords 1-7 reaches the head plus
+  the run of non-empty entries after it.
+- **Each SPU also keeps a bookkeeping row of its own at `+0x40 + 16 *
+  spuNum`**, written with plain DMA `PUT`s: 16 bytes of `FF` on entry
+  (`0x27E0`) and a count with leftover register words on exit (`0x2808`).
+  Rows 0-2, which looked like unused queues (`00000000 1FFFFFFF ...`), are
+  SPUs 0-2's.
+
+**The cause.** SPU 3's bookkeeping row is queue 3's progress row.
+- The render lists exclude SPU 3: the SPU mask byte at header `+0x2F` is
+  `0xEF` (bit `0x80 >> spuNum`). So lane 3 never takes a job, but it still
+  entered and left the module, and its plain `PUT`s landed on the live row
+  between the other SPUs' atomic updates.
+- A slot could then hold a job its SPU had long finished, or `1FFF`. The
+  stalled rows show it: `0499 0499 0494 FFFF 1FFF FFFF 1FFF FFFF` has SPU
+  3's leftover words in its second half, and SPU 0 is stuck at `0494`.
+- Lane 3 was sent on the first eight dispatches of a list (until
+  `SPURS_LANE_PRUNE` left it out) and on every 64th after. The stalls fit:
+  dispatches 1, 1, 3, 5, 7 and 128.
+- Both of Phase 63's shapes follow from it. With a progress slot stuck the
+  title never closes the frame (shape 2), and an unfinished frame can leave
+  the walker at a block the next list's lanes wait behind (shape 1, by
+  inference: no capture of shape 1 since the fix).
+
+**The fix:** `SPURS_LANE_MASK` (on) sends a lane only if the list's mask
+allows its SPU (`=0` sends all). `[spurs-lane] wid=... allows SPUs mask
+0xEF` prints once per list.
+
+**Tried first, no effect:** sending back in a lane whose slot still named
+a job when it left (`SPURS_LANE_INFLIGHT=1`, now off). 3 stalls in 18: the
+re-entered module left again within microseconds, as it held no job.
+
+**Other defects found on the way:**
+- **The SPU coherence registry held 8 contexts**; this title has 17
+  policy contexts. Those past the eighth got no lost-reservation event and
+  waited for the 10 ms poll, which also misses a line changed and changed
+  back between polls. It holds 32 now (`SPU_COH_CTX_MAX=8` for the old).
+- **The lifter's vector stores bypass the lock-line lock** (`stvx`,
+  `stvlx`, `stvrx` and `dcbz` write guest memory directly: about 14,000
+  sites). Not changed: no evidence yet that one hits a line an SPU uses.
+
+**Tools:**
+- The stall dump prints each lane's ring descriptor (LS `0x1F080`: start,
+  end, head, label EA) and window registers, and each workload's header from
+  `+0x20` with its rows.
+- `SPU_ROWLOG=<line ea>,...`: the last 64 writes to each line (PPU stores,
+  `PUTLLC`s, DMA `PUT`s), printed with the stall dump, plus a 1 ms poller
+  that logs writes made outside the lock (host tid 1). With it on, no run
+  stalled (0 in 12).
+- **GPU timestamps** (`RSX_GPU_TIME`, on): the GPU's own time per frame on
+  the `[present-prof]` line (5 s average and maximum) and in F3. About 7 ms
+  on the menu, 20 ms on the Ferrari page (peaks to 30), at 4x MSAA shaded
+  per sample.
+
 ## Phase 63 - Lane placement, and the ring-space deadlock caught in the act (2026-10-17)
 
 **Pinning the render lanes is 1.14 times faster, and is off by default.**

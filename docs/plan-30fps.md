@@ -14,6 +14,8 @@ file) unless a step says otherwise. Every change gets a switch to undo it.
 - **The critical path is the SPU render pass.** Frames take whole vblanks,
   so a frame is 2 vblanks (33.4 ms) only while the pass, plus about 2 ms
   around it, fits in that.
+- **Phase 64:** step 1 is done (0 freezes in 20 Ferrari visits) and GPU
+  timestamps are in (about 20 ms of GPU per Ferrari frame).
 - **Done:** steps 0 (stall detection), 2, 4 and 5b.
 - **Dropped:** step 3 (no GPU wait to hide). 5a and 5c measured nothing.
 - **Open:**
@@ -83,6 +85,12 @@ they do not (a lane hand-off race is the standing hypothesis).
 Gate: no stalls in 10 runs. **Halfway (Phase 54):** the title's ready-count
 kicks were lost to a `PUTLLC` race; with that fixed, 3 stalls in 37 runs
 (one batch of 10 had none), against 7 in 38 before. The rest is open.
+
+**Done (Phase 64):** 0 freezes in 20 Ferrari visits. Lane 3, which the
+render lists' SPU mask (`0xEF` at header `+0x2F`) excludes, was still sent
+in, and the job manager's per-SPU bookkeeping row for SPU 3 is queue 3's
+progress row: its plain `PUT`s overwrote the other SPUs' progress.
+`SPURS_LANE_MASK` sends only the SPUs a list allows.
 
 ### 2. Cheap fixes on the present thread (about 2-3 ms)
 
