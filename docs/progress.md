@@ -9,6 +9,32 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 65 - Each dealer visited ran slower than the last (2026-10-17)
+
+**Reported:** go into a dealer, back out, go into another: the second runs
+at a much lower frame rate, the third lower still.
+
+**Reproduced** with `scratch/revisit.ps1 -UseSettings` (four dealers in a
+row at 1080p; back out with Right, Left, then a 2 s Circle, as the page
+ignores Circle until it has had input). Visits 1 and 2 ran at 30 fps,
+visit 3 at 3 to 5 and visit 4 at about 2, recovering at once on leaving.
+
+**The cause: the pipeline cache thrashed.** On the slow pages it filled its
+8,192 entries in seconds and was emptied several times a second; a frame's
+replay took 0.4 to 1.2 s. `PSOMISSDBG=2` (new: every 5 s, misses by the key
+field that differed) put 16,000 to 21,000 misses in 5 s on `unnorm`.
+- A program sampling a texel-addressed unit with no sample site to rescale
+  is compiled once for every texture size: its pipeline is cached under
+  `unnorm` 0 and its code hash goes in a set, so later lookups use 0.
+- That set was a list of 128. Past it, lookups kept the real `unnorm`,
+  missed the entry stored under 0, and compiled again on every draw. Each
+  dealer adds programs, so the list ran out on the third or fourth page.
+
+**The fix:** a hash set of 2,048, and an entry is stored under 0 only when
+its program is in the set (`RSX_UNNORM_KEYFIX=0` for the old way). The
+same four visits: 30, 30, 27-30 and 23-26 fps; the last is a heavier page
+(3,300 draws, replay 6 ms a frame, no rebuilding). No cache-full message.
+
 ## Phase 64 - The dealer-page freeze: SPU 3 wrote over the progress row (2026-10-17)
 
 **Result:** 0 freezes in 20 Ferrari visits (`perf.ps1 -Ferrari -N 20`),
