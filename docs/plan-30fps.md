@@ -247,21 +247,84 @@ vblanks, not three; no stalls; captures match the Phase 51 ones;
 
 ## Wider gains (any screen, not only the dealership)
 
-- **Compiler settings.** The lifted code is built at the default Release
-  optimisation for x86-64 baseline: no `/arch:AVX2` (or `-mavx2`), no link-time
-  optimisation. Both are measurable switches; PGO (profile-guided optimisation)
-  is a further step. Mind the build-note rule: options go on source groups,
-  never as definitions on the whole target, and full rebuilds need
-  `CMAKE_BUILD_PARALLEL_LEVEL=4`.
-- **5a above** applies to every screen; the menu's main thread is at 93% of a
-  core at 31 fps (it should run at 60).
-- **Pipelines built ahead of time.** Pipeline builds stall the frame thread
-  (the "Compiling shaders" badge). A D3D12 pipeline library or
-  `ID3D12Device1::CreatePipelineLibrary` cache, or building pipelines on a
-  worker thread from the shader cache at boot, removes those stalls.
-- **The SPU lifter.** Lane code spends most of its time in channel and MFC
-  helpers (`spu_rdch`, `mfc_submit`, `mfc_for`); fast paths for the common
-  channels help every SPU workload, sound included.
+Status as of Phase 63. Each item is a switch when it is done, and is
+measured within one boot where the per-visit car pair would otherwise hide
+it.
+
+**Not tried yet:**
+- **Compiler settings for the lifted code.**
+  - It is built at the default Release optimisation for baseline x86-64.
+  - `-mavx2` was measured on one hot SPU loop only, 1.01 to 1.05x (Phase 59);
+    never on the whole lifted PPU and SPU code, where 3-operand VEX
+    encodings would also cut register moves.
+  - Link-time optimisation and profile-guided optimisation (PGO, trained on
+    the dealer pages) are untried. PGO suits this code: huge, branchy, and
+    with a very uneven profile.
+  - Options go on source groups, never as definitions on the whole target,
+    and full rebuilds need `CMAKE_BUILD_PARALLEL_LEVEL=4`.
+  - AVX2 must stay optional: it would leave out CPUs without it.
+- **Pipelines built ahead of time.**
+  - A first visit to a dealer page compiles 500 to 800 shaders and
+    pipelines, a 20 to 28 s freeze with the badge up.
+  - Even with all of them cached, the page's first frame takes up to 8 s,
+    rebuilding pipelines from the cache on the replay thread (Phase 42's
+    first-entry stall).
+  - Options:
+    - a D3D12 pipeline library (`ID3D12PipelineLibrary`) saved beside the
+      shader cache, so cached pipelines load instead of being rebuilt;
+    - building them on worker threads from the cache at boot;
+    - compiling new ones off the replay thread and drawing without them for
+      a frame or two.
+- **Frames in flight on the GPU.**
+  - The replay thread starts each frame with a full `wait_for_gpu()`, so
+    recording frame N waits for the GPU to finish N-1. The FIFO walk already
+    overlaps the GPU.
+  - It gains nothing on this machine (the wait measured 0 on Acura and 2 to
+    6 ms on some Ferrari runs). It would help a weaker GPU by up to the
+    recording time, 5 to 7 ms a frame.
+  - Costs: one frame more of latency, and the risk of torn geometry from an
+    upload buffer reused too early (step 3).
+  - Set aside for now; it would be a "frames in flight" setting.
+- **Indirect branches without the resolver.**
+  - After Phase 62 the resolver, its lookup and the drain loop are still
+    about 10% of lane time.
+  - A per-call-site inline cache would serve most branches with one compare
+    and no call: the last target and its function, in the lifted code next
+    to each `bi`.
+  - So would more constant targets found at lift time: Phase 62 did
+    `ila`+`bi`, but not targets loaded from a constant table.
+- **Interrupt returns without `longjmp`.**
+  - The job manager's DMA interrupts return through `longjmp`, which on
+    Windows unwinds the stack: about 2% of lane time (`spu_restart_dispatch`,
+    `spu_irq_regs_maybe_restore`).
+  - A return that unwinds without the system unwinder (`__builtin_longjmp`,
+    or restructuring the drain loop so the handler returns normally) would
+    cut it. Risky, because it touches every SPU workload.
+- **Decrementer reads.**
+  - The ring-space poll reads the SPU decrementer on every pass, a
+    `QueryPerformanceCounter` call each time.
+  - Reading the time stamp counter (`rdtsc`), scaled once, would be cheaper
+    and is enough for a poll's timing.
+
+**Partly done:**
+- **The SPU channel and MFC paths.** Phase 62 added fast paths for the SPU
+  write hook and the drain. The DMA (`mfc_do_transfer`, its `memcpy`, and
+  the reserved-line scan on every `PUT`) and channel reads are still about
+  6% of lane time.
+- **Thread placement.**
+  - Pinning the render lanes to their own cores is 1.14x on the lanes
+    (Phase 63), but raises the freeze rate, so it is opt-in until step 1 is
+    fixed.
+  - Keeping the other busy threads off the lanes' cores is untried: the
+    sound chain, the replay thread, the FIFO walker. They could go on the
+    core lane 3 leaves idle.
+- **The menu's main thread** is at 93% of a core at 31 fps, against the
+  console's 60. 5a (inline guest memory access) measured nothing on the
+  dealer page and was not re-measured on the menu.
+
+**Measured, no gain:** 5a and 5c on the dealer page (Phase 55); an
+ideal-processor hint for the lanes (Phase 63); a register cache in the SPU
+lifter (Phase 45).
 
 ## What another ps3recomp port does
 
