@@ -9,6 +9,44 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 58 - The present's descriptor writes: 19.6 to 21.9 fps (2026-10-16)
+
+### Where the present's time went
+
+A timeline (`PS3_TIMELINE`, `scratch/tl.py --sum`) after Phase 57:
+- the present thread spends 25.6 ms a frame walking the FIFO and 13.2 ms
+  presenting;
+- each SPU render pass (workloads 0 and 1) lasts about 39 ms (max 58).
+
+`PERF=1` splits the present (`render_frame`, about 11.5 ms):
+- **prepass, 9.5 ms:**
+  - **SRV setup, 8 ms.** The prepass writes all 16 units of every draw every
+    frame. That is about 33,000 `CreateShaderResourceView` calls a frame,
+    nearly half of them null views, costing 6 ms. The `[PERF] record` line
+    now counts them.
+  - pipeline lookups, about 1 ms;
+- recording, about 2 ms.
+
+### The fix
+
+`RSX_SRV_CACHE` (default on) keeps what each per-draw SRV slot holds and
+skips a write the slot already has:
+- each entry holds a reference on its resource, so a released texture's
+  address cannot come back as a match for a new one;
+- the three other writers that can land in those slots clear the entry
+  (`srv_slot_forget`): the texture-slot view at heap slot `1 + slot` (slot
+  runs to 96), the render-target views at `5 + slot`, and `rtcube_srv`.
+
+The texture-slot views overlap the per-draw window of draws 0 to 4
+(`DRAW_SRV_BASE` is 32). That is an existing overlap, not investigated
+further.
+
+### Results
+
+- 98% of the writes are skipped (652,891 of 663,720 per 20 frames).
+- `render_frame` is about 6.5 ms a frame, from about 12.
+- `perf.ps1 -N 3`: 23.4, 21.9 and 21.9 fps, no stalls. Captures are clean.
+
 ## Phase 57 - Cross-frame vertex cache: 17.4 to about 19.6 fps (2026-10-16)
 
 Plan step 4a. All of it is in `libs/video/rsx_d3d12_backend.c` (ps3recomp).
