@@ -86,6 +86,13 @@ new every frame, and cannot be cached. What remains in the walk is the index
 handling, about 1.65 million indices a frame. The present itself takes about
 12 ms on the same thread.
 
+**Phase 58:** the present is off the walker (`RSX_PRESENT_THREAD`), and its
+descriptor writes are cached (`RSX_SRV_CACHE`): 25.1 fps. A frame is now
+about 8 ms of waiting for the flip, then a 30 ms SPU pass (max 35 to 39).
+The walker takes 26 ms of that pass. With drawing off the title reaches
+29.3 fps. What is left is a faster walk (index handling, method decode) and
+faster SPU job code (step 5).
+
 - **4a** Keep converted vertex data from frame to frame. The showroom and the
   cars barely change: find a candidate by draw metadata, compare its source
   bytes, and convert only what changed (as the Yakuza port does, below).
