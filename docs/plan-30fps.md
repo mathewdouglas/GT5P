@@ -60,7 +60,10 @@ kicks were lost to a `PUTLLC` race; with that fixed, 3 stalls in 37 runs
   two byte-at-a-time walks every draw.
 - `tex_snap_draw`: returns at once when no texture is volatile.
 
-### 3. CPU/GPU overlap (up to about 10 ms)
+### 3. CPU/GPU overlap (dropped, Phase 56)
+
+Measured: the GPU wait at frame start is 0, so there is nothing to overlap.
+The original text follows.
 
 Keep two sets of per-frame upload resources (vertices, constants, indices,
 texture staging) and wait only for the frame before last, instead of draining
@@ -70,6 +73,11 @@ happened in this code; Phase 34's gcm/cube note), so behind a switch and
 checked with captures.
 
 ### 4. Vertex conversion (about 15 ms, a third of the frame)
+
+**Phase 56:** 4b is in (`RSX_VTX_GPU`, with sparse calls left to the CPU):
+15.7 to 17.2 fps. Uploads still take about 21 ms of the walk, now index
+handling and the sparse calls; 4a (a cross-frame cache of converted
+vertices, as the Yakuza port has) is the next lever there.
 
 - **4a** Keep converted vertex data from frame to frame. The showroom and the
   cars barely change: find a candidate by draw metadata, compare its source
@@ -97,6 +105,9 @@ Gate: present thread at 28 ms a frame or less.
   and a fast path for them; the mutexes.
 
 Gate: `RSX_VTX_SKIP=1` reaches 35 fps or more.
+
+**5b done (Phase 56):** lane pool, kernel wake, idle-lane pruning, 1 ms
+stagger: title-only 23.4 to 29.3 fps.
 
 **Measured (Phase 55):** 5a (`GT5P_VM_INLINE`) and a pause in the 5c spin
 change nothing within noise; the ceiling stays about 23 fps. The main thread

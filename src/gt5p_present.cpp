@@ -28,6 +28,7 @@
 #include "vm.h"
 #include "ps3emu/thread_name.h"
 #include "gt5p_settings.h"
+#include "ps3emu/timeline.h"
 
 /* GT5P_THREADS=1: every 2 s, print each PPU thread's state and the guest
  * address of its last syscall/HLE call. "Runs its job loop but never loads
@@ -510,7 +511,8 @@ static DWORD WINAPI present_thread(LPVOID)
     /* Running totals of the same, never reset, for the profiler view
      * (gt5p_profview.cpp), which takes the difference at each present. */
     double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0;
-#define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_; } while (0)
+/* PS3_TIMELINE also gets each present (P) and FIFO walk (R), with its length. */
+#define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_;     if (g_tl_on && (&acc == &p_pres || &acc == &p_fifo)) ps3_tl_rec(&acc == &p_pres ? 'P' : 'R', 0, (uint32_t)(d_ * 1e6)); } while (0)
     if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); gt5p_start_shader_indicator(); }
 
     /* GT5P_PRESENT_SLEEP=<ms>: the outer cadence, 4 by default. The FIFO is
@@ -522,6 +524,7 @@ static DWORD WINAPI present_thread(LPVOID)
     ULONGLONG next_tick = GetTickCount64();
     for (;;) {
         Sleep(outer_sleep);
+        ps3_tl_tick();
         ULONGLONG now = GetTickCount64();
 
         /* Catch up on missed ticks, but not for longer than 100 ms at a

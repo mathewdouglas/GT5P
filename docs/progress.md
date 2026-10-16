@@ -9,6 +9,123 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 56 - SPU lanes rebuilt (title-only 23 to 29 fps); GPU vertex fetch (2026-10-16)
+
+### A timeline of the frame
+
+`PS3_TIMELINE=<start_s>,<length_s>` records, into memory and then
+`PS3_TIMELINE_OUT` (CSV), the events that pace a frame:
+- syscalls and HLE calls that blocked over 100 us;
+- SPURS kicks, dispatches and group ends, and each lane run;
+- workload-info changes, `usleep` asked against slept;
+- flips, FIFO walks and presents.
+
+`python scratch/tl.py <csv> <run.err> [frame] [--sum]` prints one frame in
+order, or per-frame totals. (Quote the value in PowerShell:
+`'PS3_TIMELINE=42,3'`, or the comma makes it an array.)
+
+**Title-only (`RSX_VTX_SKIP=1`), 43.6 ms frames before this phase:**
+
+| Part of the frame | Time |
+| --- | --- |
+| Flip to kick | 0-3 ms |
+| Kick to dispatch | 1.5-2 ms (the kernel's `Sleep(1)` poll) |
+| The render-job pass | about 31 ms, on four lanes started 3, 6 and 12 ms apart |
+| Tail | 4.5 ms of lanes cycling in 1 ms retries before the group ended |
+
+Workloads 0 and 1 alternate frames, one pass each, so the pass is the
+critical path.
+
+### 5b: the lanes
+
+| Change | Undo with |
+| --- | --- |
+| The kernel thread also wakes on a ready-count store or a group's end | `SPURS_KERN_WAKE=0` |
+| A pool of lane threads per workload, woken by an event, instead of threads made per dispatch | `SPURS_LANE_POOL=0` |
+| A lane that finds nothing in 8 dispatches in a row is left out (retried every 64th) | `SPURS_LANE_PRUNE=0` |
+| `SPURS_LANE_STAY` back to off: it made finished lanes cycle until the others were done | `SPURS_LANE_STAY=1` |
+| Lane runs timed with the performance counter (`GetTickCount64` moves in 15.6 ms steps, so "did work" was misjudged) | — |
+| Lane stagger 3 ms to 1 ms (0 still deadlocks the list set-up, Phase 41) | `SPURS_LANE_STAGGER_MS=3` |
+| `sys_timer_usleep` uses a high-resolution waitable timer | `PS3_USLEEP_HIRES=0` |
+
+- **Why lane 3 is left out.** It never got a job: the render lists' SPU mask
+  (`0xEF` at job list +0x2F) excludes SPU 3, so the lists run on four lanes,
+  probably as on the console.
+- **Result:** title-only **23.4 to 29.3 fps** (34.8 ms frames, pass about
+  26 ms, kick to dispatch 0.01 ms). The page draws on vblanks (62.5 Hz here),
+  so 30 fps means pass plus overhead within two vblanks every frame; the
+  slowest passes (up to 43 ms) still miss.
+- **Stagger 1 ms:** 0 stalls in 10 runs, each watched for a minute.
+
+### With drawing on
+
+- **No GPU wait.** `PERF=1` now reports the wait at frame start: 0. Plan
+  step 3 (CPU/GPU overlap) would gain nothing.
+- **The coupling.** The frame is the render pass in lockstep with the FIFO
+  walk: lanes wait for ring space (a quarter of lane time in the label poll),
+  and the walk spends about 26 ms a frame in indexed vertex uploads.
+- **Not the cadence.** `GT5P_PRESENT_SLEEP=1` or `0` changed nothing.
+
+### GPU vertex fetch (`RSX_VTX_GPU`, on)
+
+- **How it works.** Indexed triangle and strip uploads copy the guest's raw
+  vertex bytes for their index range into a 96 MB ring (`RSX_VTXGPU_MB`) and
+  write their indices rebased to that range. A shader variant
+  (`rsx_vp_decompile_gpufetch`) takes only `SV_VertexID` and decodes each
+  attribute from the ring (t20), with per-record descriptors in b2.
+- **Reuse.** Batches of one interleaved stream reuse or extend a recent
+  region, only when every byte of their range still matches the copy
+  (`RSX_VTXGPU_REUSE=0` to never reuse). Records merge as before when they
+  read the same region.
+- **Sparse calls go to the CPU.** Separate-array calls whose index range is
+  sparse (over 64 bytes per index, `RSX_VTXGPU_SPARSE`) are converted on the
+  CPU, which converts only the vertices used.
+- **Result:** 17.2 fps against 15.7 for the CPU path in the same session
+  (3 runs each). Copies are about 17 MB a frame; uploads still take about
+  21 ms of the walk, now mostly index handling and the sparse calls.
+
+**Two faults found on the way:**
+
+1. **A triangle list split across records.** The title sends lists as
+   batches of 256 indices, and 256 is not a multiple of 3. The CPU path only
+   ever drew them merged; any batch that becomes its own record starts
+   mid-triangle and joins the wrong vertices: sawtooth patches over the car
+   paint.
+   - The GPU path now carries the leftover indices into the next record
+     (`RSX_VTXGPU_NOCARRY=1` to see the fault).
+   - Merging off on the old CPU path (`RSX_MERGE=0`) shows the same patches.
+   - Most of the hypotheses tested before finding this (stale ring data,
+     decode, input masks, self-copies, cube targets) were masked by it.
+2. **Stale record flags.** Records are refilled field by field each frame,
+   and only the indexed path set the GPU-fetch flag. A quad or glyph draw
+   reusing a slot was replayed as GPU fetch: the scene vanished after a few
+   seconds and text broke.
+   - The flag is now stamped with the frame generation, like `ix_slot`
+     (`gf_slot`).
+
+**Also:**
+- `MAX_DRAWS` is 6144 to 12288.
+- Test switches:
+  - `RSX_VTX_GPU=check`: every GPU-fetch vertex decoded on the CPU from the
+    copy and compared with the converter.
+  - `RSX_VTXGPU_FLOATIN=1|2`: CPU floats through the GPU path, or through
+    the input assembler.
+  - `RSX_VTXGPU_TYPES`, `RSX_VTXGPU_ALLIN`, `RSX_VTXGPU_MERGE`,
+    `RSX_VTXGPU_MASKDUP`, `RSX_VTXGPU_PROBE`, `RSX_VTXGPU_DBG`.
+  - `RSX_MERGEDBG=1`: state compared across merged batches; all identical.
+- Diagnostics added: `[TEX] texture slots full`, `[FP] pipeline cache full`.
+
+### Test scripts
+
+- **Two game windows at once.** Piping a script into `Select-Object -First`
+  stops it before it closes the game, so runs overlapped (two games on one
+  CPU, every number wrong).
+  - The scripts now stop leftovers before launching (`Stop-Stragglers`) and
+    close the game in a `finally`.
+  - `scratch\winshot.ps1` captures the game window itself (`PrintWindow`) at
+    the page.
+  - `perf.ps1` and `cpu3.ps1` take `-MinDraws`.
+
 ## Phase 55 - PPU-side speed-ups measured: none moves the dealership (2026-10-16)
 
 Plan steps 5a and part of 5c, measured with `scratch\perf.ps1` against the

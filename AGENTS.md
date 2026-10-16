@@ -414,6 +414,17 @@ Each corrects the one before.
   blends with it. The dealership alternates car colours per visit; compare
   captures by colour name. `TEXRACE_FP=<fp>` checksums a program's bound
   textures at each draw.
+- **Phase 56 (lanes, GPU vertex fetch):** SPU lanes are a per-workload thread
+  pool woken by events (`SPURS_LANE_POOL`), the kernel wakes on kicks
+  (`SPURS_KERN_WAKE`), idle lanes are pruned, stagger is 1 ms: title-only
+  23 to 29 fps. Indexed uploads copy raw guest vertex bytes and the VS decodes
+  them (`RSX_VTX_GPU`, `=0` for the CPU path, `=check` to verify): 15.7 to
+  17.2 fps with drawing. A triangle list split over records must carry its
+  leftover indices (256-index batches): never let a batch become its own
+  record without that. `PS3_TIMELINE` + `scratch/tl.py` show what a frame
+  waits on; `scratch\winshot.ps1` captures the game window at the page.
+  Never pipe a run script into `Select-Object -First` (it skipped closing the
+  game; the scripts now close it in a `finally`).
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
