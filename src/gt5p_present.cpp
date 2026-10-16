@@ -37,6 +37,7 @@
 extern "C" const char* g_hle_inflight[];
 extern "C" unsigned ppu_thread_prof_pc(unsigned tid);
 
+static void dump_threads_now(int regs);
 static void dump_threads(void)
 {
     static int on = -1;
@@ -47,6 +48,11 @@ static void dump_threads(void)
     ULONGLONG now = GetTickCount64();
     if (now < next) return;
     next = now + 2000;
+    dump_threads_now(getenv("GT5P_THREADS")[0] == '2');
+}
+
+static void dump_threads_now(int regs)
+{
 
     static const char* kState[] = { "FREE", "RUNNING", "FINISHED", "DETACHED" };
     fprintf(stderr, "[threads]\n");
@@ -62,7 +68,7 @@ static void dump_threads(void)
          * racily from the live context. A thread spinning in a loop with no
          * calls shows what it is comparing (func_00BA97B0: r9 = the job
          * queue's row of per-SPU counters, r5 = the target). */
-        if (t->state == PPU_THREAD_STATE_RUNNING && getenv("GT5P_THREADS")[0] == '2') {
+        if (t->state == PPU_THREAD_STATE_RUNNING && regs) {
             const ppu_context* c = &t->ctx;
             uint32_t r9 = (uint32_t)c->gpr[9];
             fprintf(stderr, "      r3=%08X r4=%08X r5=%08X r9=%08X r31=%08X lr=%08X",
@@ -495,6 +501,33 @@ extern "C" void gt5p_start_sampler(void)
     CreateThread(NULL, 0, sampler_thread, (LPVOID)(uintptr_t)n, 0, NULL);
 }
 
+/* GT5P_STALL_DUMP (on; =0 off): once presents have run and then stop for
+ * 3 s, print the guest threads with registers, the SPURS workloads and the
+ * FIFO walker, once per stall. Costs nothing until then -- the stalls this is
+ * for vanish when any tracing is on. */
+extern "C" void cellSpurs_debug_dump(void);
+extern "C" void cellGcm_debug_dump(void);
+extern "C" void spurs_pm_debug_dump(void);
+static void stall_dump_check(unsigned presents_total)
+{
+    static int on = -1;
+    if (on < 0) { const char* e = getenv("GT5P_STALL_DUMP"); on = (e && *e == '0') ? 0 : 1; }
+    if (!on) return;
+    static unsigned last_n = 0; static ULONGLONG last_ms = 0; static int dumped = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (presents_total != last_n) { last_n = presents_total; last_ms = now; dumped = 0; return; }
+    /* At 3 s, and again at 8 s: whether the lanes' step counts moved. */
+    if (dumped >= 2 || presents_total < 200 || now - last_ms < (dumped ? 8000u : 3000u)) return;
+    dumped++;
+    fprintf(stderr, "[stall] no present for %llu ms after %u presents\n",
+            (unsigned long long)(now - last_ms), presents_total);
+    dump_threads_now(1);
+    cellSpurs_debug_dump();
+    spurs_pm_debug_dump();
+    cellGcm_debug_dump();
+    fflush(stderr);
+}
+
 extern "C" void gt5p_start_profview(void);
 extern "C" void gt5p_start_settings_ui(void);   /* F1 settings page: gt5p_settings_ui.cpp */
 extern "C" void gt5p_start_shader_indicator(void);   /* gt5p_shaderbusy.cpp */
@@ -525,7 +558,7 @@ static DWORD WINAPI present_thread(LPVOID)
     const int prof = getenv("GT5P_PRESENT_PROF") != nullptr;
     LARGE_INTEGER qf; QueryPerformanceFrequency(&qf);
     double p_vbl = 0, p_flip = 0, p_pres = 0, p_fifo = 0, p_pump = 0;
-    unsigned p_ticks = 0, p_pres_n = 0;
+    unsigned p_ticks = 0, p_pres_n = 0, p_pres_total = 0;
     ULONGLONG p_last = GetTickCount64();
     /* Running totals of the same, never reset, for the profiler view
      * (gt5p_profview.cpp), which takes the difference at each present. */
@@ -572,7 +605,7 @@ static DWORD WINAPI present_thread(LPVOID)
             PROF_T(p_vbl, cellGcmTickVBlank());
             PROF_T(p_flip, cellGcmTickFlip());
             if (rsx_ok && cellGcm_take_flip_pending()) {
-                PROF_T(p_pres, backend_present()); p_pres_n++;
+                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
                 gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
             }
             if (drain)
@@ -585,13 +618,14 @@ static DWORD WINAPI present_thread(LPVOID)
             next_tick = qpc_now();   /* fell behind -- resync */
 
         dump_threads();
+        stall_dump_check(p_pres_total);
 
         /* Drain again at the outer cadence: titles fence every render pass on
          * an RSX label the drain writes, and waiting a full 16 ms per fence
          * paces the guest to single-digit fps. */
         if (drain) {
             if (cellGcm_take_flip_pending() && rsx_ok) {
-                PROF_T(p_pres, backend_present()); p_pres_n++;
+                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
                 gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
             }
             PROF_T(p_fifo, cellGcm_rsx_process_fifo());

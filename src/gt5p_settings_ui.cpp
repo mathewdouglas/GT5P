@@ -118,9 +118,9 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.vblank_hz100; },
           [](Gt5pSettings& s, int v) { s.vblank_hz100 = v; }, nullptr },
         { L"PERFORMANCE", L"SPU lanes on own cores",
-          L"Experimental. Keep each SPU render lane on a CPU core of its own. Hint is a "
-          L"preference; Strict was faster at best but has frozen the dealer pages.",
-          "SPURS_LANE_CPUS", { {0, L"Off"}, {1, L"Hint"}, {2, L"Strict"} },
+          L"Experimental. Keep each SPU render lane on a CPU core of its own. Strict is about "
+          L"14% faster but a dealer page freezes about twice as often; Hint gains nothing.",
+          "SPURS_LANE_PIN", { {0, L"Off"}, {1, L"Hint"}, {2, L"Strict"} },
           [](const Gt5pSettings& s) { return s.lane_cores; },
           [](Gt5pSettings& s, int v) { s.lane_cores = v; }, nullptr },
         { L"PERFORMANCE", L"Fifth SPU lane",

@@ -9,6 +9,74 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 63 - Lane placement, and the ring-space deadlock caught in the act (2026-10-17)
+
+**Pinning the render lanes is 1.14 times faster, and is off by default.**
+- `SPURS_LANE_PIN_AB=1` (with `SPURS_LANE_CYC=1`) puts each render lane on a
+  core of its own in every other lane window, measured with
+  `scratch/abcyc.py --key pin`. Within one boot the lane wall time per run
+  fell 1.138x and 1.137x, and the CPU time with it: left to the scheduler,
+  two lanes often shared a core.
+- `spurs_lane_cpu` takes the cores from the processor topology, leaves out
+  the PPU core (`ppu_sched_mask`), and gives workload 0 the first hardware
+  thread and workload 1 the second. The two lists take alternate frames and
+  never share a logical CPU.
+- An ideal-processor hint gains nothing (`SPURS_LANE_PIN_AB=2`: 0.996x and
+  0.998x).
+- Pinned by default, Ferrari ran at a median 27.4 fps, against 25.1. But the
+  page froze in 5 of 25 runs, against about 3 in 40 unpinned with the same
+  fast paths.
+- Two causes were found and fixed:
+  - the core table was built lazily while all five lanes started together,
+    so a lane could read it half built (now built once, under a lock);
+  - pinned lanes now run above normal, like the sound chain and the replay
+    thread, so those cannot starve them.
+- The rate that remains is the deadlock below, which pinning makes more
+  likely.
+- So `SPURS_LANE_PIN` stays 0 by default. 2 (strict) is the settings page's
+  "SPU lanes on own cores", now experimental again. The setting's key is now
+  `lane_pinning`; the old `lane_cores` is read and ignored.
+
+**`GT5P_STALL_DUMP` (on).** The stalls vanish under any tracing, so the
+present thread waits until presents have run and then stopped for 3 s, and
+prints the state once, and again at 8 s:
+- every guest thread, with registers;
+- every SPURS workload's group state and the guest's contention and ready
+  bytes (`cellSpurs_debug_dump`);
+- each lane's SPU pc, link register, events, reservation and last DMA, with
+  its step count (`spurs_pm_debug_dump`);
+- the FIFO walker's get, put, park address and the word there
+  (`cellGcm_debug_dump`).
+
+It costs nothing until then. A page entry whose first frame takes over 3 s
+(shaders loading) also triggers it.
+
+**What the dumps show.** Two shapes, both with the walker parked at an
+unfilled block (`0xFFFFFFFF`) in an SPU command ring:
+
+1. **Lanes spin on ring space** (Phase 54's second shape).
+   - Workload 1 busy, four lanes in their runs at pc `0x4560`/`0x462C`
+     (job body `b01376080`'s ring-space wait), polling labels
+     `0x030004D0`-`0x03000510`, one per ring.
+   - Their step counts rose from 14 to 49 million in 5 s: they are
+     spinning, not blocked.
+   - The labels only move as the walker passes blocks, and the block the
+     walker waits for must come from a queued job that no lane is free to
+     run. Each side waits for the other.
+2. **Nobody is left to fill the block.**
+   - Workloads 0 and 1 idle, ready 0, and `PDI:1` in `func_00BA9510`
+     waiting on the list's progress row.
+   - The row reads `01AA 01AA 01A6 01A8 01A5 FFFF 01A7 FFFF`: counters
+     below the head, so jobs were still queued when the last lane left.
+   - The lane retry (Phase 56) only re-sends a lane while another is still
+     working.
+
+**Next:** either shape needs the list's own state.
+- For (2), re-dispatch a workload whose group ended with its list's
+  counters short of the head.
+- For (1), find which job owns the block the walker waits for, and why it
+  is not running.
+
 ## Phase 62 - The SPU runtime around the job code: 1.15x on the lanes (2026-10-17)
 
 **Result:**
