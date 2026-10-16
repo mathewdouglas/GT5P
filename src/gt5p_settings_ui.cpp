@@ -118,14 +118,15 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.vblank_hz100; },
           [](Gt5pSettings& s, int v) { s.vblank_hz100 = v; }, nullptr },
         { L"PERFORMANCE", L"SPU lanes on own cores",
-          L"Experimental. Keep each SPU render lane on a CPU core of its own. Strict is about "
-          L"14% faster but a dealer page freezes about twice as often; Hint gains nothing.",
+          L"Keep each SPU render lane on a CPU core of its own. Strict (the default) is about "
+          L"14% faster; Hint gains nothing; Off leaves them to Windows.",
           "SPURS_LANE_PIN", { {0, L"Off"}, {1, L"Hint"}, {2, L"Strict"} },
           [](const Gt5pSettings& s) { return s.lane_cores; },
           [](Gt5pSettings& s, int v) { s.lane_cores = v; }, nullptr },
         { L"PERFORMANCE", L"Fifth SPU lane",
           L"Experimental. Let the render jobs use SPU 3 as well, five lanes instead of four. "
-          L"Currently freezes the dealer pages; for testing only.",
+          L"Freezes the dealer pages: SPU 3's own bookkeeping row is the render lists' "
+          L"progress row. For testing only.",
           "SPURS_JL_SPU3", kOnOff,
           [](const Gt5pSettings& s) { return s.fifth_spu_lane ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.fifth_spu_lane = v != 0; }, nullptr },

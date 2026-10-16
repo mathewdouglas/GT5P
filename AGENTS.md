@@ -497,6 +497,9 @@ Each corrects the one before.
     (`SPURS_LANE_MASK=0` sends them).
   - The SPU coherence registry holds 32 contexts (`SPU_COH_CTX_MAX`); it held
     8 and this title has 17.
+  - Lane pinning is the default (`SPURS_LANE_PIN=2` from `src/main.cpp`,
+    Strict in settings): Ferrari median 28.2 fps against 24.8, 0 freezes
+    in 20. `SPURS_LANE_PIN=0` for the scheduler's placement.
   - `RSX_GPU_TIME` (on): the GPU's time per frame, on `[present-prof]` and in
     F3. `SPU_ROWLOG=<line>,...` logs the writes to a line for the stall dump.
   - The lifter's `stvx`, `stvlx`, `stvrx` and `dcbz` still bypass the

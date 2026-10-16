@@ -32,7 +32,7 @@ struct Gt5pSettings {
 
     /* [performance] */
     int vblank_hz100 = 5994;    /* the vblank clock, in 1/100 Hz: 5994 (console) or 6250 */
-    int lane_cores   = 0;       /* SPU render lanes on cores of their own: 0 off, 1 hint, 2 strict */
+    int lane_cores   = 2;       /* SPU render lanes on cores of their own: 0 off, 1 hint, 2 strict */
     bool fifth_spu_lane = false;    /* let the render lists use SPU 3 too (experimental) */
 
     /* [debug] */

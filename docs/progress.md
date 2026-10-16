@@ -13,7 +13,8 @@ hypothesis in the text itself.
 
 **Result:** 0 freezes in 20 Ferrari visits (`perf.ps1 -Ferrari -N 20`),
 against 5 in 26 over the two batches before the fix. Step 1's gate (no
-freezes in 10 runs) is met.
+freezes in 10 runs) is met. With that, lane pinning is on by default:
+Ferrari runs at a median 28.2 fps (24.8 unpinned), with no freeze in 20.
 
 **How a WWS job list reports progress** (the policy module's code at
 `0x3320`-`0x3540` and the title's wait at `func_00BA97B0`):
@@ -51,6 +52,25 @@ freezes in 10 runs) is met.
 **The fix:** `SPURS_LANE_MASK` (on) sends a lane only if the list's mask
 allows its SPU (`=0` sends all). `[spurs-lane] wid=... allows SPUs mask
 0xEF` prints once per list.
+
+**Lane pinning is the default now.** With the freeze gone, 20 Ferrari
+visits each (`perf.ps1 -Ferrari -N 20`):
+
+| Build | Stalls | Median fps |
+| --- | --- | --- |
+| Fix, coherence registry at 8 | 0 of 20 | 24.2 |
+| Fix, registry at 32 (default) | 0 of 20 | 24.8 |
+| Fix, registry at 32, lanes pinned (`SPURS_LANE_PIN=2`) | 0 of 20 | 28.2 |
+
+- `src/main.cpp` sets `SPURS_LANE_PIN=2` when nothing else has, and the
+  settings page's "SPU lanes on own cores" defaults to Strict. A
+  `gt5p_settings.toml` written before this says `"off"` (the old default)
+  and keeps it.
+- `spurs_lane_cpu` no longer wraps: on a CPU with fewer spare cores than
+  lane numbers, the lanes past them stay free rather than share a logical
+  CPU with another spinning lane.
+- One run in a later check of 4 missed a scripted press at dealer select
+  (the page was never entered; frames went on); not a freeze.
 
 **Tried first, no effect:** sending back in a lane whose slot still named
 a job when it left (`SPURS_LANE_INFLIGHT=1`, now off). 3 stalls in 18: the

@@ -731,6 +731,13 @@ int main(int argc, char* argv[])
      * 39). SPURS_READY_GATE=0 for the old every-pass dispatch. */
     if (!getenv("SPURS_READY_GATE")) _putenv_s("SPURS_READY_GATE", "1");
 
+    /* SPU render lanes on cores of their own (strict pinning): 1.14 times
+     * faster lanes, Ferrari at a median 28.2 fps against 24.8 free, and no
+     * freeze in 20 visits since Phase 64. The settings page's choice, set just
+     * above when settings are loaded, wins; this is for runs without them.
+     * SPURS_LANE_PIN=0 for the scheduler's placement. */
+    if (!getenv("SPURS_LANE_PIN")) _putenv_s("SPURS_LANE_PIN", "2");
+
     /* Ask for 1 ms timer resolution. Without it Sleep(1) lasts about 15.6 ms
      * on Windows, and the runtime paces the SPU job poll, the present thread
      * and guest usleep with short sleeps: the agreement screen ran at 12.8

@@ -15,7 +15,8 @@ file) unless a step says otherwise. Every change gets a switch to undo it.
   so a frame is 2 vblanks (33.4 ms) only while the pass, plus about 2 ms
   around it, fits in that.
 - **Phase 64:** step 1 is done (0 freezes in 20 Ferrari visits) and GPU
-  timestamps are in (about 20 ms of GPU per Ferrari frame).
+  timestamps are in (about 20 ms of GPU per Ferrari frame). Lane pinning
+  is now the default: **Ferrari median 28.2 fps** (24.8 unpinned).
 - **Done:** steps 0 (stall detection), 2, 4 and 5b.
 - **Dropped:** step 3 (no GPU wait to hide). 5a and 5c measured nothing.
 - **Open:**
