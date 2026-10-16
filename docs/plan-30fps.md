@@ -66,6 +66,12 @@ cores in threads created per dispatch.
 - `perf.ps1` detects a stalled run (no presents) and repeats it, reporting
   the stall count.
 - GPU timestamp queries: the GPU's own time per frame, which step 3 needs.
+  **Done (Phase 64):** a timestamp at each end of the frame's command list
+  (`RSX_GPU_TIME=0` turns it off). The `[present-prof]` line prints the 5 s
+  average and maximum, and F3 shows the last frame. On this machine (4x
+  MSAA, shaded per sample): about 7 ms on the menu and 20 ms on the Ferrari
+  page, with peaks to 30 ms. This GPU fits the 33 ms budget, but a GPU at
+  half its speed would not: there MSAA is the first setting to lower.
 
 ### 1. The dealership stall
 

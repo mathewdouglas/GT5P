@@ -532,6 +532,8 @@ extern "C" void gt5p_start_profview(void);
 extern "C" void gt5p_start_settings_ui(void);   /* F1 settings page: gt5p_settings_ui.cpp */
 extern "C" void gt5p_start_shader_indicator(void);   /* gt5p_shaderbusy.cpp */
 extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total);
+extern "C" volatile double g_rsx_gpu_ms_last, g_rsx_gpu_ms_sum, g_rsx_gpu_ms_max;
+extern "C" volatile long g_rsx_gpu_n;
 
 static DWORD WINAPI present_thread(LPVOID)
 {
@@ -637,9 +639,13 @@ static DWORD WINAPI present_thread(LPVOID)
                 rsx_ok = 0;           /* window closed */
         }
         if (prof && GetTickCount64() - p_last >= 5000) {
+            /* The GPU's own time per frame (RSX_GPU_TIME in the backend). */
+            const long gn = g_rsx_gpu_n;
+            const double gavg = gn ? g_rsx_gpu_ms_sum / gn : 0.0, gmax = g_rsx_gpu_ms_max;
+            g_rsx_gpu_ms_sum = 0; g_rsx_gpu_ms_max = 0; g_rsx_gpu_n = 0;
             fprintf(stderr, "[present-prof] 5 s: ticks=%u presents=%u | vblank %.2fs flip %.2fs "
-                            "present %.2fs fifo %.2fs pump %.2fs\n",
-                    p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_pump);
+                            "present %.2fs fifo %.2fs pump %.2fs | gpu %.2f ms avg %.2f max\n",
+                    p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_pump, gavg, gmax);
             p_vbl = p_flip = p_pres = p_fifo = p_pump = 0; p_ticks = p_pres_n = 0;
             p_last = GetTickCount64();
         }

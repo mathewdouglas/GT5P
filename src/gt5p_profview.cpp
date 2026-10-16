@@ -26,6 +26,9 @@
 #include "ppu_context.h"
 #include "sys_ppu_thread.h"
 
+/* The GPU's own time for the last frame (rsx_d3d12_backend.c, RSX_GPU_TIME). */
+extern "C" volatile double g_rsx_gpu_ms_last;
+
 namespace {
 
 /* One entry per present: when it happened, and what the present thread spent
@@ -184,8 +187,8 @@ void paint(HDC dc)
         fifo += a.fifo; pres += a.pres; pump += a.pump;
     }
     double avg = cnt ? sum / cnt : 0;
-    text(dc, 8, 6, RGB(255, 255, 255), "%5.1f fps   frame %5.1f ms avg  %5.1f worst",
-         cnt ? cnt / (sum > 0 ? sum : 1) : 0.0, avg * 1e3, worst * 1e3);
+    text(dc, 8, 6, RGB(255, 255, 255), "%5.1f fps  frame %5.1f avg %5.1f worst  gpu %4.1f ms",
+         cnt ? cnt / (sum > 0 ? sum : 1) : 0.0, avg * 1e3, worst * 1e3, (double)g_rsx_gpu_ms_last);
     text(dc, 8, 22, RGB(200, 200, 200), "present thread per frame: fifo %4.1f  present %4.1f  pump %4.1f ms",
          cnt ? fifo / cnt * 1e3 : 0, cnt ? pres / cnt * 1e3 : 0, cnt ? pump / cnt * 1e3 : 0);
 
