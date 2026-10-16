@@ -9,7 +9,7 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 59 - The FIFO walker's per-draw costs: 25.1 to 27.4 fps (2026-10-16)
+## Phase 59 - The FIFO walker, its sleep, and the SPU job code: 25.1 to 29.5 fps (2026-10-16)
 
 ### Where the walker's time went
 
@@ -46,6 +46,37 @@ out-of-line call made per index.
   every constant write), viewport z terms and projection-fallback class
   match the previous record of the same frame binds that record's slot.
   `DBG_ZOOM` and `VP_FIXPROJ` turn the reuse off.
+
+### The walker's sleep, and the SPU job code: 27.4 to 29.5 fps
+
+- **The present thread's outer sleep is now 1 ms by default (it was 4)**
+  (`GT5P_PRESENT_SLEEP`). Once the walk was short, a timeline showed walks of
+  2.5 to 4.4 ms with gaps of 4.2 to 4.5 ms between them: the sleep. The SPU
+  render jobs waited for ring space in those gaps.
+  - 1 ms gave 28.0 and 28.7 fps for the same CPU on the thread (45%).
+  - 0 gave 28.2 and 28.5 fps but spins a core.
+- **The lanes now bound the pass.** The walker is idle between bursts, and a
+  pass still lasts about 30 ms. Each lane thread shows about 40% CPU only
+  because the workload-0 and workload-1 pools alternate frames; within its
+  pass a lane is about 80% busy. `GT5P_SAMPLE=all` puts 14% of lane samples
+  in `b01376080` `0xF8C0`, Phase 45's culling loop.
+- **Every local-store access in lifted SPU code tested debug probes.**
+  - The probes are `SPU_LS_LOWREAD`, the LS watch, `SPU_SMC_WATCH` and the
+    WWS policy-module probes.
+  - `SPU_LS_NO_PROBES` (ps3recomp `spu_context.h`) compiles them out.
+  - The GT5P CMake now defines it for the lifted SPU sources only.
+    `-DGT5P_SPU_PROBES=ON` keeps them. The runtime and interpreter keep them
+    either way.
+  - On the hot loop, with the Phase 45 harness (`scratch/rc/bv.cmd`), the
+    gain is 1.09 to 1.13x. `-mavx2` adds only 1.01 to 1.05x and is not used.
+  - The harness flags 5 of 2,000 trials as differing in every variant,
+    including the one that only drops probes. All 5 are `r24`, the loop's
+    output pointer, fed by NaN payloads that x86 and SPU treat differently.
+    That is Phase 45's NaN-payload case: the random register state produces
+    NaNs, and SPU single precision has none.
+- **Result:** `perf.ps1 -N 4`: 30.3, 29.5, 29.7 and 29.5 fps, median
+  **29.5**, no stalls. The vblank-paced maximum is 31.25. `RSX_VTX_GPU=check`
+  is clean and captures are clean.
 
 ### Results
 

@@ -114,6 +114,15 @@ if(GT5P_ENABLE_SPU)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang")
         set_source_files_properties(${GT5P_SPU_LIFTED} PROPERTIES COMPILE_OPTIONS "-msse4.1")
     endif()
+    # The lifted job code without the local-store debug probes (SPU_LS_LOWREAD,
+    # the LS watch, SPU_SMC_WATCH, the WWS policy-module probes): every LS
+    # access tested them. 1.09-1.13x on the hottest render-job loop (Phase 59).
+    # The runtime and interpreter keep them. GT5P_SPU_PROBES=ON restores them
+    # in the lifted code too.
+    option(GT5P_SPU_PROBES "Keep the local-store debug probes in lifted SPU code" OFF)
+    if(NOT GT5P_SPU_PROBES)
+        set_source_files_properties(${GT5P_SPU_LIFTED} PROPERTIES COMPILE_DEFINITIONS "SPU_LS_NO_PROBES")
+    endif()
 else()
     set(GT5P_SPU_SOURCES "")
 endif()

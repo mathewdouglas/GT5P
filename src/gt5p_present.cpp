@@ -515,11 +515,14 @@ static DWORD WINAPI present_thread(LPVOID)
 #define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_;     if (g_tl_on && (&acc == &p_pres || &acc == &p_fifo)) ps3_tl_rec(&acc == &p_pres ? 'P' : 'R', 0, (uint32_t)(d_ * 1e6)); } while (0)
     if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); gt5p_start_shader_indicator(); }
 
-    /* GT5P_PRESENT_SLEEP=<ms>: the outer cadence, 4 by default. The FIFO is
-     * only walked once per pass, so the sleep is time the guest's command
-     * rings are not drained. */
+    /* GT5P_PRESENT_SLEEP=<ms>: the outer cadence, 1 by default (4 until
+     * Phase 59). The FIFO is only walked once per pass, so the sleep is time
+     * the guest's command rings are not drained. Once the walk itself got
+     * short, the 4 ms gaps between walks were where the SPU render jobs
+     * waited for ring space: 27.4 to about 28.3 fps at 1 ms, for no more CPU
+     * on this thread (0 spins a core for the same rate). */
     const char* sl = getenv("GT5P_PRESENT_SLEEP");
-    const DWORD outer_sleep = sl ? (DWORD)atoi(sl) : 4;
+    const DWORD outer_sleep = sl ? (DWORD)atoi(sl) : 1;
 
     ULONGLONG next_tick = GetTickCount64();
     for (;;) {
