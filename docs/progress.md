@@ -9,7 +9,7 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 58 - The present's descriptor writes: 19.6 to 21.9 fps (2026-10-16)
+## Phase 58 - Present: descriptor writes, then its own thread: 19.6 to 25.1 fps (2026-10-16)
 
 ### Where the present's time went
 
@@ -41,9 +41,53 @@ The texture-slot views overlap the per-draw window of draws 0 to 4
 (`DRAW_SRV_BASE` is 32). That is an existing overlap, not investigated
 further.
 
+### The present thread (`RSX_PRESENT_THREAD`, default on)
+
+The timeline also showed the present running inside the SPU render pass. In
+one frame the pass ran 11.4 to 43.5 ms and the present 13.3 to 19.6 ms.
+While the walker presented, it did not consume the FIFO, and the jobs
+stalled for ring space. Each pass lasted about walk plus present (33.5 ms).
+
+**The handoff.** The walker records into one `FrameSet` while a
+`present-replay` thread replays the other. A `FrameSet` holds a frame's
+records, its count, its upload-buffer parity, its per-slot flags, its clear
+colour, its present flag and its volatile-texture snapshots. Code reaches
+the set through `FR`, a thread-local override on the present thread and the
+recording set everywhere else. At a frame boundary the walker:
+1. waits for the present thread to finish the frame before, handling its
+   window messages after 20 ms;
+2. waits for the GPU to finish that frame (its own fence), since that
+   frame's upload half is the walker's next;
+3. swaps the sets and does the recording resets that used to sit at the end
+   of `render_frame_body`;
+4. hands the frame over.
+
+**Two things changed with the move.**
+- The title-bar text is set from the walker: `SetWindowText` from the
+  present thread would wait for the window's thread, which may be waiting
+  for it.
+- The volatile-texture table now has a lock, because the replay marks it and
+  the recorder reads it.
+
+**A known gap.** Texture bytes and fragment-program code are still read from
+guest memory at replay, now up to a frame later than before. A title that
+reuses an address within that window would show it. The movie
+(volatile textures) plays without tearing (`scratch\movshot.ps1`).
+
+`[present-thread]` prints every 5 s: replay time per frame, and how long the
+walker waited for the thread and for the GPU. At the Car Dealer page the
+replay takes 6.7 to 7.3 ms a frame and the walker waits 0.
+
+`RSX_PRESENT_THREAD=0` replays on the walker as before (22.4 fps).
+
 ### Results
 
-- 98% of the writes are skipped (652,891 of 663,720 per 20 frames).
+- **Present thread**, `perf.ps1 -N 6 -Watch 20`:
+  - 24.2, 25.3, 25.7, 26.0, 23.3 and 25.1 fps, median **25.1**;
+  - 0 of 6 stalled;
+  - `RSX_VTX_GPU=check`: 0 of 1.6 billion fetches differ;
+  - captures of the page and of the movie are clean.
+- **Descriptor writes skipped:** 98% (652,891 of 663,720 per 20 frames).
 - `render_frame` is about 6.5 ms a frame, from about 12.
 - `perf.ps1 -N 3`: 23.4, 21.9 and 21.9 fps, no stalls. Captures are clean.
 
