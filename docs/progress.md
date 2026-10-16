@@ -9,7 +9,7 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 65 - Each dealer visited ran slower than the last (2026-10-17)
+## Phase 65 - Dealers visited in a row, and shaders built in the background (2026-10-17)
 
 **Reported:** go into a dealer, back out, go into another: the second runs
 at a much lower frame rate, the third lower still.
@@ -34,6 +34,54 @@ field that differed) put 16,000 to 21,000 misses in 5 s on `unnorm`.
 its program is in the set (`RSX_UNNORM_KEYFIX=0` for the old way). The
 same four visits: 30, 30, 27-30 and 23-26 fps; the last is a heavier page
 (3,300 draws, replay 6 ms a frame, no rebuilding). No cache-full message.
+
+### Shaders built in the background ("Precompile shaders", on)
+
+**Where shader time goes** (`RSX_PSO_TIMING=1`, new: a pipeline miss split
+into HLSL, DXBC and the driver's pipeline build, every 5 s):
+- With the disk cache warm, a dealer entry has about 300 misses costing
+  150 ms in all (45 ms HLSL, 30 ms reading DXBC, 80 ms in the driver). Not
+  the problem.
+- With an empty cache (`RSX_SHADER_CACHE=<empty dir>`), the frame thread
+  compiled 161 shaders one at a time, 0.1-0.5 s each, and the first dealer
+  page had not appeared after 80 s.
+- Shaders cannot be built before the game has shown them once: they come
+  from its data as it plays. What can change is when and where.
+
+**The change** (`RSX_SHADER_ASYNC=1`, set by GT5P and by the settings
+page's "Precompile shaders", on by default):
+- A pixel or vertex shader not on disk is handed to a pool of worker
+  threads (half the logical CPUs, below normal priority;
+  `RSX_SHADER_WORKERS`). The frame's pre-pass looks every draw up before
+  recording, so all of a new page's shaders are queued in the first frame
+  and compile in parallel.
+- A worker writes the DXBC where the disk cache reads it; finishing is the
+  file appearing. A failed compile is done again on the frame thread, which
+  reports it as before.
+- Until then the draw is left out (`VS_PENDING` for vertex shaders, dropped
+  at record time on the GPU-fetch path, skipped at replay otherwise).
+- Waiting pipelines and vertex programs are remembered, so the HLSL is not
+  rebuilt for them every frame (it took 4.2 s of every 5 s before).
+- Empty cache, three runs of two new dealers each: the first page shows
+  within about 3 s and runs at 17-27 fps for 6-9 s while it fills in, then
+  30; the second takes 3-6 s. No freeze in the six visits.
+
+**Holding the picture triggers the ring-space deadlock.** Showing the last
+complete frame instead of a half-drawn one (not calling `Present` while a
+draw waits) froze the page in 2 of 3 empty-cache first visits: lanes
+spinning at `0x4560`, one lane needing to wrap with its label at its ring's
+start (`label=2A6BDF80`, start + size `2A6C2F80`). So Phase 63's first shape
+is still a latent race, which the Phase 64 fix made rare (none in 60+
+visits) but did not remove. `RSX_SHADER_ASYNC_HOLD=1` keeps that behaviour as
+a way to reproduce it; by default partial frames are shown. Not followed up
+yet: workloads 0 and 1 write the same ring memory per SPU (both lane-0 rings
+start at `2A2BDF80`) with separate heads and labels, as our lane contexts
+are per (workload, SPU); on the console both workloads would share the SPU's
+local store.
+
+**Settings page:** "Precompile shaders" (VIDEO, on; key
+`video.shader_precompile`). "Fifth SPU lane" is no longer on the page (it
+cannot work, Phase 64); its file key stays for testing.
 
 ## Phase 64 - The dealer-page freeze: SPU 3 wrote over the progress row (2026-10-17)
 

@@ -92,12 +92,18 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.shader_cache ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_cache = v != 0; }, nullptr },
         { L"VIDEO", L"Shader compile indicator",
-          L"Show \"Compiling shaders\" in the corner while the game builds shaders. The picture "
-          L"stops meanwhile; this says why.",
+          L"Show \"Compiling shaders\" in the corner while the game builds shaders.",
           "GT5P_SHADER_INDICATOR", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_indicator ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_indicator = v != 0; },
           [](int v) { gt5p_shader_indicator_enable(v); } },
+        { L"VIDEO", L"Precompile shaders",
+          L"Build new shaders on background threads, all at once, instead of stopping the "
+          L"picture to build them one by one. A new screen shows at once, its last details a "
+          L"moment later. Needs the shader cache.",
+          "RSX_SHADER_ASYNC", kOnOff,
+          [](const Gt5pSettings& s) { return s.shader_precompile ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.shader_precompile = v != 0; }, nullptr },
         { L"INPUT", L"PlayStation / other controllers",
           L"Read DualSense, DualShock, Switch and other controllers through SDL2.dll. Xbox "
           L"controllers work either way.",
@@ -123,13 +129,9 @@ const std::vector<Item>& items()
           "SPURS_LANE_PIN", { {0, L"Off"}, {1, L"Hint"}, {2, L"Strict"} },
           [](const Gt5pSettings& s) { return s.lane_cores; },
           [](Gt5pSettings& s, int v) { s.lane_cores = v; }, nullptr },
-        { L"PERFORMANCE", L"Fifth SPU lane",
-          L"Experimental. Let the render jobs use SPU 3 as well, five lanes instead of four. "
-          L"Freezes the dealer pages: SPU 3's own bookkeeping row is the render lists' "
-          L"progress row. For testing only.",
-          "SPURS_JL_SPU3", kOnOff,
-          [](const Gt5pSettings& s) { return s.fifth_spu_lane ? 1 : 0; },
-          [](Gt5pSettings& s, int v) { s.fifth_spu_lane = v != 0; }, nullptr },
+        /* "Fifth SPU lane" (fifth_spu_lane, SPURS_JL_SPU3) is left off the page:
+         * it cannot work, as SPU 3's own bookkeeping row is the render lists'
+         * progress row (Phase 64). The file key stays, for testing. */
         { L"DEBUG", L"Runtime log",
           L"The full runtime log. Auto keeps it off when the game is started by hand. On makes "
           L"the game stutter.",

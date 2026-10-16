@@ -509,6 +509,15 @@ Each corrects the one before.
   ran out (`RSX_UNNORM_KEYFIX=0` for the old way). `PSOMISSDBG=2` names the
   key field behind pipeline misses; `scratch\revisit.ps1` visits N dealers
   in a row (a 2 s Circle backs out, after any other press on the page).
+  - **Shaders not on disk compile on a worker pool** (`RSX_SHADER_ASYNC=1`,
+    set by `src/main.cpp`; settings "Precompile shaders", on). Draws wait
+    out of the frame meanwhile. An empty cache's first dealer page shows
+    within about 3 s instead of over a minute. Test cold with
+    `RSX_SHADER_CACHE=<empty dir>`, never by moving `shadercache/`.
+    `RSX_PSO_TIMING=1` splits miss time.
+  - `RSX_SHADER_ASYNC_HOLD=1` (hold the last full picture) brings Phase
+    63's first deadlock shape back in 2 of 3 cold visits: that race is
+    still there, only rare.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

@@ -738,6 +738,13 @@ int main(int argc, char* argv[])
      * SPURS_LANE_PIN=0 for the scheduler's placement. */
     if (!getenv("SPURS_LANE_PIN")) _putenv_s("SPURS_LANE_PIN", "2");
 
+    /* Shaders not in the disk cache compile on background threads, all of a
+     * frame's at once, instead of one by one on the frame thread (Phase 65:
+     * an empty cache kept the first dealer page away for over a minute). The
+     * settings page's "Precompile shaders" wins; RSX_SHADER_ASYNC=0 for the
+     * old way. */
+    if (!getenv("RSX_SHADER_ASYNC")) _putenv_s("RSX_SHADER_ASYNC", "1");
+
     /* Ask for 1 ms timer resolution. Without it Sleep(1) lasts about 15.6 ms
      * on Windows, and the runtime paces the SPU job poll, the present thread
      * and guest usleep with short sleeps: the agreement screen ran at 12.8

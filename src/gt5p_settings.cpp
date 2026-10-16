@@ -38,7 +38,7 @@ bool         g_enabled = false;
 const char* const kEnvNames[] = {
     "GT5P_RESOLUTION", "RSX_MSAA", "RSX_PRESENT_SYNC", "RSX_SHADER_CACHE", "GT5P_SHADER_INDICATOR",
     "PAD_NO_SDL", "PAD_NO_KEYBOARD", "PS3_VERBOSE",
-    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3",
+    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3", "RSX_SHADER_ASYNC",
 };
 bool g_env_set[sizeof kEnvNames / sizeof kEnvNames[0]];
 
@@ -186,7 +186,7 @@ bool known_key(std::string_view section, std::string_view key)
     static const struct { const char* section; const char* key; } kKnown[] = {
         {"video", "resolution"},     {"video", "msaa"},
         {"video", "vsync"},          {"video", "shader_cache"},
-        {"video", "shader_indicator"},
+        {"video", "shader_indicator"}, {"video", "shader_precompile"},
         {"input", "sdl_controllers"}, {"input", "keyboard"},
         {"performance", "vblank_hz"}, {"performance", "lane_pinning"},
         {"performance", "fifth_spu_lane"},
@@ -223,6 +223,7 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
     read_bool(tbl["video"]["vsync"], "video.vsync", s.vsync);
     read_bool(tbl["video"]["shader_cache"], "video.shader_cache", s.shader_cache);
     read_bool(tbl["video"]["shader_indicator"], "video.shader_indicator", s.shader_indicator);
+    read_bool(tbl["video"]["shader_precompile"], "video.shader_precompile", s.shader_precompile);
     read_bool(tbl["input"]["sdl_controllers"], "input.sdl_controllers", s.sdl_controllers);
     read_bool(tbl["input"]["keyboard"], "input.keyboard", s.keyboard);
     read_vblank(tbl["performance"]["vblank_hz"], s.vblank_hz100);
@@ -242,6 +243,7 @@ void apply_env(const Gt5pSettings& s)
      * backend keeps its own default folder. */
     if (!s.shader_cache) set_default_env("RSX_SHADER_CACHE", "0");
     if (!s.shader_indicator) set_default_env("GT5P_SHADER_INDICATOR", "0");
+    set_default_env("RSX_SHADER_ASYNC", s.shader_precompile ? "1" : "0");
     /* The pad switches test for presence, so only the "off" case sets one. */
     if (!s.sdl_controllers) set_default_env("PAD_NO_SDL", "1");
     if (!s.keyboard)        set_default_env("PAD_NO_KEYBOARD", "1");
@@ -264,6 +266,7 @@ void reflect_env(Gt5pSettings& s)
     if (const char* e = getenv("RSX_PRESENT_SYNC")) s.vsync = atoi(e) != 0;   /* as the backend reads it */
     if (const char* e = getenv("RSX_SHADER_CACHE")) s.shader_cache = !(e[0] == '0' && !e[1]);
     if (const char* e = getenv("GT5P_SHADER_INDICATOR")) s.shader_indicator = e[0] != '0';
+    if (const char* e = getenv("RSX_SHADER_ASYNC")) s.shader_precompile = e[0] == '1';
     s.sdl_controllers = getenv("PAD_NO_SDL") == nullptr;
     s.keyboard        = getenv("PAD_NO_KEYBOARD") == nullptr;
     if (const char* e = getenv("PS3_VERBOSE")) s.verbose_log = (e[0] && e[0] != '0') ? 1 : 0;
@@ -319,9 +322,14 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "# every run (the first visit to a screen can stutter while they are).\n"
          "# [RSX_SHADER_CACHE, \"0\" = off]\n"
          "shader_cache = " << (s.shader_cache ? "true" : "false") << "\n"
-         "# Show \"Compiling shaders\" over the game while it is building them\n"
-         "# (the picture stops meanwhile). [GT5P_SHADER_INDICATOR]\n"
+         "# Show \"Compiling shaders\" over the game while it is building them.\n"
+         "# [GT5P_SHADER_INDICATOR]\n"
          "shader_indicator = " << (s.shader_indicator ? "true" : "false") << "\n"
+         "# Compile shaders the game has not shown before on background threads, all\n"
+         "# at once, instead of stopping the picture to build them one by one. A new\n"
+         "# screen appears at once and its last details a moment later. Needs the\n"
+         "# shader cache. [RSX_SHADER_ASYNC]\n"
+         "shader_precompile = " << (s.shader_precompile ? "true" : "false") << "\n"
          "\n"
          "[input]\n"
          "# PlayStation, Switch and other controllers through SDL2.dll beside the exe.\n"

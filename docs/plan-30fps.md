@@ -25,7 +25,7 @@ file) unless a step says otherwise. Every change gets a switch to undo it.
   - 5d;
   - GPU timestamps;
   - step 6;
-  - pipelines built ahead of time;
+  - pipelines built ahead of time (background compiling is in, Phase 65);
   - step 7 below.
 - **The step 5 gate (35 fps with drawing off) cannot be reached under
   vblank pacing.** Read it as "the render pass in 28 ms or less on the
@@ -290,6 +290,11 @@ it.
     - building them on worker threads from the cache at boot;
     - compiling new ones off the replay thread and drawing without them for
       a frame or two.
+  - **Phase 65: the third option is in** ("Precompile shaders", on). New
+    shaders compile on a worker pool and their draws wait out; an empty
+    cache's first dealer page shows within about 3 s (it took over a
+    minute). Measured with a warm cache, a page entry's misses now cost only
+    about 150 ms in all, so the first two options would gain little here.
 - **Frames in flight on the GPU.**
   - The replay thread starts each frame with a full `wait_for_gpu()`, so
     recording frame N waits for the GPU to finish N-1. The FIFO walk already
