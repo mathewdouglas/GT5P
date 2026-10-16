@@ -425,6 +425,11 @@ Each corrects the one before.
   waits on; `scratch\winshot.ps1` captures the game window at the page.
   Never pipe a run script into `Select-Object -First` (it skipped closing the
   game; the scripts now close it in a `finally`).
+- **Phase 57 (cross-frame vertex cache):** vertex streams that repeat from
+  frame to frame are copied once into a persistent area of `s_vraw`;
+  `RSX_VTXCACHE=0` turns it off, `RSX_VTXCACHE_VERIFY=draw` compares every
+  draw. It gives about 19.6 fps. Half of each frame's indexed draws are the
+  SPU's output ring, new every frame. `RSX_XFSTAT=1` measures repetition.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

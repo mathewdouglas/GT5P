@@ -79,6 +79,13 @@ checked with captures.
 handling and the sparse calls; 4a (a cross-frame cache of converted
 vertices, as the Yakuza port has) is the next lever there.
 
+**Phase 57:** 4a is in (`RSX_VTXCACHE`), as a cache of the raw streams the
+GPU decodes rather than of converted vertices. About 19.6 fps; uploads went
+from 21 to 12.5 ms. Half of each frame's uploads are the SPU's output ring,
+new every frame, and cannot be cached. What remains in the walk is the index
+handling, about 1.65 million indices a frame. The present itself takes about
+12 ms on the same thread.
+
 - **4a** Keep converted vertex data from frame to frame. The showroom and the
   cars barely change: find a candidate by draw metadata, compare its source
   bytes, and convert only what changed (as the Yakuza port does, below).

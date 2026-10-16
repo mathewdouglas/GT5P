@@ -9,6 +9,103 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 57 - Cross-frame vertex cache: 17.4 to about 19.6 fps (2026-10-16)
+
+Plan step 4a. All of it is in `libs/video/rsx_d3d12_backend.c` (ps3recomp).
+
+### What repeats from frame to frame
+
+`RSX_XFSTAT=1` keys every indexed upload by where it reads from: the index
+array, its range, and the vertex layout and offsets. It hashes the index
+bytes and the bytes of each referenced vertex. Every 5 s it prints how many
+uploads match the frame before, or two frames before. It also splits upload
+time by repeated against new and by GPU fetch against CPU. (It slows the
+frame; use it only to measure.) `RSX_XFSTAT_DUMP=<s>` writes every call of
+three frames, starting `<s>` seconds after the first indexed call, to
+`xfdump.txt`.
+
+A Car Dealer frame has about 7,100 indexed uploads, 3.4 MB of index bytes,
+and 38 MB of referenced vertex bytes.
+
+- **About 50% repeat the frame before exactly:** same addresses, same
+  indices, same vertices. These are the static meshes in main memory.
+- **The other 50% never repeat**, against either of the two frames before.
+  These are the SPU's output. Each draw's index array and its vertices sit
+  side by side in a ring in main memory (about `0x0A5xxxxx` to
+  `0x0A8xxxxx`), at a new address every frame, with counts that change (141,
+  159, 162 for one mesh). No cache can serve them.
+- **Time per frame**, with the frame rate measured at that point:
+
+  | | GPU fetch | CPU |
+  | --- | --- | --- |
+  | Repeated | 3,381 calls, 8.0 ms | 448 calls, 5.9 ms (13 us each) |
+  | New | 3,748 calls, 5.6 ms | none |
+
+- **The CPU calls were two-stream layouts.** They are mostly the car program
+  `fp 05D21BC1`: indexed strips with restart, reading two interleaved
+  arrays, both stride 24. The GPU path counted them as six separate arrays
+  and copied each stream three times. That put them over the sparse limit.
+  Each 256-index batch spans about 750 vertices.
+- **Index 0xFFFF is the restart marker of those strips.** Restart is enabled
+  with value 0xFFFF. The strip path already skips it.
+
+### The cache
+
+- **Attributes are grouped into streams**: same stride and memory, all
+  within one vertex record. Each stream is placed on its own, so the
+  two-stream layouts copy each array once, and none are left to the CPU.
+- **Each stream is keyed by memory, stride and first attribute byte, and
+  learns the vertex range its draws use.** From the second frame running in
+  which it is seen, that whole range is copied once into a persistent area.
+  The area lies past the two per-frame halves of `s_vraw`, in the same
+  resource, so a draw still has one shader resource view. A descriptor
+  reaches the area as `(2 - parity) * VRAW_BYTES + offset`. The host mirror
+  of the area is `s_vper_mirror`.
+- **Draws of a stream that has not been stable for long compare their own
+  bytes with the mirror,** exactly as the per-frame reuse does.
+- **Comparing every draw cost about 130 MB of reads a frame.** So a stream
+  whose draws have all matched for 8 frames running is compared whole, once,
+  at its first draw of a frame, and its other draws that frame are not. Any
+  mismatch or new copy puts it back to a compare per draw. A stream that
+  mismatches 4 times is left to the ring for good.
+- **What that rule cannot see:** a stream that matches the frame before at
+  its first draw, after 8 clean frames, and is then rewritten later in the
+  same frame. `RSX_VTXCACHE_VERIFY=draw` compares every draw, always.
+- **When the area is full it starts again empty,** after 3 frames, so that no
+  frame in flight is still reading it.
+- **Merging is kept:** consecutive batches of a mesh read the same cached copy
+  and merge into one record, as before.
+- **Switches:**
+  - `RSX_VTXCACHE=0`: off;
+  - `RSX_VTXCACHE_MB=<n>`: the area (default 64);
+  - `RSX_VTXCACHE_MAX=<KB>`: the largest copy of one stream (default 8192).
+  The vtxstat block now has a `vertex cache:` line.
+
+### Results
+
+- **Steady state, per 5 s:**
+  - 456,457 stream hits, 454,953 of them not compared;
+  - 179 MB compared;
+  - 533 copies (6.5 MB);
+  - 3 changed;
+  - 25.7 of 64 MB used.
+- **Uploads fell from about 21 to 12.5 ms a frame,** and `vgpu_finish` from
+  7.6 to 3.8 ms.
+- **Frame rate:**
+  - `perf.ps1 -N 3`: 19.8 and 19.5 fps (the third run stalled);
+  - `RSX_VTXCACHE=0`, same build: 16.8 fps;
+  - Phase 56: 17.4 fps.
+- **Correctness:**
+  - `RSX_VTX_GPU=check` gives 0 of 1.22 billion attribute fetches different,
+    with the per-draw compares and with the stable rule;
+  - captures of the page (`winshot.ps1`) are clean.
+- **The present thread is now 74 to 76% busy,** against 85 to 98% before:
+  - FIFO walk about 24 ms a frame;
+  - present about 12 ms.
+
+  It is no longer the only limit. The guest main thread is at 83 to 88%,
+  and `PDI:1` at about 72%.
+
 ## Phase 56 - SPU lanes rebuilt (title-only 23 to 29 fps); GPU vertex fetch (2026-10-16)
 
 ### A timeline of the frame
