@@ -16513,7 +16513,7 @@ index 9cc3670..5ca4416 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d0..b74bd25 100644
+index 0b235d0..b6b5984 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,11 +21,12 @@
@@ -16783,9 +16783,29 @@ index 0b235d0..b74bd25 100644
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
              pc += 4; continue;
-@@ -2032,10 +2097,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2027,15 +2092,28 @@ static int spu_smc_microstep(spu_context* ctx)
+          * ordinary instruction the interpreter handles -- and with it the
+          * decompression job it was running never completes. */
+         { static int _n = 0;
+-          if (_n++ < 8)
++          if (_n++ < 8) {
+               fprintf(stderr, "[spu-smc] microstep img=%d pc=0x%05X word 0x%08X not in the"
                        " microstep set -- handing to the interpreter (steps=%d)\n",
-                       ctx->image_id, pc, w, steps); }
+-                      ctx->image_id, pc, w, steps); }
++                      ctx->image_id, pc, w, steps);
++              /* Where it came from: the drain this runs under, its depth, any
++               * interrupt frame, and the last drain steps on this thread. */
++              extern unsigned spu_recent_pcs(uint32_t*, unsigned);
++              uint32_t r[24]; unsigned rn = spu_recent_pcs(r, 24);
++              char line[512]; int ln = snprintf(line, sizeof line,
++                  "[spu-smc]   drain_ret=0x%05X depth=%u irq_frame=%d irq_saved=%d int=%d r0=0x%05X sp=0x%05X recent:",
++                  ctx->drain_ret_pc & SPU_LS_MASK, ctx->host_depth, ctx->irq_frame ? 1 : 0,
++                  ctx->irq_saved, ctx->int_enable, ctx->gpr[0]._u32[0] & SPU_LS_MASK,
++                  ctx->gpr[1]._u32[0] & SPU_LS_MASK);
++              for (unsigned i = 0; i < rn && ln < (int)sizeof line - 8; i++)
++                  ln += snprintf(line + ln, sizeof line - ln, " %05X", r[i] & SPU_LS_MASK);
++              fprintf(stderr, "%s\n", line);
++          } }
          ctx->pc = pc;
 -        /* Stop at the drain's return point too: it sits mid-function, so it is
 -         * no lifted entry, and a job's return would otherwise run on through
@@ -16798,7 +16818,7 @@ index 0b235d0..b74bd25 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2051,12 +2116,52 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2051,12 +2129,52 @@ void spu_indirect_branch(spu_context* ctx)
       * and falls into branch-to-0. All lifted funcs live below SPU_LS_SIZE, so
       * masking is a no-op for already-valid targets. */
      ctx->pc &= SPU_LS_MASK;
@@ -16852,7 +16872,7 @@ index 0b235d0..b74bd25 100644
            static int s_it = -1; if (s_it < 0) s_it = getenv("SPU_IRQTRACE") ? 1 : 0;
            static int _r = 0;
            if (s_it && _r++ < 200)
-@@ -2084,10 +2189,21 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2084,10 +2202,21 @@ void spu_indirect_branch(spu_context* ctx)
              /* cellSpursModulePoll: report "no contention — keep running".
               * (One virtual SPU per workload here, so nothing ever preempts.) */
              unsigned n = ++g_spurs_pm_polls;
@@ -16876,7 +16896,7 @@ index 0b235d0..b74bd25 100644
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
          }
-@@ -2502,7 +2618,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2502,7 +2631,7 @@ void spu_indirect_branch(spu_context* ctx)
                    s_dumped = 1; } } }
      }
      if (fn) {
@@ -19182,7 +19202,7 @@ index 2630352..d29c28a 100644
      0b01111100: "ceqi",   # compare equal word immediate
      0b01111101: "ceqhi",  # compare equal halfword immediate
 diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
-index bfc9af4..3d65fc1 100644
+index bfc9af4..72f6c2f 100644
 --- a/tools/spu_lifter.py
 +++ b/tools/spu_lifter.py
 @@ -456,9 +456,35 @@ def compute_link_returns(insns, bounds) -> set:
@@ -19501,7 +19521,22 @@ index bfc9af4..3d65fc1 100644
      p.add_argument("--symbol-prefix", default="",
                     help="Prefix for all emitted spu_func_* / spu_recomp_register "
                          "symbols, so multiple lifted SPU images can link into one "
-@@ -1199,7 +1322,8 @@ def main() -> None:
+@@ -1089,6 +1212,14 @@ def main() -> None:
+                         "0x10F8,0x808) to add as boundaries -- for indirect-branch "
+                         "targets that --auto-functions can't detect statically. "
+                         "Splits the containing auto-detected function at each addr.")
++    p.add_argument("--resume-funcs", default="",
++                   help="Comma-separated addresses to make dispatchable WITHOUT "
++                        "splitting the function that contains them: each gets an "
++                        "extra function lifted from that address to the containing "
++                        "function's end, and the containing function is lifted "
++                        "exactly as without it. For call-return addresses a job "
++                        "suspended at an interrupt point returns through once a "
++                        "later run resumes it with no host frames.")
+     p.add_argument("--code-end", type=lambda x: int(x, 0), default=0,
+                    help="Address where executable code ends and an embedded "
+                         "rodata/const tail begins. Drops any auto-detected "
+@@ -1199,7 +1330,8 @@ def main() -> None:
  
      insns = disassemble_spu(data, base)
  
@@ -19511,3 +19546,26 @@ index bfc9af4..3d65fc1 100644
      lifter.bi_r0_jump = compute_bi_r0_jumps(insns, bounds)
      if lifter.bi_r0_jump:
          print(f"  {len(lifter.bi_r0_jump)} `bi $r0` computed-jump site(s) "
+@@ -1223,6 +1355,22 @@ def main() -> None:
+     lifter.func_starts = {s for s, e in bounds}  # for fall-through tail-call chaining
+     for s, e in bounds:
+         lifter.lift_function(insns, s, e)
++    # Resume entries: copies from each address to its containing function's
++    # end. They stay out of func_starts, so no other function chains or
++    # const-branches into them; only a dispatch by address reaches one.
++    if args.resume_funcs:
++        added = []
++        for a in sorted({int(x, 0) for x in args.resume_funcs.split(",") if x.strip()}):
++            if a in lifter.func_starts:
++                continue
++            inner = [(s, e) for s, e in bounds if s < a < e]
++            if not inner:
++                continue
++            lifter.lift_function(insns, a, min(e for _, e in inner))
++            added.append(a)
++        sys.stderr.write("[spu_lifter] %d resume entr%s: %s\n" % (
++            len(added), "y" if len(added) == 1 else "ies",
++            ", ".join("0x%X" % a for a in added)))
+ 
+     os.makedirs(args.output, exist_ok=True)
+     hp = os.path.join(args.output, args.header_name)

@@ -52,6 +52,14 @@ REGCACHE = os.environ.get("SPU_REGCACHE", "0") == "1"
 # SPU_PIC_TABLES=0 lifts without them, as before Phase 47.
 PIC_TABLES = os.environ.get("SPU_PIC_TABLES", "1") != "0"
 
+# Resume entries (Phase 66): a job the job manager suspends at an interrupt
+# point and a later run resumes has no host frames, so it returns up its guest
+# call chain through call-return addresses that are no lifted entry, and the
+# SPU interpreter takes over (the Daytona load froze that way). Each such
+# address gets a copy of the rest of its function; the function itself is
+# lifted unchanged. SPU_RESUME_SEEDS=0 lifts without them.
+RESUME_SEEDS = os.environ.get("SPU_RESUME_SEEDS", "1") != "0"
+
 
 def run(*args):
     r = subprocess.run([sys.executable, *map(str, args)],
@@ -67,11 +75,48 @@ def lift(blob, prefix, outdir, base=0, extra=None):
     out = run(TOOLS / "find_spu_functions.py", "--raw", "--base", hex(base),
               "--out", funcs, blob)
     n_funcs = re.search(r"Detected ([\d,]+) function", out)
+    resume = resume_points(Path(blob).read_bytes(), base, funcs) if RESUME_SEEDS else set()
     run(TOOLS / "spu_lifter.py", blob, "--base", hex(base), "--functions", funcs,
         "--symbol-prefix", prefix, "--output", outdir, "--source-name", "spu_recomp.c",
         *(["--extra-funcs", extra] if extra else []),
+        *(["--resume-funcs", ",".join(map(hex, sorted(resume)))] if resume else []),
         *(["--regcache"] if REGCACHE else []))
     return int(n_funcs.group(1).replace(",", "")) if n_funcs else 0
+
+
+def resume_points(raw, base, funcs_json):
+    """Call-return addresses a resumed job can come back through: those of
+    calls whose callee can reach an interrupt-enable point (a branch with the
+    E bit), counting every indirect call as able to."""
+    import json
+    bounds = sorted((e["start"], e["end"]) for e in json.loads(Path(funcs_json).read_text()))
+    words = [int.from_bytes(raw[i:i + 4], "big") for i in range(0, len(raw) - 3, 4)]
+
+    def owner(pc):
+        inner = [s for s, e in bounds if s <= pc < e]
+        return max(inner) if inner else None
+
+    calls, may = [], set()
+    for i, w in enumerate(words):
+        pc, op9, op11 = base + 4 * i, w >> 23, w >> 21
+        if op11 in (0x1A8, 0x1A9, 0x1AA, 0x1AB, 0x128, 0x129, 0x12A, 0x12B) and w & 0x40000:
+            if owner(pc) is not None:
+                may.add(owner(pc))
+        if op9 == 0x066:                                    # brsl
+            d = (w >> 7) & 0xFFFF
+            calls.append((pc, pc + 4 * (d - 0x10000 if d & 0x8000 else d)))
+        elif op9 == 0x062:                                  # brasl
+            calls.append((pc, 4 * ((w >> 7) & 0xFFFF)))
+        elif op11 in (0x1A9, 0x1AB):                        # bisl, bisled
+            calls.append((pc, None))
+    calls = [(pc, t, owner(pc)) for pc, t in calls if owner(pc) is not None]
+    reaches = lambda t: t is None or owner(t) in may
+    while True:
+        more = {f for _, t, f in calls if f not in may and reaches(t)}
+        if not more:
+            break
+        may |= more
+    return {pc + 4 for pc, t, _ in calls if reaches(t)}
 
 
 def pic_continuations(raw, lsa):

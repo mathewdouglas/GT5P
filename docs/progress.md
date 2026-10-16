@@ -9,6 +9,67 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 66 - A track: the Daytona freeze, and resumed SPU jobs (2026-10-17)
+
+**Reported:** with a car bought, the menu opens on News, and loading a
+track sticks on the Daytona logo (Arcade, Track Select, Daytona).
+
+**Menu, scripts.** The save now opens the top menu under a "Confirmation"
+popup on every boot (Cross on it is not remembered); Circle closes it. Tabs:
+News TV Online Rankings Arcade 2P-Battle Events Garage Dealerships Replay
+Options Manual Save, no wrap. Held Right repeats about every 110 ms, too
+fast to release on a tab by time, so `scratch/milestone.ps1` (`$ToDealers`)
+holds Right 2 s to park on Save, taps Left four times, then Cross; the whole
+run is retried once unless `DealerSelectRoot` was read. The list opens 11.8 s
+after the menu (15.9 s before). `$DealerHold`, `$FerrariHold`, `dealer.ps1`
+and `revisit.ps1` use it; Acura and Ferrari checked. `$DaytonaHold` and
+`$DaytonaRaceHold` drive Arcade to Daytona. `scratch/shots.ps1` takes window
+shots after any milestone.
+
+**The freeze.** Reproduced first time. The log has `[spu-smc] microstep
+img=1 pc=0x0560C ... handing to the interpreter` and then render lanes 0, 1,
+2 and 4 leaving their policy-module runs at `pc=0x01700` instead of
+exitToKernel, with jobs 0, 2, 4 and 6 of workload 0 in flight for ever
+(row `0008 0008 0000 0002 0004 FFFF 0006 FFFF`); SPU 4's lane spins on them.
+
+- `0x560C` is inside body `0x01376080` (at LS 0x4000), right after the
+  command dispatcher's `bisl $r0,$r20` at `0x5604` (handlers from a 45-entry
+  table at LS `0x155B0`, all lifted). `SPU_DUMP_OVL` during the load shows
+  only the two known bodies streamed: no new code.
+- The hand-off line now prints its context: `drain_ret=0 depth=0`, and the
+  thread's drain trail is a new policy-module run, the interrupt handler
+  (`0xA90`, `0xAAC`), the top-of-LS shim (`0x3FEC0`), then `0x7918`.
+- So the job manager had **suspended** a render job at an interrupt point
+  in an earlier run (op 31's handler `0x7880` calls two job-manager routines
+  with interrupts off and turns them on with `bi` to `0x7918`; interrupts are
+  taken there) and exited to the kernel; a later run resumes it from its
+  local store with no host frames. `0x7918` is a lifted entry, but its
+  return to `0x5608`, and every return above it, is not, and the SPU
+  interpreter then takes the job to a dead end. Not seen in menus: the race
+  runs five workloads.
+
+**Fix: resume entries.** `scripts/lift_spu_jobs.py` finds the call-return
+addresses a suspended job can come back through (calls whose callee can
+reach a branch with the interrupt-enable bit; any indirect call counts) and
+passes them to the lifter's new `--resume-funcs`, which lifts a copy from
+each address to the end of its function and leaves that function exactly as
+it was, so hot code is unchanged. 18 in the render body (`0x5608`, `0x4C0C`
+among them), 172 in `0x0133A700`, 11 in the policy module; a few hundred
+instructions in all. `SPU_RESUME_SEEDS=0` at lift time lifts without them.
+After: Daytona's Race Mode page loads (no hand-off, no stall), and Single
+Race reaches the starting grid.
+
+**Open.**
+
+- The Race Mode page and the starting grid show black where the track
+  should be, at about 2,200 draws a frame (reported by the user too).
+- After the starting grid the race load (`LoadingRoot`, `RaceRoot`,
+  `QuickArcadeRoot`) stops presenting. Thread 20 logs 160
+  `[ppu] bctr to NULL` from `func_0080EF74`, `func_008079EC`,
+  `func_00811BE0` and others, with descriptor pointers such as `0x48028044`
+  (an instruction word) or 1: guest calls through function pointers that are
+  garbage. None in any menu, dealer or pit-screen run. Not investigated.
+
 ## Phase 65 - Dealers visited in a row, and shaders built in the background (2026-10-17)
 
 **Reported:** go into a dealer, back out, go into another: the second runs
