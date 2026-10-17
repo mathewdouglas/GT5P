@@ -6895,7 +6895,7 @@ index 071b9ec..74fc692 100644
  }
  
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb0464..b708edf 100644
+index cdb0464..2ea4958 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,6 +14,7 @@
@@ -6965,7 +6965,33 @@ index cdb0464..b708edf 100644
  /* RSX get pointer (IO offset) + one-deep CALL return slot. The FIFO-wrap
   * recycle path teleports these when it resets a ring without a JUMP command. */
  unsigned long long ps3_ms_now(void)
-@@ -1232,12 +1264,47 @@ void gcm_forget_spu_blocks(void)
+@@ -1012,6 +1044,7 @@ static void nv3089_blit(void)
+                out_w, out_h, f, src, in_pitch, dst, dst_pitch, out_x, out_y); } }
+ }
+ 
++u32 g_gcm2d_dea;   /* address of the data word gcm_2d_method is handling (GCM2D_WATCH) */
+ static void gcm_2d_method(u32 subch, u32 method, u32 data)
+ {
+     /* GCM2D_TRACE=1: histogram of (subchannel, method) actually seen. The
+@@ -1083,6 +1116,17 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
+                   printf("[GCM2D] inline write dst=0x%08X (off=0x%X dma=0x%X pt=%u,%u pitch=%u) = 0x%08X\n",
+                          base + py * dst_pitch + px * 4, s_gcm2d.dst_offset,
+                          s_gcm2d.dst_dma, px, py, dst_pitch, data); }
++            /* GCM2D_WATCH=<hex ea>[,<bytes>] (16): inline writes landing
++             * there, with the command-buffer address the word came from, so
++             * the code that built the command can be watched in turn. */
++            { static int64_t w = -2; static u32 wn = 16; static int said = 0;
++              if (w == -2) { const char* e = getenv("GCM2D_WATCH");
++                  w = e ? (int64_t)strtoul(e, NULL, 16) : -1;
++                  const char* c = e ? strchr(e, ',') : NULL; if (c) wn = (u32)strtoul(c + 1, NULL, 0); }
++              u32 at = base + py * dst_pitch + px * 4;
++              if (w >= 0 && at >= (u32)w && at < (u32)w + wn && said++ < 64)
++                  fprintf(stderr, "[gcm2d-watch] 0x%08X <- 0x%08X from command word at 0x%08X%c",
++                          at, data, g_gcm2d_dea, 10); }
+             vm_write32(base + py * dst_pitch + px * 4, data);
+             return;
+         }
+@@ -1232,12 +1276,47 @@ void gcm_forget_spu_blocks(void)
      s_spu_blk_w = 0;
  }
  
@@ -7016,7 +7042,7 @@ index cdb0464..b708edf 100644
  
      /* Coalesce with the previous block when an SPU emits one buffer in several
       * transfers -- otherwise only the last fragment is remembered and the
-@@ -1279,6 +1346,28 @@ static u32 gcm_spu_block_for_put(u32 put)
+@@ -1279,6 +1358,28 @@ static u32 gcm_spu_block_for_put(u32 put)
   *
   * Dropping DRAWS on a resync is survivable: a frame is lost. Dropping a FENCE
   * is not, it deadlocks the title. Sweep the skipped range first. */
@@ -7045,7 +7071,7 @@ index cdb0464..b708edf 100644
  static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
  {
      static int n = 0;
-@@ -1399,6 +1488,7 @@ static void gcm_ref_publish_one(void)
+@@ -1399,6 +1500,7 @@ static void gcm_ref_publish_one(void)
   * poll-path below. TryAcquire on the poll path avoids re-entrancy (the walker
   * itself performs guest reads) and never blocks a spinning game thread. */
  static SRWLOCK s_gcm_fifo_lock = SRWLOCK_INIT;
@@ -7053,7 +7079,7 @@ index cdb0464..b708edf 100644
  static void gcm_rsx_process_fifo_unlocked(void);
  
  /* Kick event: a game thread whose fence wait finds the queue DRY signals the
-@@ -1459,6 +1549,16 @@ void cellGcm_ref_on_poll(void)
+@@ -1459,6 +1561,16 @@ void cellGcm_ref_on_poll(void)
          SetEvent(s_gcm_kick_ev);       /* dry: ask the present thread to walk */
  }
  
@@ -7070,7 +7096,7 @@ index cdb0464..b708edf 100644
  void cellGcm_rsx_process_fifo(void)
  {
      AcquireSRWLockExclusive(&s_gcm_fifo_lock);
-@@ -1468,6 +1568,17 @@ void cellGcm_rsx_process_fifo(void)
+@@ -1468,6 +1580,17 @@ void cellGcm_rsx_process_fifo(void)
  
  static void gcm_rsx_process_fifo_unlocked(void)
  {
@@ -7088,7 +7114,7 @@ index cdb0464..b708edf 100644
      { static unsigned _n = 0; static unsigned long long _t0 = 0;
        extern unsigned long long ps3_ms_now(void);
        _n++;
-@@ -1531,9 +1642,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1531,9 +1654,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
      if (getenv("GCM_DRAINDBG")) {
          static int n = 0;
          if (n++ % 60 == 0)
@@ -7101,7 +7127,7 @@ index cdb0464..b708edf 100644
      }
  
      /* GCM_SCANREF=1 (one-shot): list every NV406E_SET_REFERENCE actually
-@@ -1614,6 +1726,19 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1614,6 +1738,19 @@ static void gcm_rsx_process_fifo_unlocked(void)
          s_tr_w[s_tr_i % GCM_TRACE_N] = w;
          s_tr_i++;
          u32 type = w >> 29;
@@ -7121,7 +7147,7 @@ index cdb0464..b708edf 100644
  
          if ((w & 0xFFFF0000u) == 0xFEAD0000u) {
              /* lv1 driver flip: statically-linked libgcm cellGcmSetFlip writes
-@@ -1653,12 +1778,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1653,12 +1790,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
               * "Command Buffer Overflow" forever. Past the threshold keep
               * draining -- the intermediate presents are frames we are too far
               * behind to show anyway. No-op for a title that is keeping up. */
@@ -7179,7 +7205,7 @@ index cdb0464..b708edf 100644
          if (type == 1) {                       /* JUMP: 0x20000000 | offset */
              { static int _rd = -1; if (_rd < 0) _rd = getenv("GCM_RECDBG") ? 1 : 0;
                if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
-@@ -1672,14 +1839,58 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1672,14 +1851,58 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * times in one Twisted Metal run, which is the drain burning the
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
@@ -7240,7 +7266,7 @@ index cdb0464..b708edf 100644
                    break;
                }
                s_fifo_getoff = tgt; }
-@@ -1688,6 +1899,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1688,6 +1911,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          if ((w & 3) == 2) {                    /* CALL: offset | 2 */
              { u32 tgt = w & 0x1FFFFFFCu;
                if (!gcm_io2ea(tgt)) { gcm_fifo_bad_branch("CALL", tgt, w); gcm_fifo_resync_why("unmapped-CALL", &s_fifo_getoff, put); break; }
@@ -7248,7 +7274,7 @@ index cdb0464..b708edf 100644
                s_fifo_calloff = s_fifo_getoff + 4;
                s_fifo_getoff  = tgt; }
              continue;
-@@ -1743,7 +1955,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1743,7 +1967,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      { static int sn = 0; if (getenv("GCM_RECDBG") && sn++ < 12)
                          fprintf(stderr, "[SEMA] m=0x%02X v=0x%08X off=0x%X\n", m, v, s_sema_offset); }
                      if (m == 0x64u)      s_sema_offset = v;
@@ -7279,7 +7305,7 @@ index cdb0464..b708edf 100644
                      else if (m == 0x68u && vm_read32(la) != v) {
              /* GCM_SEMA_ACQUIRE=1 makes ACQUIRE actually block, which is what
               * the hardware does. Off by default: a title whose label nothing
-@@ -1775,7 +2009,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1775,7 +2021,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
                                m, vm_read32(dea)); }
                  if (subch == 7 && m == 0x0B00u) {
                      extern void rsx_raise_user_cmd(u32 arg);
@@ -7299,7 +7325,7 @@ index cdb0464..b708edf 100644
                      continue;
                  }
                  /* GCM_SUBCH1_3D=1: treat subchannel 1 as the 3D object too.
-@@ -1878,6 +2123,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1878,6 +2135,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  } else if (mfull == 0xE920u || mfull == 0xE924u) {
                      cellGcmSetFlipCommand(vm_read32(dea) & 7u);
                  } else if (subch == 0 || (subch == 1 && !s1_2d)) {
@@ -7307,7 +7333,7 @@ index cdb0464..b708edf 100644
                      rsx_process_method(&s_state, m, vm_read32(dea));
                      /* NV406E_SET_REFERENCE: queue the fence value for PACED
                       * publication (gcm_ref_publish below) instead of letting a
-@@ -1887,12 +2133,28 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1887,17 +2145,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -7336,8 +7362,17 @@ index cdb0464..b708edf 100644
 +                            s_report_data[idx].value = ((u32)s_rfull >> ((v >> 24) & 31u)) & 1u ? 0xFFFFu : 0u;
                          }
                      }
-                 } else
-@@ -1948,6 +2210,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
+-                } else
++                } else {
++                    extern u32 g_gcm2d_dea;
++                    g_gcm2d_dea = dea;
+                     gcm_2d_method(subch, m, vm_read32(dea));
+                 }
++                }
+             }
+             s_fifo_getoff += 4 + count * 4;
+             continue;
+@@ -1948,6 +2225,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -7358,7 +7393,7 @@ index cdb0464..b708edf 100644
        if (s_fifo_getoff == last && s_fifo_getoff != put) {
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
-@@ -1957,6 +2233,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1957,6 +2248,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
       * value stays observable to equality-waiters. The wrap recycle path polls
       * the drained EA. */
@@ -7370,7 +7405,7 @@ index cdb0464..b708edf 100644
      if (getenv("GCM_DRAINDBG")) {
          static int n2 = 0;
          if (n2++ % 60 == 0)
-@@ -2189,6 +2470,7 @@ u32 cellGcm_display_buffer_count(void)
+@@ -2189,6 +2485,7 @@ u32 cellGcm_display_buffer_count(void)
  
  static s32 gcm_flip_request(u32 bufferId, int in_fifo)
  {
@@ -7378,7 +7413,7 @@ index cdb0464..b708edf 100644
      /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
       * which answers "did it ever flip?" and not "is it still flipping, and how
       * fast?" -- the question that matters when a title stops appearing on
-@@ -2331,6 +2613,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
+@@ -2331,6 +2628,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
  s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
  {
      (void)ctx;  /* command buffer context -- not used in HLE */
@@ -7386,7 +7421,7 @@ index cdb0464..b708edf 100644
  
      if (bufferId >= CELL_GCM_MAX_DISPLAY_BUFFER_NUM)
          return CELL_GCM_ERROR_INVALID_VALUE;
-@@ -2339,6 +2622,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2339,6 +2637,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
          return CELL_GCM_ERROR_INVALID_VALUE;
  
      printf("[cellGcmSys] SetPrepareFlip(bufferId=%u)\n", bufferId);
@@ -7394,7 +7429,7 @@ index cdb0464..b708edf 100644
  
      s_current_display_buffer_id = bufferId;
      s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
-@@ -2352,6 +2636,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2352,6 +2651,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
      if (s_flip_handler_opd && g_ps3_guest_caller && !gcm_flipcb_on_tick_only())
          g_ps3_guest_caller(s_flip_handler_opd, 0, 0, 0, 0, 0, 0, 0, 0);
  
@@ -16061,7 +16096,7 @@ index acbaf12..cc5abca 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index e73a151..b61d058 100644
+index e73a151..fb194fa 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -20,6 +20,7 @@
@@ -16293,7 +16328,25 @@ index e73a151..b61d058 100644
            static long _n = 0;
            static long _cap = -1;
            if (_cap < 0) { const char* e = getenv("PPU_WWATCH_MAX");
-@@ -1857,7 +1999,13 @@ extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* r
+@@ -1835,6 +1977,17 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+                * chain so the origin of a null field can be walked up-stack. */
+               extern void ppu_dump_guest_stack(ppu_context*, const char*);
+               if (_i == 1 && g_active_ctx) ppu_dump_guest_stack(g_active_ctx, "ww");
++              /* PPU_WWATCH_STACK_NZ=1: also on the first write of a non-zero
++               * value -- a buffer cleared first and filled later. */
++              { static int nz = -1, done = 0;
++                if (nz < 0) nz = getenv("PPU_WWATCH_STACK_NZ") ? 1 : 0;
++                if (nz && !done && v && g_active_ctx) { done = 1; ppu_dump_guest_stack(g_active_ctx, "ww-nz"); } }
++              /* PPU_WWATCH_STACK_FN=<hex guest fn>: on the first write made
++               * from that function. */
++              { static int64_t fn = -2; static int done = 0;
++                if (fn == -2) { const char* e = getenv("PPU_WWATCH_STACK_FN"); fn = e ? (int64_t)strtoul(e, 0, 16) : -1; }
++                if (fn >= 0 && !done && g_active_ctx && ppu_prof_resolve_host(ra) == (uint32_t)fn) {
++                    done = 1; ppu_dump_guest_stack(g_active_ctx, "ww-fn"); } }
+           } else if (_i == _cap + 1) {
+               fprintf(stderr, "[ww] --- print cap %ld reached; further writes to "
+                               "this window are NOT shown (raise PPU_WWATCH_MAX, "
+@@ -1857,7 +2010,13 @@ extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* r
  {
      barrier_watch_hit(ea, val, width, ra);
  }
@@ -16308,7 +16361,7 @@ index e73a151..b61d058 100644
  #ifdef _WIN32
      /* PT detector: does this byte-write turn its word into the hunted truncated value? */
      { if(g_pt_val==-2){const char*e=getenv("PT"); g_pt_val=e?(int64_t)strtoul(e,0,16):-1;}
-@@ -1867,9 +2015,22 @@ void vm_write8 (uint64_t a, uint8_t  v) { barrier_watch_hit((uint32_t)a, v, 1, _
+@@ -1867,9 +2026,22 @@ void vm_write8 (uint64_t a, uint8_t  v) { barrier_watch_hit((uint32_t)a, v, 1, _
          else if(((uint32_t)a&3)==0 && v!=0) pt_restore(wa); /* MSB byte set non-zero = restored */ } }
  #endif
      VM_WRITE_COH(a, &v, 1); }
@@ -16333,7 +16386,7 @@ index e73a151..b61d058 100644
  #ifdef _WIN32
      /* PT restore: a full-word store of a valid pointer (high byte set) to a
       * previously-truncated slot clears the record (that truncation was transient). */
-@@ -1882,6 +2043,10 @@ void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, _
+@@ -1882,6 +2054,10 @@ void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, _
         * are guest memory and the PPU reads most of them straight back. */
        if (spu_raw_is_reg((uint32_t)a)) spu_raw_reg_store((uint32_t)a, _v, 4); } }
  void vm_write64(uint64_t a, uint64_t v) {
@@ -16344,7 +16397,7 @@ index e73a151..b61d058 100644
      /* PPU_WWATCH covers the 64-bit store too. It did not, which made the watch
       * blind to exactly the code that matters most for it: every bignum and
       * every 64-bit struct field is written with std, so a watch on one would
-@@ -2338,6 +2503,24 @@ static void icall_hist(ppu_context* ctx, uint32_t tgt, int phase)
+@@ -2338,6 +2514,24 @@ static void icall_hist(ppu_context* ctx, uint32_t tgt, int phase)
      ReleaseSRWLockExclusive(&lk);
  }
  
@@ -16369,7 +16422,7 @@ index e73a151..b61d058 100644
  extern "C" void ps3_indirect_call(ppu_context* ctx)
  {
      static int on = -1;
-@@ -2365,6 +2548,14 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+@@ -2365,6 +2559,14 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
      }
  }
  
@@ -16384,7 +16437,7 @@ index e73a151..b61d058 100644
  static void ps3_indirect_call_impl(ppu_context* ctx)
  {
      g_active_ctx = ctx;
-@@ -2639,11 +2830,20 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2639,11 +2841,20 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
          /* Recursion-depth guard: a malformed/cyclic jump table (or a tail-call
           * chain that never converges) can dispatch recursively without bound
           * and blow the host stack. Cap the depth, log once, then unwind. */
@@ -16407,7 +16460,7 @@ index e73a151..b61d058 100644
              return;
          }
          s_depth++;
-@@ -2946,12 +3146,13 @@ extern "C" int lv2_try_syscall(ppu_context* ctx);
+@@ -2946,12 +3157,13 @@ extern "C" int lv2_try_syscall(ppu_context* ctx);
   * A few syscalls the CRT needs at boot are handled inline (boot-tuned); the
   * rest are dispatched to the real lv2 table, and only genuinely-unregistered
   * numbers fall through to the return-CELL_OK stub. */
@@ -16422,7 +16475,7 @@ index e73a151..b61d058 100644
  extern "C" void lv2_syscall(ppu_context* ctx)
  {
      /* One-shot: PPU_GUARD_EA=<hex> arms the page guard on that address without
-@@ -2962,6 +3163,12 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -2962,6 +3174,12 @@ extern "C" void lv2_syscall(ppu_context* ctx)
        if (!_ge) { _ge = 1;
            const char* e = getenv("PPU_GUARD_EA");
            if (e && *e) ppu_guard_page((uint32_t)strtoul(e, 0, 16)); } }
@@ -16435,7 +16488,7 @@ index e73a151..b61d058 100644
      uint64_t num = ctx->gpr[11];
      /* Milestone: which lv2 calls this title makes, in first-occurrence order.
       * Formatting the key each time is noise next to the profiler stamp below,
-@@ -2973,16 +3180,18 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -2973,16 +3191,18 @@ extern "C" void lv2_syscall(ppu_context* ctx)
       * through ps3_hle_call) and a stale CTR, so without this a wedged thread is
       * just "somewhere in ntdll". Cleared on every exit path by the guard. */
      struct _ScGuard {
@@ -16458,7 +16511,7 @@ index e73a151..b61d058 100644
      /* PS3_SCTRACE_TID: trace every lv2 syscall made by the loader/worker thread
       * (tid=1) so we can see what it does AFTER receiving its q=1 event and why
       * it never registers handlers / loads assets. */
-@@ -3202,8 +3411,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3202,8 +3422,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                      (unsigned long long)ctx->gpr[3], (unsigned long long)ctx->gpr[4],
                      (unsigned)ctx->lr);
              fflush(stderr); } }
@@ -16469,7 +16522,7 @@ index e73a151..b61d058 100644
              static ULONGLONG s_acc[1024]={0}; static uint32_t s_cnt[1024]={0}; static ULONGLONG s_win=0;
              uint32_t _a3=(uint32_t)ctx->gpr[3], _a4=(uint32_t)ctx->gpr[4], _a5=(uint32_t)ctx->gpr[5];
              ULONGLONG _t0 = GetTickCount64();
-@@ -3545,6 +3754,15 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
+@@ -3545,6 +3765,15 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
          s_opd_fixups[s_opd_fixup_n].code = code; s_opd_fixups[s_opd_fixup_n].toc = toc; s_opd_fixup_n++; }
  }
  
@@ -16485,7 +16538,7 @@ index e73a151..b61d058 100644
  extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
                                     uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                                     uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
-@@ -3570,9 +3788,11 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
+@@ -3570,9 +3799,11 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
          return 0; }
  
      /* Private scratch stack high in the guest stack region, distinct from the
@@ -16813,7 +16866,7 @@ index 9cc3670..5ca4416 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d0..b6b5984 100644
+index 0b235d0..3f5119b 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,11 +21,12 @@
@@ -17071,7 +17124,41 @@ index 0b235d0..b6b5984 100644
      }
  }
  
-@@ -1963,7 +2025,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -1622,6 +1684,33 @@ static void spu_ovl_dump(spu_context* ctx, uint32_t ea, uint32_t lsa, const uint
+  * new bytes for [ea, ea+size). */
+ void spu_lockguard_check(spu_context* ctx, uint32_t ea, const uint8_t* src, uint32_t size, const char* what)
+ {
++    /* SPU_PUTWATCH=<hex ea>[,<bytes>] (default 16): log the SPU writes
++     * that overlap that range -- who patches a value in guest memory, e.g. a
++     * fragment program's constants in RSX local memory -- with the image, pc
++     * and the words written there. 48 lines at most. */
++    /* SPU_PUTWATCH_DELAY=<ms>: only after that long (from the first PUT),
++     * so a screen reached late is not crowded out by earlier writes. */
++    { static int64_t w0 = -2; static uint32_t wn = 16; static volatile long said = 0;
++      static unsigned long long t0 = 0, delay = 0;
++      if (w0 == -2) { const char* e = getenv("SPU_PUTWATCH");
++          w0 = e ? (int64_t)strtoul(e, 0, 16) : -1;
++          const char* c = e ? strchr(e, ',') : 0; if (c) wn = (uint32_t)strtoul(c + 1, 0, 0);
++          const char* d = getenv("SPU_PUTWATCH_DELAY"); delay = d ? strtoull(d, 0, 0) : 0;
++          t0 = GetTickCount64(); }
++      if (w0 >= 0 && ea < (uint64_t)w0 + wn && (uint64_t)ea + size > (uint64_t)w0 &&
++          GetTickCount64() - t0 >= delay && InterlockedIncrement(&said) <= 48) {
++          uint32_t lo = (uint32_t)w0 > ea ? (uint32_t)w0 : ea;
++          uint32_t hi = (uint32_t)w0 + wn < ea + size ? (uint32_t)w0 + wn : ea + size;
++          char line[400]; int ln = snprintf(line, sizeof line, "[putwatch] %s img=%d pc=0x%05X lr=0x%05X ea=0x%08X size=%u:",
++              what, ctx ? ctx->image_id : -1, ctx ? (unsigned)(ctx->pc & SPU_LS_MASK) : 0u,
++              ctx ? (unsigned)(ctx->gpr[0]._u32[0] & SPU_LS_MASK) : 0u, ea, size);
++          for (uint32_t a = lo & ~3u; a + 4 <= hi && ln < (int)sizeof line - 40; a += 4) {
++              const uint8_t* q = src + (a - ea);
++              uint32_t w = ((uint32_t)q[0] << 24) | ((uint32_t)q[1] << 16) | ((uint32_t)q[2] << 8) | q[3];
++              ln += snprintf(line + ln, sizeof line - ln, " @%X=%08X", a, w);
++          }
++          fprintf(stderr, "%s\n", line);
++      } }
+     static int64_t s_g = -2;
+     if (s_g == -2) { const char* e = getenv("SPU_LOCKGUARD"); s_g = e ? (int64_t)strtoul(e, 0, 16) : -1; }
+     if (s_g < 0 || !vm_base) return;
+@@ -1963,7 +2052,10 @@ static int spu_smc_microstep(spu_context* ctx)
              pc += 4; continue;
          }
          if (op9 == 0x041 || op9 == 0x061) {                   /* stqa / lqa (abs) */
@@ -17083,7 +17170,7 @@ index 0b235d0..b6b5984 100644
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
              pc += 4; continue;
-@@ -2027,15 +2092,28 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2027,15 +2119,28 @@ static int spu_smc_microstep(spu_context* ctx)
           * ordinary instruction the interpreter handles -- and with it the
           * decompression job it was running never completes. */
          { static int _n = 0;
@@ -17118,7 +17205,7 @@ index 0b235d0..b6b5984 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2051,12 +2129,52 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2051,12 +2156,52 @@ void spu_indirect_branch(spu_context* ctx)
       * and falls into branch-to-0. All lifted funcs live below SPU_LS_SIZE, so
       * masking is a no-op for already-valid targets. */
      ctx->pc &= SPU_LS_MASK;
@@ -17172,7 +17259,7 @@ index 0b235d0..b6b5984 100644
            static int s_it = -1; if (s_it < 0) s_it = getenv("SPU_IRQTRACE") ? 1 : 0;
            static int _r = 0;
            if (s_it && _r++ < 200)
-@@ -2084,10 +2202,21 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2084,10 +2229,21 @@ void spu_indirect_branch(spu_context* ctx)
              /* cellSpursModulePoll: report "no contention — keep running".
               * (One virtual SPU per workload here, so nothing ever preempts.) */
              unsigned n = ++g_spurs_pm_polls;
@@ -17196,7 +17283,7 @@ index 0b235d0..b6b5984 100644
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
          }
-@@ -2502,7 +2631,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2502,7 +2658,7 @@ void spu_indirect_branch(spu_context* ctx)
                    s_dumped = 1; } } }
      }
      if (fn) {

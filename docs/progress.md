@@ -46,8 +46,28 @@ surface clipped at 1436 rows; targets now cover a draw's viewport and
 scissor up to 64 past the clip (`RSX_RT_COVER_VP=0` for the clip only). That
 did not change `k2`.
 
-Next: the same constant in RPCS3 (a RenderDoc capture of the page there),
-then who computes it.
+**RPCS3 (the user's RenderDoc capture, `scratch/renderdoc/daytona-pit.rdc`,
+Vulkan, 785 batched draws):** RPCS3 keeps every draw's fragment constants in
+one `fc` array; scanning it (`scratch/rdoc_fpconst.py`, `RDOC_SCAN=1`) finds
+this program 151 times as k0 0, k1 0.15, **k2 (0.0496, 0.0496, 0.0496, 0)**,
+k3 0, k4 0.0002. Ours: k2 about (0.00009 x3, 15). Same k0, k1, k3, k4; the
+bit patterns rule out a decoding or half-swap error. So the game writes a
+k2 here about 550 times too small (the shader reads only its xyz).
+
+**Where it is written:** the constant reaches the program through the
+command stream (NV308A inline transfer; new `GCM2D_WATCH=<ea>` names the
+command word: 0x29DF0284 / 0x298F0274, alternate frames). That word is
+written by PPU thread 21 (render thread), guest fn `0x00BD6840` (the title's
+fragment-parameter upload), via `0x00BCCE88` (reached through function
+descriptor 0x0132FEB0 in a table at 0x01289B68). Call chain
+(`PPU_WWATCH_STACK_FN=BD6840`): 0xBCCE88 <- 0xD6D308 <- 0x832588 <- 0x835288
+<- 0x835518 <- 0x83746C <- ... <- 0x0080EF74 <- 0x00706398, the same render
+code as the race load's `bctr to NULL` calls. New switches:
+`SPU_PUTWATCH=<ea>[,<n>]` (+`_DELAY=<ms>`), `PPU_WWATCH_STACK_NZ=1`,
+`PPU_WWATCH_STACK_FN=<fn>`. On this page no SPU writes that word.
+
+Next: where 0x832588's caller gets the four floats (Ghidra on 0x832588 and
+0x833848), then what feeds them.
 
 ## Phase 67 - The movie played out, the window's own thread, a two-column settings page (2026-10-17)
 
