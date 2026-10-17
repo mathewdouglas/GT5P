@@ -6908,7 +6908,7 @@ index 071b9ec..74fc692 100644
  }
  
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb0464..2ea4958 100644
+index cdb0464..e0e97fc 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,6 +14,7 @@
@@ -7218,7 +7218,7 @@ index cdb0464..2ea4958 100644
          if (type == 1) {                       /* JUMP: 0x20000000 | offset */
              { static int _rd = -1; if (_rd < 0) _rd = getenv("GCM_RECDBG") ? 1 : 0;
                if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
-@@ -1672,14 +1851,58 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1672,14 +1851,66 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * times in one Twisted Metal run, which is the drain burning the
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
@@ -7274,12 +7274,20 @@ index cdb0464..2ea4958 100644
 +                        } else {
 +                            if (gcm_walk_wake_on()) s_walk_park_ea = gcm_io2ea(s_fifo_getoff);
 +                            s_walk_park_jump++;
++                            /* How close parks come to the timeout: each new
++                             * longest one past 50 ms. */
++                            static ULONGLONG longest = 50;
++                            if (nowp - since_ms > longest) {
++                                longest = nowp - since_ms;
++                                fprintf(stderr, "[cellGcmSys] park at io %08X held %llu ms (longest yet)%c",
++                                        s_fifo_getoff, (unsigned long long)longest, 10);
++                            }
 +                        }
 +                    } }
                    break;
                }
                s_fifo_getoff = tgt; }
-@@ -1688,6 +1911,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1688,6 +1919,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          if ((w & 3) == 2) {                    /* CALL: offset | 2 */
              { u32 tgt = w & 0x1FFFFFFCu;
                if (!gcm_io2ea(tgt)) { gcm_fifo_bad_branch("CALL", tgt, w); gcm_fifo_resync_why("unmapped-CALL", &s_fifo_getoff, put); break; }
@@ -7287,7 +7295,7 @@ index cdb0464..2ea4958 100644
                s_fifo_calloff = s_fifo_getoff + 4;
                s_fifo_getoff  = tgt; }
              continue;
-@@ -1743,7 +1967,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1743,7 +1975,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      { static int sn = 0; if (getenv("GCM_RECDBG") && sn++ < 12)
                          fprintf(stderr, "[SEMA] m=0x%02X v=0x%08X off=0x%X\n", m, v, s_sema_offset); }
                      if (m == 0x64u)      s_sema_offset = v;
@@ -7318,7 +7326,7 @@ index cdb0464..2ea4958 100644
                      else if (m == 0x68u && vm_read32(la) != v) {
              /* GCM_SEMA_ACQUIRE=1 makes ACQUIRE actually block, which is what
               * the hardware does. Off by default: a title whose label nothing
-@@ -1775,7 +2021,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1775,7 +2029,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
                                m, vm_read32(dea)); }
                  if (subch == 7 && m == 0x0B00u) {
                      extern void rsx_raise_user_cmd(u32 arg);
@@ -7338,7 +7346,7 @@ index cdb0464..2ea4958 100644
                      continue;
                  }
                  /* GCM_SUBCH1_3D=1: treat subchannel 1 as the 3D object too.
-@@ -1878,6 +2135,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1878,6 +2143,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  } else if (mfull == 0xE920u || mfull == 0xE924u) {
                      cellGcmSetFlipCommand(vm_read32(dea) & 7u);
                  } else if (subch == 0 || (subch == 1 && !s1_2d)) {
@@ -7346,7 +7354,7 @@ index cdb0464..2ea4958 100644
                      rsx_process_method(&s_state, m, vm_read32(dea));
                      /* NV406E_SET_REFERENCE: queue the fence value for PACED
                       * publication (gcm_ref_publish below) instead of letting a
-@@ -1887,17 +2145,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1887,17 +2153,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -7385,7 +7393,7 @@ index cdb0464..2ea4958 100644
              }
              s_fifo_getoff += 4 + count * 4;
              continue;
-@@ -1948,6 +2225,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1948,8 +2233,37 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -7395,18 +7403,35 @@ index cdb0464..2ea4958 100644
 +       * Prologue's showroom, Phase 41: its frames grew past what the old
 +       * eight-pass limit allowed for). Give such a wait GCM_FFFF_STUCK_MS
 +       * (default 120000) before treating it as stuck. */
++      /* The same holds for a park JUMP at the write head of an SPU ring
++       * (`put` in another ring): the park rule above already allows it
++       * GCM_PARK_TIMEOUT_MS. Counting it here instead resynced after 8
++       * passes, about 8 ms, and the race start in Gran Turismo 5 Prologue
++       * (one job slower than that between two blocks) lost the rest of the
++       * ring: the job then lapped it waiting on a label nothing would move.
++       * GCM_STUCK_PARK=1: count such parks as stuck, as before. */
++      static int stuck_park = -1;
++      if (stuck_park < 0) { const char* e = getenv("GCM_STUCK_PARK"); stuck_park = e && e[0] == '1'; }
 +      { static ULONGLONG ffff_since = 0; static long long ffff_ms = -1;
 +        if (ffff_ms < 0) { const char* e = getenv("GCM_FFFF_STUCK_MS"); ffff_ms = e ? atoll(e) : 120000; }
 +        u32 gea = gcm_io2ea(s_fifo_getoff);
-+        if (s_fifo_getoff == last && s_fifo_getoff != put && gea && vm_read32(gea) == 0xFFFFFFFFu) {
++        u32 gw = gea ? vm_read32(gea) : 0;
++        int waiting = gw == 0xFFFFFFFFu ||
++            (!stuck_park && gw == (0x20000000u | s_fifo_getoff) && !gcm_io_same_ring(s_fifo_getoff, put));
++        if (s_fifo_getoff == last && s_fifo_getoff != put && gea && waiting) {
 +            ULONGLONG now = GetTickCount64();
 +            if (!ffff_since) ffff_since = now;
 +            if (now - ffff_since < (ULONGLONG)ffff_ms) stuck = 0;
 +        } else ffff_since = 0; }
        if (s_fifo_getoff == last && s_fifo_getoff != put) {
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
++                             { static int nw = 0; u32 sea = gcm_io2ea(s_fifo_getoff);
++                               if (nw++ < 8) fprintf(stderr, "[cellGcmSys] stuck at io %08X on word %08X%c",
++                                                     s_fifo_getoff, sea ? vm_read32(sea) : 0u, 10); }
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
-@@ -1957,6 +2248,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
+       } else { stuck = 0; last = s_fifo_getoff; } }
+ 
+@@ -1957,6 +2271,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
       * value stays observable to equality-waiters. The wrap recycle path polls
       * the drained EA. */
@@ -7418,7 +7443,7 @@ index cdb0464..2ea4958 100644
      if (getenv("GCM_DRAINDBG")) {
          static int n2 = 0;
          if (n2++ % 60 == 0)
-@@ -2189,6 +2485,7 @@ u32 cellGcm_display_buffer_count(void)
+@@ -2189,6 +2508,7 @@ u32 cellGcm_display_buffer_count(void)
  
  static s32 gcm_flip_request(u32 bufferId, int in_fifo)
  {
@@ -7426,7 +7451,7 @@ index cdb0464..2ea4958 100644
      /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
       * which answers "did it ever flip?" and not "is it still flipping, and how
       * fast?" -- the question that matters when a title stops appearing on
-@@ -2331,6 +2628,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
+@@ -2331,6 +2651,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
  s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
  {
      (void)ctx;  /* command buffer context -- not used in HLE */
@@ -7434,7 +7459,7 @@ index cdb0464..2ea4958 100644
  
      if (bufferId >= CELL_GCM_MAX_DISPLAY_BUFFER_NUM)
          return CELL_GCM_ERROR_INVALID_VALUE;
-@@ -2339,6 +2637,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2339,6 +2660,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
          return CELL_GCM_ERROR_INVALID_VALUE;
  
      printf("[cellGcmSys] SetPrepareFlip(bufferId=%u)\n", bufferId);
@@ -7442,7 +7467,7 @@ index cdb0464..2ea4958 100644
  
      s_current_display_buffer_id = bufferId;
      s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
-@@ -2352,6 +2651,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2352,6 +2674,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
      if (s_flip_handler_opd && g_ps3_guest_caller && !gcm_flipcb_on_tick_only())
          g_ps3_guest_caller(s_flip_handler_opd, 0, 0, 0, 0, 0, 0, 0, 0);
  
@@ -19309,10 +19334,10 @@ index 9e58833..563c39b 100644
      return 0;
  }
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..59c15e3 100644
+index 4f82063..ace1ece 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
-@@ -35,6 +35,42 @@ extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
+@@ -35,6 +35,85 @@ extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
  volatile unsigned g_spurs_pm_polls = 0;   /* selectWorkload calls this run */
  volatile unsigned g_spurs_pm_exited = 0;  /* set when exitToKernel was taken */
  volatile unsigned g_wws_batch_gets = 0;   /* loadCommands (LS 0xC00) fetch count, spu_dma.h */
@@ -19320,6 +19345,48 @@ index 4f82063..59c15e3 100644
 +
 +/* Every lane's persistent policy-module context, by workload and SPU. */
 +static spu_context* g_pm_ctx_tab[16][6];
++
++/* Ring-allocation trace (diagnostic). A temporary hook in a lifted render
++ * job calls spurs_ring_trace at its ring-space check with the window it
++ * wants and the label it read; each lane keeps its last RT_N distinct
++ * entries, printed with the stall report. A global sequence number orders
++ * entries across lanes. */
++enum { RT_N = 512 };
++typedef struct { uint32_t seq, head, want, label, lab_ea; uint8_t wait; } spurs_rt_ent;
++static spurs_rt_ent g_rt[16][6][RT_N];
++static unsigned g_rt_n[16][6];
++static unsigned g_rt_seq;
++void spurs_ring_trace(const spu_context* c, uint32_t head, uint32_t want,
++                      uint32_t label, uint32_t lab_ea, int wait)
++{
++    for (int w = 0; w < 16; w++)
++        for (int n = 0; n < 6; n++)
++            if (g_pm_ctx_tab[w][n] == c) {
++                unsigned k = g_rt_n[w][n];
++                if (k) {
++                    const spurs_rt_ent* p = &g_rt[w][n][(k - 1) % RT_N];
++                    if (p->head == head && p->want == want && p->label == label) return;
++                }
++                spurs_rt_ent* e = &g_rt[w][n][k % RT_N];
++                e->seq = __atomic_add_fetch(&g_rt_seq, 1u, __ATOMIC_RELAXED);
++                e->head = head; e->want = want; e->label = label; e->lab_ea = lab_ea;
++                e->wait = (uint8_t)wait;
++                g_rt_n[w][n] = k + 1;
++                return;
++            }
++}
++
++static void spurs_ring_trace_dump(int w, int n)
++{
++    unsigned k = g_rt_n[w][n];
++    if (!k) return;
++    unsigned first = k > RT_N ? k - RT_N : 0;
++    for (unsigned i = first; i < k; i++) {
++        const spurs_rt_ent* e = &g_rt[w][n][i % RT_N];
++        fprintf(stderr, "[stall]     rt #%u seq=%u head=%08X want=%08X label=%08X@%08X%s%c",
++                i, e->seq, e->head, e->want, e->label, e->lab_ea, e->wait == 2 ? " JOB-END" : e->wait ? " WAIT" : "", 10);
++    }
++}
 +
 +/* For a stall report (gt5p_present.cpp): where each lane's SPU stands. Read
 + * racily from the live contexts. */
@@ -19349,13 +19416,14 @@ index 4f82063..59c15e3 100644
 +                        c->gpr[25]._u32[0], c->gpr[50]._u32[0], c->gpr[9]._u32[0], 10);
 +                #undef BE32
 +            }
++            if (w < 2) spurs_ring_trace_dump(w, n);
 +        }
 +    fflush(stderr);
 +}
  
  int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                            const uint8_t* pm_host, uint32_t pm_size,
-@@ -57,7 +93,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -57,7 +136,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * once; re-entries keep LS and only refresh the entry registers and the
       * (possibly game-updated) kernel-context fields. */
      enum { SPURS_PM_MAX_WKL = 16 };
@@ -19364,7 +19432,7 @@ index 4f82063..59c15e3 100644
      if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
      spu_context* ctx = s_pm_ctx[wid][spu_num];
      int first = 0;
-@@ -219,7 +255,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -219,7 +298,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static volatile unsigned long long s_flow_arm_ms;
      extern unsigned long long ps3_ms_now(void);
      if (tracing) {
@@ -19374,7 +19442,7 @@ index 4f82063..59c15e3 100644
          s_flow_arm_ms = ps3_ms_now();
          { static int _a = 0; if (_a++ < 8) {
              fprintf(stderr, "[pm-flow] ARM wid=%u spu=%u (watch=0x%08X)\n",
-@@ -265,18 +302,49 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -265,18 +345,49 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -19436,7 +19504,7 @@ index 4f82063..59c15e3 100644
  
      if (s_claimlog) {
          unsigned claims = g_spu_putllc_sync_hit - claim_before;
-@@ -439,9 +507,25 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
+@@ -439,9 +550,25 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
      (void)p;
      extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
      extern void* volatile g_pm_flow_ctx;

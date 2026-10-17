@@ -369,6 +369,16 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
     return (bool)f.flush();
 }
 
+/* GT5P_RESOLUTION overrides the file, like the runtime's own variables. */
+static void apply_resolution_env(Gt5pSettings& s)
+{
+    if (const char* r = getenv("GT5P_RESOLUTION"); r && *r) {
+        if (!strcmp(r, "1080p") || !strcmp(r, "1080")) s.resolution = 1080;
+        else if (!strcmp(r, "720p") || !strcmp(r, "720")) s.resolution = 720;
+        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p or 1080p; ignored");
+    }
+}
+
 void gt5p_settings_load()
 {
     g_settings = Gt5pSettings{};
@@ -377,7 +387,10 @@ void gt5p_settings_load()
     for (size_t i = 0; i < sizeof kEnvNames / sizeof kEnvNames[0]; i++)
         g_env_set[i] = getenv(kEnvNames[i]) != nullptr;
     if (getenv("GT5P_NO_SETTINGS")) {
-        printf("[settings] GT5P_NO_SETTINGS: built-in defaults, file ignored\n");
+        /* Test runs still choose the display mode: no runtime variable can. */
+        apply_resolution_env(g_settings);
+        printf("[settings] GT5P_NO_SETTINGS: built-in defaults, file ignored (resolution=%dp)\n",
+               g_settings.resolution);
         return;
     }
     g_enabled = true;
@@ -408,12 +421,7 @@ void gt5p_settings_load()
 
     g_file = g_settings;
 
-    /* GT5P_RESOLUTION overrides the file, like the runtime's own variables. */
-    if (const char* r = getenv("GT5P_RESOLUTION"); r && *r) {
-        if (!strcmp(r, "1080p") || !strcmp(r, "1080")) g_settings.resolution = 1080;
-        else if (!strcmp(r, "720p") || !strcmp(r, "720")) g_settings.resolution = 720;
-        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p or 1080p; ignored");
-    }
+    apply_resolution_env(g_settings);
 
     apply_env(g_settings);
     reflect_env(g_settings);

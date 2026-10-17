@@ -9,6 +9,73 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 73 - The race start froze; a stale build (2026-10-18)
+
+**Reported:** pressing Start on the starting grid stalls the frame rate
+(0.79 fps) and the right half of the screen turns to noise. The user's
+stall log (`logs/stall-20261018-074137.log`) had the same shape as ours.
+
+**The race start froze every time.** `$DaytonaRaceHold` stops on the
+starting grid, so earlier checks ("the race runs", Phases 69 and 72) never
+pressed Start. `$DaytonaStartHold` (new, `scripts/test/milestone.ps1`)
+does: 3 of 3 runs froze, at 720p and at 1080p.
+
+**Cause: the walker's stuck-get watchdog left an SPU ring.**
+- Render lane wid 0, SPU 0 spins in the ring-space wait of `b01376080`
+  (`0x4554`-`0x4644`): it may write `[head, head+need)` only when the
+  label (how far the RSX has read this lane's output) is not inside it.
+- The FIFO walker had left the ring: `FIFO resync (stuck-get) 0x09A31860
+  -> put 0x00011080`. Get equal to put, nothing parked.
+- The trace (below) showed the lane making 96 allocations in a row, round
+  the whole 1 MB ring, with the label never moving.
+- A park JUMP at a job ring's write head stops each walker pass without
+  moving get. The watchdog counted 8 such passes (about 8 ms) as stuck and
+  resynced to the PPU's put, dropping the rest of the ring and the label
+  writes in it. The park rule meant to allow 500 ms
+  (`GCM_PARK_TIMEOUT_MS`), and the watchdog already exempted unfilled
+  `0xFFFFFFFF` blocks, but not parks. At the race start one job takes
+  longer than 8 ms between blocks.
+- Fix (ps3recomp `cellGcmSys.c`): the watchdog treats a park in another
+  ring like an unfilled block (`GCM_STUCK_PARK=1` for the old rule). A
+  stuck-get resync now prints the word it was stuck on, and each new
+  longest park over 50 ms is printed.
+
+**Result at 1080p, 2x MSAA, driving into the race:** 11 of 12 runs clean
+(8 of 8 in the last batch), 22-30 fps, against 3 of 3 frozen. The noise
+on the right half has not been seen since; it is presumed to be frames
+drawn from a ring the walker had skipped (not proven).
+
+**Open: a rarer second shape** (1 of 12, `scratch/pv/fx4.err`). The walker
+is parked at an unfilled block in the job list (io `0x09517570`). Lanes
+SPU 0 and SPU 4 of wid 0 each wait to wrap their rings, with their labels
+at ring start. Each filled about 1 MB in one frame; SPUs 1 and 2 are idle,
+and the progress row is `00F8 00F8 00C1 FFFF FFFF FFFF 00C6 FFFF`. Not
+reproduced in 14 runs with the trace hooks in.
+- Hypothesis, untested: wid 0 and wid 1 lanes with the same SPU number
+  have separate policy contexts, so separate ring heads into one ring
+  memory, and can run at once. On the console both lists share a physical
+  SPU's local store (SPURS reloads only the module image) and run on it
+  one at a time. Each lane's label only guards its own data.
+
+**A stale build.** Phase 72's instrumentation (`[fnc]`, `[palette]`,
+`[palcopy]` lines) was still in `ppu_recomp_002/003/005.cpp.obj`, so it
+was in the exe the user plays. The restore paths of
+`scripts/diag/fncount_patch.py`, `spcheck_patch.py` and `spufn_count.py`
+put the original back with its old time, older than the object built from
+the patched copy, so ninja never recompiled it. They now stamp the
+restored file (`os.utime`). After any instrumented run, grep the log for
+`[fnc]` before trusting a build.
+
+**Also:** `GT5P_RESOLUTION` now applies under `GT5P_NO_SETTINGS`, so the
+test scripts can run at 1080p (`GT5P_RESOLUTION=1080p RSX_MSAA=2` is the
+user's setup).
+
+**Tools:** `scripts/diag/ringtrace_hook.py` traces `b01376080`'s ring
+allocations and job ends into `spurs_ring_trace` (ps3recomp
+`spurs_policy.c`); the stall dump prints each render lane's last 512.
+`RSX_LABELWATCH=1` (older) logs labels 72-81 moving backwards; wraps to
+ring start are normal.
+
 ## Phase 72 - The pit crew animate (2026-10-17)
 
 **Fixed.** On Daytona's Race Mode page the crew now walk around the car

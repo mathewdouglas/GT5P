@@ -13,6 +13,9 @@ def restore():
     for o in glob.glob(os.path.join(GEN, "*.spc_orig")):
         dst = o[:-len(".spc_orig")]
         os.replace(o, dst)
+        # The original keeps its old time, older than an object built from
+        # the patched copy; stamp it now so the build recompiles it.
+        os.utime(dst)
         print("restored", dst)
 
 def patch(names):

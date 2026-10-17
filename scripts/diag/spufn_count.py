@@ -11,6 +11,9 @@ bak = p + ".sfc_orig"
 if sys.argv[1] == "--restore":
     if os.path.exists(bak):
         os.replace(bak, p)
+        # The original keeps its old time, older than an object built from
+        # the patched copy; stamp it now so the build recompiles it.
+        os.utime(p)
         print("restored", p)
     sys.exit(0)
 src = open(p, encoding="latin-1", newline="").read()

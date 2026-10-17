@@ -113,6 +113,9 @@ function Get-ToDaytona([int]$At = 6000) {
 }
 $DaytonaHold = Get-ToDaytona 6000
 $DaytonaRaceHold = "@PitSceneRoot+10000-10300:CROSS,@DrivingOptionRoot+3000-3300:CROSS"
+# On the starting grid the cursor rests on Start; Cross begins the race.
+# "$DaytonaHold,$DaytonaRaceHold,$DaytonaStartHold" -> driving the race.
+$DaytonaStartHold = "@QuickArcadeRoot+5000-5300:CROSS"
 
 # The Ferrari page (Phase 60): row 2, fifth column of the manufacturer list.
 # Scripted directions are D-pad only, one column a press.
