@@ -9,6 +9,46 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 68 - The black track behind the race menus (in progress, 2026-10-17)
+
+**Reported:** Daytona's Race Mode page and the starting grid show black
+where the track should be.
+
+**Ruled out, by measurement** (`scratch/shots.ps1 -Hold $DaytonaHold` with
+`RSX_CAP=200:1:1 RSX_CAP_MIN=1800`):
+
+- Routing: the frame has the dealer page's structure (six cube faces, a
+  1024x1024 shadow pass that does fill its depth map, then the scene into
+  `0x01980000`, 1,675 draws and 6.3 M vertices, then the exposure chain and
+  the composite). Same target, same depth surface `0x02100000`, same
+  depth/stencil/cull/scissor state as the dealer page's scene pass (the
+  manifest now prints `ds= cull= sc= zeta= rt= atest= pofs=` per draw).
+- Not async shaders (`RSX_SHADER_ASYNC=0`), not GPU vertex fetch
+  (`RSX_VTX_GPU=0`), not the depth test (new `RSX_DEPTH_ALWAYS=1`), not
+  culling (`CULL_OFF=1`); no PSO or compile failures.
+- RenderDoc (new: `RSX_RDOC=1` triggers a capture at the `RSX_CAP` frame;
+  `scratch/rdcap.ps1`, `scratch/rdoc_vsout.py`, `rdoc_state.py`,
+  `rdoc_pixhist.py` run under `qrenderdoc --python`): the scene's vertices
+  are a sane 16:9 perspective and reach the screen; viewport, scissor, 4x
+  MSAA target and depth are normal; pixel history shows the fragments pass
+  and write depth, and write exactly (0, 0, 0, 1). The earlier reading that
+  nothing rasterises was wrong (the capture's 24-bit readback).
+
+**Found:** the scene programs compute black because a constant does. The
+most used one (`0x06C271C1`, 214 draws) is `(tc3 lighting x tex0 x k2 - k0)
+x tc8 + k3 + tex15 x k4`, with `tc3` the vertex lighting (attribute 13, 8-bit,
+0.33 to 0.81) and `tc8` = 1. `FPK_FP=06C271C1`: `k2.xyz` is 4.34e-6 times a
+value W that rises from 0 like the fourth power of time, and `k2.w` is W
+capped at 15; after four minutes the picture is still black. The title
+writes these into the program; where W and the 4.34e-6 come from is not
+found. Also: the exposure chain's last 1x1 draw lands on row 1436 of a
+surface clipped at 1436 rows; targets now cover a draw's viewport and
+scissor up to 64 past the clip (`RSX_RT_COVER_VP=0` for the clip only). That
+did not change `k2`.
+
+Next: the same constant in RPCS3 (a RenderDoc capture of the page there),
+then who computes it.
+
 ## Phase 67 - The movie played out, the window's own thread, a two-column settings page (2026-10-17)
 
 **Reported:** (1) the game does not load if the opening movie plays to its
