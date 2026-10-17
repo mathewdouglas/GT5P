@@ -565,6 +565,12 @@ Each corrects the one before.
   - A target is sized no larger than its draws' viewport and scissor
     (`RSX_RT_CAP_VP=0`). The race's 1440-row clip had dropped the depth
     buffer.
+- **Phase 71: 1080p antialiasing and softer shadows.**
+  - At 1080p the title asks for no antialiasing. The window-sized scene
+    target is multisampled anyway (`RSX_MSAA_FORCE=0` to stop).
+  - Shadow compares average four 2x2 compares (`RSX_SHADOW_SOFT=0`).
+  - The pit crew's bind pose is open: motions load and `CMotionEx` runs,
+    but the SPU skins with bind-pose matrices.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

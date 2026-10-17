@@ -9,6 +9,45 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 71 - Aliasing at 1080p; the pit crew's bind pose, part one (2026-10-17)
+
+**Reported:** jagged edges and shadows when the camera moves (the user plays
+at 1080p, 2x MSAA); the pit crew T-pose with no animation.
+
+**Edges, fixed.** At 1080p the title draws its scene at 1920x1080 with
+antialias mode 0: it asks for no antialiasing (at 720p it asks for mode 3),
+and the backend only multisampled what was asked for. A window-sized,
+RGBA8 target drawn with a depth buffer is now multisampled anyway with
+the configured count, and resolved before anything reads it, so its
+texture size is unchanged. Measured: `[RT] slot 6 off=0x1980000
+1920x1080: antialias mode 0, drawn with 2 samples`; edges visibly smooth
+in a 1080p crop. `RSX_MSAA_FORCE=0` for only what the title asks.
+
+**Shadows, softened.** The compare was already the RSX's 2x2 filtered
+compare. Over a 1024x1024 map at 1080p that stair-steps and shimmers, so
+four of those compares half a texel apart are averaged (a 3x3 tent).
+`RSX_SHADOW_SOFT=0` for the console's filter. No compile failures; not
+measured against motion.
+
+**Pit crew, not fixed yet.** RPCS3's capture of the same page shows them
+kneeling and walking; ours stand in the bind pose (arms out, the same in
+every shot).
+- Their vertex program does no skinning (no indexed constants, no vertex
+  textures); their positions (`fp 0x077FDE41`, suit texture `0xC73C2E00`,
+  float3 stride 36) come from changing main-memory addresses, an SPU output
+  ring: skinned on the SPU, with bind-pose matrices.
+- Motions load: the title's loader (`0x621040`, called at `0x615108`)
+  returns a handle for each `/motion/mXXXX` (the `grim/file/asset/motion`
+  stat fails on RPCS3 as well).
+- `CMotionEx` methods run every frame with dt 1/30 (`0x83C420`,
+  `0x83B7F0`, `0x83B280`, ...), and `GTStage::MotionComponent` methods
+  run too.
+- `GTPilot::SkinModel` and `PDIMotion::CSkinningPalette` are never
+  constructed on this page; they belong to the in-car driver.
+- Not `RSX_VTXCACHE` (off, same pose).
+- Next: where `CMotionEx`'s evaluated bones go, and what feeds the SPU
+  skinning job its matrices.
+
 ## Phase 70 - The race's ground and track (2026-10-17)
 
 **Reported:** the ground and track are black below the horizon on the
