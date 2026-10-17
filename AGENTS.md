@@ -71,6 +71,34 @@ decrypted game is `input/disc/USRDIR/EMAIN.elf`. Analysis output is in
   writing `<name>.elf` beside the input. `EBOOT.BIN` passed in the same call
   produced no output file; not investigated.
 
+## GT5 bring-up (BCUS98114)
+
+Initial triage measured 2026-10-17 on the US disc dump, PARAM.SFO version
+02.00 (`APP_VER` 01.00, `PS3_SYSTEM_VER` 03.5600, category `DG`). Unlike
+GT5P, its `PS3_GAME/USRDIR` has one retail `EBOOT.BIN` rather than a separate
+`EMAIN.SELF`; the decrypted ELF is 26,029,448 bytes. The dump has a 12 GB
+`GT.VOL` and a `MOVIE` directory. Decryption was done with RPCS3's GUI utility.
+
+| Measurement | BCUS98158 v03.00 | BCUS98114 v02.00 |
+| --- | ---: | ---: |
+| Last executable section end | `0xE3EC24` | `0x111C684` |
+| `find_functions.py` total / below code end | 45,324 / 43,137 | 62,989 / 60,448 |
+| Unique OPD functions (`ppu_loader.py`) | not recorded | 27,012 |
+| Imports | 565 across 31 modules | 716 across 42 modules |
+
+The function-finder count is heuristic and differs from the number of unique
+OPD functions. Compared with BCUS98158, GT5 imports these additional modules:
+`cellCamera`, `cellGame`, `cellMusicDecodeUtility`, `cellPhotoUtility`,
+`cellRudp`, `cellSail`, `cellSailRec`, `cellSysutilNpEula`, `cellUsbPspcm`,
+`cellUserInfo`, `cellVideoExportUtility`, `sceNpCommerce2`, `sceNpTrophy` and
+`sceNpUtil`; GT5 does not import `cellMusicUtility`, `cellSync` or
+`cellSysutilAvconfExt`.
+
+This is triage only: BCUS98114 has not been lifted, built or booted. Its
+build-specific addresses, SPU workloads, data-loading behavior and any
+required runtime changes remain to be measured. See
+[docs/progress-gt5.md](docs/progress-gt5.md).
+
 ## What is tied to v02.00
 
 These are the known build-specific inputs. Each one has to be re-derived or
