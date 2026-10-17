@@ -474,10 +474,22 @@ static LONG CALLBACK report_crash(EXCEPTION_POINTERS* ep)
         }
         fputc('\n', stderr);
     }
-    /* The filter runs on the faulting thread, so its own guest context is the
-     * runtime's thread-local one. */
-    if (ppu_context* c = g_active_ctx) {
-        fprintf(stderr, "[GT5P]   faulting thread regs: lr=%08X ctr=%08X",
+    /* Prefer the thread-local context; a host worker can fault outside the
+     * guest trampoline, so fall back to the PPU thread table by host TID. */
+    ppu_context* fault_ctx = g_active_ctx;
+    if (!fault_ctx) {
+        DWORD host_tid = GetCurrentThreadId();
+        for (int i = 0; i < PPU_THREAD_MAX; i++) {
+            if (g_ppu_threads[i].state != PPU_THREAD_STATE_FREE &&
+                g_ppu_threads[i].host_tid == host_tid) {
+                fault_ctx = &g_ppu_threads[i].ctx;
+                break;
+            }
+        }
+    }
+    if (ppu_context* c = fault_ctx) {
+        fprintf(stderr, "[GT5P]   faulting thread regs: tid=%llu cia=%08X lr=%08X ctr=%08X",
+                (unsigned long long)c->thread_id, (uint32_t)c->cia,
                 (uint32_t)c->lr, (uint32_t)c->ctr);
         for (int r = 0; r < 32; r++)
             fprintf(stderr, "%s r%d=%llX", r % 8 == 0 ? "\n[GT5P]    " : "", r,
@@ -960,6 +972,7 @@ int main(int argc, char* argv[])
            entry_addr, (uint32_t)elf.toc);
     fflush(stdout);
 
+    g_active_ctx = &g_main_ctx;
     entry_func(&g_main_ctx);
     while (g_trampoline_fn) {
         void (*trampoline)(void*) = g_trampoline_fn;
