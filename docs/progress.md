@@ -9,6 +9,60 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 77 - Controller reconnects and changing audio outputs (2026-10-18)
+
+**Windows device recovery is implemented.** The previous SDL path initialized
+on one guest thread and updated/opened/closed controller handles from whichever
+guest thread called the pad API. It never pumped or drained SDL's event queue.
+It also scanned before closing removed handles, allowing a rapid replacement
+to be assigned to another port. A disconnected port retained its last input.
+
+The dynamically loaded SDL backend now initializes, pumps events, updates,
+scans and reads on one owner thread. Guest calls copy a locked snapshot.
+Removed handles are closed before a scan; disconnected snapshots have released
+buttons, zero triggers and centred sticks. Existing attached controllers keep
+their ports. Scans run at least once a second even when the title is not polling
+input. The SDL subsystem and its worker live until process exit, as the former
+dynamically loaded subsystem already did. `PAD_HOTPLUG=0` uses the calling-thread
+polling path; `PAD_NO_SDL=1` still selects XInput and keyboard.
+
+WASAPI previously opened once. A failed `GetCurrentPadding` switched to silent
+clock pacing permanently, and changing the default device while the old device
+remained available was never checked. COM and stream lifetime now belong to the
+mixer thread. Every 500 ms it compares the default render/console endpoint ID;
+a changed endpoint or a stream error closes the old stream and opens the current
+default. Missing endpoints and failed opens are retried with a 500 ms backoff.
+Guest rings and notification queues continue during a missing-device interval.
+Shared-mode format conversion accommodates outputs with a different engine rate
+or channel count. Failed opens release stream/event/ID resources, and mixer exit
+balances COM initialization. `AUDIO_HOTPLUG=0` keeps the initial output and old
+format negotiation.
+
+`scripts/test/hotplug.ps1` builds a standalone integration harness against the
+patched runtime (no game data). It uses process-local SDL virtual controllers
+and a test endpoint enumerator around real WASAPI streams, leaving Windows
+device settings untouched. Checks passed:
+
+- buttons and axes arrive, disconnect releases input, five rapid replacements
+  retain the same port, and the SDL worker discovers three reconnect cycles;
+- no output at startup, a changed endpoint ID, unchanged-ID stream retention,
+  removal, failed activation, retry backoff and ten further output changes;
+- invalidation from padding, buffer acquisition and buffer release, followed
+  by successful real-stream reopening, with guest port state preserved;
+- two actual mixer-thread init/quit cycles release their COM and stream state.
+
+The rebuilt game completed `roundtrip.ps1 -NoArcade` at 1080p, 2x MSAA
+(`scratch/pv/hotplug1080.*`): menu and Acura page, about 30 fps. `AUDIO_RATE=1`
+reported 187.4-187.6 blocks/s, no underruns and no dropped frames; once the
+menu music started, sampled intervals had no empty blocks. Both the physical
+DualSense and the Xbox controller exposed by the host were discovered.
+
+Physical USB/Bluetooth reconnects and changing Windows' actual default output
+are not automated by this harness; verification of those exact user actions
+remains manual. API references: [SDL event pumping](https://wiki.libsdl.org/SDL2/SDL_PumpEvents),
+[WASAPI invalid-device recovery](https://learn.microsoft.com/en-us/windows/win32/coreaudio/recovering-from-an-invalid-device-error),
+and [shared-mode format conversion](https://learn.microsoft.com/en-us/windows/win32/coreaudio/audclnt-streamflags-xxx-constants).
+
 ## Phase 76 - Spectator colours and race texture capacity (2026-10-18)
 
 **The grey crowd is fixed.** Pixel history in

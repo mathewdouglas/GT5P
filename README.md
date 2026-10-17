@@ -213,6 +213,12 @@ comment on each: resolution (720p or 1080p), antialiasing, vsync, the shader
 cache, the shader indicator, controllers and the keyboard. You can also edit
 it by hand and restart.
 
+Controllers can be disconnected and reconnected while playing; SDL device
+discovery runs independently of the game's input calls. Windows audio follows
+the default output within about half a second and retries if an output becomes
+unavailable. Diagnostic overrides: `PAD_HOTPLUG=0` uses polling on the calling
+thread; `AUDIO_HOTPLUG=0` keeps the initially opened output.
+
 While the game builds shaders the picture stops for a moment (several seconds
 the first time a screen is seen); a "Compiling shaders" badge in the corner
 says so. It can be turned off on the settings page. An environment variable for the same switch (shown in the file's

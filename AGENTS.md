@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 76)
+## Start here: state of play (2026-10-18, Phase 77)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 76 is the latest).
+has the evidence, newest phase first (Phase 77 is the latest).
 
 ### What works now
 
@@ -61,6 +61,10 @@ has the evidence, newest phase first (Phase 76 is the latest).
 - The race crowd has coloured spectators (Phase 76, `RSX_FOG=0` restores
   raw-coordinate replication). The texture cache now uses 1024 slots by
   default; 512 dropped race texture binds (`RSX_TEX_SLOTS=512` to compare).
+- Controller discovery now runs on an SDL owner thread; detached handles are
+  retired before rescanning. WASAPI follows default-output changes and retries
+  lost devices (Phase 77). `PAD_HOTPLUG=0` and `AUDIO_HOTPLUG=0` disable these
+  paths. Isolated recovery checks: `scripts/test/hotplug.ps1`.
 
 ### Open work, in the order the user left it
 

@@ -115,10 +115,68 @@ index 0000000..e3700ff
 +#endif
 +#endif
 diff --git a/libs/audio/cellAudio.c b/libs/audio/cellAudio.c
-index b51fb7c..2785dcb 100644
+index b51fb7c..28c1fb3 100644
 --- a/libs/audio/cellAudio.c
 +++ b/libs/audio/cellAudio.c
-@@ -280,6 +280,10 @@ static int audio_backend_init(void)
+@@ -233,37 +233,31 @@ static IAudioClient*        s_wasapi_client = NULL;
+ static IAudioRenderClient*  s_wasapi_render = NULL;
+ static HANDLE               s_wasapi_event  = NULL;
+ static UINT32               s_wasapi_buf_frames = 0;
++static IMMDeviceEnumerator* s_wasapi_enumerator;
++static LPWSTR s_wasapi_device_id;
++static int s_wasapi_com_owned;
++static int s_audio_hotplug;
++static ULONGLONG s_wasapi_next_check;
+ 
+-static int audio_backend_init(void)
++static void audio_backend_close_stream(void)
+ {
+-    HRESULT hr;
+-
+-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+-    if (FAILED(hr) && hr != S_FALSE && hr != RPC_E_CHANGED_MODE) {
+-        printf("[cellAudio] CoInitializeEx failed: 0x%08lX\n", hr);
+-        return -1;
+-    }
+-
+-    IMMDeviceEnumerator* enumerator = NULL;
+-    hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL,
+-                          &IID_IMMDeviceEnumerator, (void**)&enumerator);
+-    if (FAILED(hr)) {
+-        printf("[cellAudio] Failed to create device enumerator: 0x%08lX\n", hr);
+-        return -1;
+-    }
+-
+-    IMMDevice* device = NULL;
+-    hr = enumerator->lpVtbl->GetDefaultAudioEndpoint(enumerator, eRender,
+-                                                      eConsole, &device);
+-    enumerator->lpVtbl->Release(enumerator);
+-    if (FAILED(hr)) {
+-        printf("[cellAudio] Failed to get default audio endpoint: 0x%08lX\n", hr);
+-        return -1;
+-    }
++    if (s_wasapi_client) s_wasapi_client->lpVtbl->Stop(s_wasapi_client);
++    if (s_wasapi_render) s_wasapi_render->lpVtbl->Release(s_wasapi_render);
++    if (s_wasapi_client) s_wasapi_client->lpVtbl->Release(s_wasapi_client);
++    if (s_wasapi_event) CloseHandle(s_wasapi_event);
++    CoTaskMemFree(s_wasapi_device_id);
++    s_wasapi_device_id = NULL;
++    s_wasapi_render = NULL;
++    s_wasapi_client = NULL;
++    s_wasapi_event = NULL;
++    s_wasapi_buf_frames = 0;
++}
+ 
++static int audio_backend_open(IMMDevice* device)
++{
++    HRESULT hr;
+     hr = device->lpVtbl->Activate(device, &IID_IAudioClient, CLSCTX_ALL,
+                                    NULL, (void**)&s_wasapi_client);
+-    device->lpVtbl->Release(device);
+     if (FAILED(hr)) {
+         printf("[cellAudio] Failed to activate audio client: 0x%08lX\n", hr);
+         return -1;
+@@ -280,65 +274,127 @@ static int audio_backend_init(void)
  
      /* Request event-driven mode with a ~20ms buffer */
      REFERENCE_TIME buf_duration = 200000; /* 20ms in 100ns units */
@@ -128,8 +186,188 @@ index b51fb7c..2785dcb 100644
 +    if (!getenv("AUDIO_PACE_DEVICE")) buf_duration = 800000; /* 80 ms */
      s_wasapi_event = CreateEventW(NULL, FALSE, FALSE, NULL);
  
++    const DWORD conversion = s_audio_hotplug ?
++        AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY : 0;
      hr = s_wasapi_client->lpVtbl->Initialize(
-@@ -408,6 +412,16 @@ static inline float ld_be_f32(const float* p)
+         s_wasapi_client,
+         AUDCLNT_SHAREMODE_SHARED,
+-        AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
++        conversion | (s_wasapi_event ? AUDCLNT_STREAMFLAGS_EVENTCALLBACK : 0),
+         buf_duration, 0, &wfx, NULL);
+ 
+     if (FAILED(hr)) {
+-        /* Fallback: try without event callback */
++        /* A failed Initialize can leave a client unusable. Get a fresh client
++         * before retrying without the optional event callback. */
++        s_wasapi_client->lpVtbl->Release(s_wasapi_client);
++        s_wasapi_client = NULL;
++        hr = device->lpVtbl->Activate(device, &IID_IAudioClient, CLSCTX_ALL,
++                                      NULL, (void**)&s_wasapi_client);
++        if (FAILED(hr)) goto failed;
+         hr = s_wasapi_client->lpVtbl->Initialize(
+             s_wasapi_client,
+             AUDCLNT_SHAREMODE_SHARED,
+-            0, buf_duration, 0, &wfx, NULL);
++            conversion, buf_duration, 0, &wfx, NULL);
+         if (FAILED(hr)) {
+             printf("[cellAudio] WASAPI Initialize failed: 0x%08lX\n", hr);
+-            s_wasapi_client->lpVtbl->Release(s_wasapi_client);
+-            s_wasapi_client = NULL;
+-            CloseHandle(s_wasapi_event);
+-            s_wasapi_event = NULL;
++            audio_backend_close_stream();
+             return -1;
+         }
+         CloseHandle(s_wasapi_event);
+         s_wasapi_event = NULL;
+-    } else {
+-        s_wasapi_client->lpVtbl->SetEventHandle(s_wasapi_client, s_wasapi_event);
++    } else if (s_wasapi_event) {
++        hr = s_wasapi_client->lpVtbl->SetEventHandle(s_wasapi_client, s_wasapi_event);
++        if (FAILED(hr)) goto failed;
+     }
+ 
+-    s_wasapi_client->lpVtbl->GetBufferSize(s_wasapi_client, &s_wasapi_buf_frames);
++    hr = s_wasapi_client->lpVtbl->GetBufferSize(s_wasapi_client, &s_wasapi_buf_frames);
++    if (FAILED(hr)) goto failed;
+ 
+     hr = s_wasapi_client->lpVtbl->GetService(
+         s_wasapi_client, &IID_IAudioRenderClient, (void**)&s_wasapi_render);
+     if (FAILED(hr)) {
+         printf("[cellAudio] Failed to get render client: 0x%08lX\n", hr);
+-        s_wasapi_client->lpVtbl->Release(s_wasapi_client);
+-        s_wasapi_client = NULL;
+-        return -1;
++        goto failed;
+     }
+ 
+-    s_wasapi_client->lpVtbl->Start(s_wasapi_client);
++    hr = s_wasapi_client->lpVtbl->Start(s_wasapi_client);
++    if (FAILED(hr)) goto failed;
++    hr = device->lpVtbl->GetId(device, &s_wasapi_device_id);
++    if (FAILED(hr)) goto failed;
++    printf("[cellAudio] Output opened: %ls\n", s_wasapi_device_id);
+     return 0;
++failed:
++    fprintf(stderr, "[cellAudio] Output open failed: 0x%08lX\n", (unsigned long)hr);
++    audio_backend_close_stream();
++    return -1;
+ }
+ 
+-static void audio_backend_shutdown(void)
++/* Only the mixer thread owns COM and stream state. A half-second endpoint-ID
++ * check catches default switches even when the previous device stays active.
++ * Missing devices and failed opens are retried, while guest mixing stays live. */
++static void audio_backend_refresh(void)
+ {
+-    if (s_wasapi_client) {
+-        s_wasapi_client->lpVtbl->Stop(s_wasapi_client);
++    ULONGLONG now = GetTickCount64();
++    if (s_wasapi_next_check && (!s_audio_hotplug || now < s_wasapi_next_check)) return;
++    s_wasapi_next_check = now + 500;
++    if (!s_wasapi_enumerator) {
++        HRESULT hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL,
++                                     &IID_IMMDeviceEnumerator, (void**)&s_wasapi_enumerator);
++        if (FAILED(hr)) return;
+     }
+-    if (s_wasapi_render) {
+-        s_wasapi_render->lpVtbl->Release(s_wasapi_render);
+-        s_wasapi_render = NULL;
++    IMMDevice* device = NULL;
++    HRESULT hr = s_wasapi_enumerator->lpVtbl->GetDefaultAudioEndpoint(
++        s_wasapi_enumerator, eRender, eConsole, &device);
++    if (FAILED(hr)) {
++        if (s_wasapi_client) {
++            printf("[cellAudio] No default output; waiting for a device\n");
++            audio_backend_close_stream();
++        }
++        return;
+     }
+-    if (s_wasapi_client) {
+-        s_wasapi_client->lpVtbl->Release(s_wasapi_client);
+-        s_wasapi_client = NULL;
++    LPWSTR id = NULL;
++    hr = device->lpVtbl->GetId(device, &id);
++    if (SUCCEEDED(hr) && (!s_wasapi_client || !s_wasapi_device_id ||
++                          wcscmp(id, s_wasapi_device_id))) {
++        audio_backend_close_stream();
++        audio_backend_open(device);
+     }
+-    if (s_wasapi_event) {
+-        CloseHandle(s_wasapi_event);
+-        s_wasapi_event = NULL;
++    CoTaskMemFree(id);
++    device->lpVtbl->Release(device);
++}
++
++static int audio_backend_init(void)
++{
++    const char* e = getenv("AUDIO_HOTPLUG");
++    s_audio_hotplug = !e || strcmp(e, "0");
++    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
++    s_wasapi_com_owned = SUCCEEDED(hr);
++    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) return -1;
++    s_wasapi_next_check = 0;
++    audio_backend_refresh();
++    return s_wasapi_client ? 0 : -1;
++}
++
++static void audio_backend_shutdown(void)
++{
++    audio_backend_close_stream();
++    if (s_wasapi_enumerator) s_wasapi_enumerator->lpVtbl->Release(s_wasapi_enumerator);
++    s_wasapi_enumerator = NULL;
++    if (s_wasapi_com_owned) CoUninitialize();
++    s_wasapi_com_owned = 0;
++}
++
++static void audio_backend_error(HRESULT hr)
++{
++    if (FAILED(hr) && s_audio_hotplug) {
++        fprintf(stderr, "[cellAudio] Output lost: 0x%08lX; retrying\n", (unsigned long)hr);
++        audio_backend_close_stream();
++        s_wasapi_next_check = GetTickCount64() + 500;
+     }
+ }
+ 
+@@ -347,7 +403,8 @@ static void audio_backend_submit(const float* stereo_samples, u32 num_samples)
+     if (!s_wasapi_render) return;
+ 
+     UINT32 padding = 0;
+-    s_wasapi_client->lpVtbl->GetCurrentPadding(s_wasapi_client, &padding);
++    HRESULT hr = s_wasapi_client->lpVtbl->GetCurrentPadding(s_wasapi_client, &padding);
++    if (FAILED(hr)) { audio_backend_error(hr); return; }
+ 
+     UINT32 available = s_wasapi_buf_frames - padding;
+     if (num_samples > available) {
+@@ -357,11 +414,12 @@ static void audio_backend_submit(const float* stereo_samples, u32 num_samples)
+     if (num_samples == 0) return;
+ 
+     BYTE* buf = NULL;
+-    HRESULT hr = s_wasapi_render->lpVtbl->GetBuffer(s_wasapi_render, num_samples, &buf);
++    hr = s_wasapi_render->lpVtbl->GetBuffer(s_wasapi_render, num_samples, &buf);
+     if (SUCCEEDED(hr) && buf) {
+         memcpy(buf, stereo_samples, num_samples * 2 * sizeof(float));
+-        s_wasapi_render->lpVtbl->ReleaseBuffer(s_wasapi_render, num_samples, 0);
++        hr = s_wasapi_render->lpVtbl->ReleaseBuffer(s_wasapi_render, num_samples, 0);
+     }
++    audio_backend_error(hr);
+ }
+ 
+ /* Frames the device can take right now; -1 with no device open. */
+@@ -371,10 +429,7 @@ static int audio_backend_room(void)
+     UINT32 padding = 0;
+     const HRESULT hr = s_wasapi_client->lpVtbl->GetCurrentPadding(s_wasapi_client, &padding);
+     if (FAILED(hr)) {
+-        /* Device gone (AUDCLNT_E_DEVICE_INVALIDATED on a default-device
+-         * change, sleep, ...): pace on the clock rather than spin. */
+-        static int _n = 0; if (_n++ < 4)
+-            fprintf(stderr, "[cellAudio] GetCurrentPadding failed 0x%08lX -- clock pacing%c", (unsigned long)hr, 10);
++        audio_backend_error(hr);
+         return -1;
+     }
+     return (int)(s_wasapi_buf_frames - padding);
+@@ -408,6 +463,16 @@ static inline float ld_be_f32(const float* p)
      return f;
  }
  
@@ -146,7 +384,7 @@ index b51fb7c..2785dcb 100644
  /* Mix one block from all active ports into s_mix_buffer (stereo float) */
  static void audio_mix_one_block(void)
  {
-@@ -444,7 +458,71 @@ static void audio_mix_one_block(void)
+@@ -444,7 +509,71 @@ static void audio_mix_one_block(void)
          if (level > 1.0f) level = 1.0f;
  
          /* Read one block at the current read_index */
@@ -219,7 +457,7 @@ index b51fb7c..2785dcb 100644
          u32 block_offset = block_idx * CELL_AUDIO_BLOCK_SAMPLES * nch;
          float* src = port->buffer + block_offset;
  
-@@ -467,7 +545,7 @@ static void audio_mix_one_block(void)
+@@ -467,7 +596,7 @@ static void audio_mix_one_block(void)
                          p, (unsigned long long)port->read_index, block_idx, map);
              } } }
  
@@ -228,7 +466,7 @@ index b51fb7c..2785dcb 100644
              float left, right;
              if (nch >= 2) {
                  left  = ld_be_f32(&src[s * nch + 0]) * level;
-@@ -496,7 +574,7 @@ static void audio_mix_one_block(void)
+@@ -496,7 +625,7 @@ static void audio_mix_one_block(void)
          /* Firmware clears a ring-buffer block after consuming it. Besides
           * preventing stale PCM from replaying when a producer stalls, the
           * cleared block is an observable consumption signal for producers. */
@@ -237,7 +475,7 @@ index b51fb7c..2785dcb 100644
  
          /* Keep the monotonic counter for tags/timestamps, but publish the
           * ring slot to the guest. SurMixer multiplies this value by the block
-@@ -535,10 +613,18 @@ static void audio_notify_event_queues(void)
+@@ -535,10 +664,22 @@ static void audio_notify_event_queues(void)
  }
  
  #ifdef _WIN32
@@ -248,6 +486,10 @@ index b51fb7c..2785dcb 100644
  {
      (void)arg;
      printf("[cellAudio] Mixing thread started\n");
++#if AUDIO_BACKEND_WASAPI
++    if (audio_backend_init() < 0)
++        printf("[cellAudio] No output yet; continuing with clock-paced mixing\n");
++#endif
 +    /* This thread sets the pace of the title's whole sound pipeline: each
 +     * block it consumes is the event the title's audio thread wakes on. At
 +     * normal priority it was itself held up for 14 ms and more, dozens of
@@ -256,9 +498,13 @@ index b51fb7c..2785dcb 100644
  
      /* Pace to the device clock. The PS3 consumes one block every 5.33 ms;
       * the old Sleep(2)/Sleep(5) loop keyed on a queue depth the 1056-frame
-@@ -550,6 +636,38 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -549,7 +690,42 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+     LARGE_INTEGER qf, q0; QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&q0);
      unsigned long long blocks = 0;
      while (s_mix_thread_running) {
++#if AUDIO_BACKEND_WASAPI
++        audio_backend_refresh();
++#endif
          const int room = audio_backend_room();
 +        /* One block every 5.33 ms, evenly. Pacing on the device instead woke
 +         * this thread once per device period (10 ms in shared mode) to mix
@@ -295,7 +541,7 @@ index b51fb7c..2785dcb 100644
          if (room >= 0 && room < CELL_AUDIO_BLOCK_SAMPLES) { audio_backend_wait(); continue; }
          if (room < 0) {
              LARGE_INTEGER now; QueryPerformanceCounter(&now);
-@@ -562,7 +680,13 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -562,7 +738,13 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
                  q0.QuadPart = now.QuadPart -
                      (long long)(blocks * CELL_AUDIO_BLOCK_SAMPLES * qf.QuadPart / CELL_AUDIO_SAMPLE_RATE);
          }
@@ -309,7 +555,7 @@ index b51fb7c..2785dcb 100644
          /* Mix and submit one block */
          audio_mix_one_block();
          /* AUDIO_PEAK=1: report the mixed block's peak amplitude periodically so
-@@ -579,6 +703,57 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -579,6 +761,57 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
            if (_wf == (FILE*)-1) { const char* e = getenv("AUDIO_WAV"); _wf = e ? fopen(e, "wb") : NULL; }
            if (_wf) fwrite(s_mix_buffer, sizeof(float), CELL_AUDIO_BLOCK_SAMPLES * 2, _wf); }
          audio_backend_submit(s_mix_buffer, CELL_AUDIO_BLOCK_SAMPLES);
@@ -367,7 +613,7 @@ index b51fb7c..2785dcb 100644
          /* AUDIO_RATE=1: blocks mixed vs real time, and frames dropped. */
          { static int on = -1; if (on < 0) on = getenv("AUDIO_RATE") ? 1 : 0;
            if (on) { static ULONGLONG t0; static unsigned n, z; static unsigned long long d0;
-@@ -586,6 +761,7 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -586,6 +819,7 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
              { int nz = 0; for (u32 i = 0; i < CELL_AUDIO_BLOCK_SAMPLES * 2; i++) if (s_mix_buffer[i] != 0.0f) { nz = 1; break; }
                if (!nz) z++; }
              if (now - t0 >= 5000) {
@@ -375,6 +621,39 @@ index b51fb7c..2785dcb 100644
                  fprintf(stderr, "[audio-rate] %.1f blocks/s (real time 187.5), silent %.1f%%, dropped %.0f frames/s, device buf %u%c",
                          n * 1000.0 / (now - t0), n ? 100.0 * z / n : 0.0, (g_audio_dropped - d0) * 1000.0 / (now - t0),
                  #if AUDIO_BACKEND_WASAPI
+@@ -599,6 +833,9 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+         audio_notify_event_queues();
+     }
+ 
++#if AUDIO_BACKEND_WASAPI
++    audio_backend_shutdown();
++#endif
+     printf("[cellAudio] Mixing thread stopped\n");
+     return 0;
+ }
+@@ -693,10 +930,12 @@ s32 cellAudioInit(void)
+     memset(s_notify_queues, 0, sizeof(s_notify_queues));
+     mutex_init(&s_audio_mutex);
+ 
++#if !AUDIO_BACKEND_WASAPI
+     if (audio_backend_init() < 0) {
+         printf("[cellAudio] WARNING: Audio backend init failed, continuing silently\n");
+         /* Don't fail -- games should still run without audio */
+     }
++#endif
+ 
+ 
+ #ifdef _WIN32
+@@ -724,7 +963,9 @@ s32 cellAudioQuit(void)
+         return CELL_AUDIO_ERROR_NOT_INIT;
+ 
+     audio_stop_mix_thread();
++#if !AUDIO_BACKEND_WASAPI
+     audio_backend_shutdown();
++#endif
+ 
+     /* Port buffers live in the guest vm_base arena (bump-allocated, not host
+      * malloc) -- just drop the references; never free() them. */
 diff --git a/libs/codec/cellAdec.c b/libs/codec/cellAdec.c
 index 3da7017..9a4815b 100644
 --- a/libs/codec/cellAdec.c
@@ -4511,10 +4790,18 @@ index 5166a47..c627e66 100644
      if (!path || !sb)
          return CELL_EFAULT;
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c11..eb1bee6 100644
+index f2b4c11..5288a1a 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
-@@ -75,6 +75,12 @@ typedef struct {
+@@ -52,6 +52,7 @@
+  * -----------------------------------------------------------------------*/
+ 
+ #define PAD_MAX_HOST_PORTS  4  /* XInput supports max 4; SDL may support more */
++#define PAD_POLL_INTERVAL_MS 4
+ 
+ typedef struct {
+     int  connected;
+@@ -75,6 +76,12 @@ typedef struct {
      u8   press_r1;
  } PadHostState;
  
@@ -4527,7 +4814,7 @@ index f2b4c11..eb1bee6 100644
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,13 +146,178 @@ static int pad_host_window_focused(void)
+@@ -140,13 +147,178 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
@@ -4709,7 +4996,7 @@ index f2b4c11..eb1bee6 100644
      if (!pad_host_window_focused()) {
          /* Release everything on focus loss, or a key held while alt-tabbing
           * would stay down forever. */
-@@ -390,6 +561,182 @@ static void pad_shutdown_backend(void)
+@@ -390,6 +562,256 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -4739,6 +5026,8 @@ index f2b4c11..eb1bee6 100644
 +    void  (*GameControllerClose)(void*);
 +    int   (*GameControllerGetAttached)(void*);
 +    void  (*GameControllerUpdate)(void);
++    void  (*PumpEvents)(void);
++    void  (*FlushEvents)(unsigned, unsigned);
 +    unsigned char (*GameControllerGetButton)(void*, int);
 +    short (*GameControllerGetAxis)(void*, int);
 +    const char* (*GameControllerName)(void*);
@@ -4774,6 +5063,8 @@ index f2b4c11..eb1bee6 100644
 +    PAD_SDL_FN(GameControllerClose, "SDL_GameControllerClose")
 +    PAD_SDL_FN(GameControllerGetAttached, "SDL_GameControllerGetAttached")
 +    PAD_SDL_FN(GameControllerUpdate, "SDL_GameControllerUpdate")
++    PAD_SDL_FN(PumpEvents, "SDL_PumpEvents")
++    PAD_SDL_FN(FlushEvents, "SDL_FlushEvents")
 +    PAD_SDL_FN(GameControllerGetButton, "SDL_GameControllerGetButton")
 +    PAD_SDL_FN(GameControllerGetAxis, "SDL_GameControllerGetAxis")
 +    PAD_SDL_FN(GameControllerName, "SDL_GameControllerName")
@@ -4782,9 +5073,8 @@ index f2b4c11..eb1bee6 100644
 +    PAD_SDL_FN(JoystickInstanceID, "SDL_JoystickInstanceID")
 +    PAD_SDL_FN(GetError, "SDL_GetError")
 +#undef PAD_SDL_FN
-+    /* No SDL window and no SDL event loop here: have SDL watch for devices on
-+     * a thread of its own, and report input while another window has focus
-+     * (ours is not SDL's). */
++    /* Watch OS device notifications in SDL's joystick thread; the owner below
++     * pumps SDL events and reads input for our native (non-SDL) window. */
 +    s_sdl.SetHint("SDL_JOYSTICK_THREAD", "1");
 +    s_sdl.SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
 +    s_sdl.SetHint("SDL_JOYSTICK_HIDAPI_PS5", "1");
@@ -4829,18 +5119,33 @@ index f2b4c11..eb1bee6 100644
 +}
 +
 +static unsigned s_guide;   /* ports whose PS/guide button is down this poll */
++static unsigned s_sdl_guide;
++static PadHostState s_sdl_state[PAD_MAX_HOST_PORTS];
 +
 +static void pad_poll_sdl_dyn(void)
 +{
-+    s_guide = 0;
++    s_sdl_guide = 0;
 +    static unsigned long long last_scan = 0;
 +    unsigned long long now = GetTickCount64();
 +    s_sdl.GameControllerUpdate();
++    /* Retire removed handles BEFORE assigning new devices to ports. A rapid
++     * unplug/replug must not move player one into the next empty port. */
++    for (int i = 0; i < PAD_MAX_HOST_PORTS; i++) {
++        if (s_sdl_pad[i] && !s_sdl.GameControllerGetAttached(s_sdl_pad[i])) {
++            s_sdl.GameControllerClose(s_sdl_pad[i]);
++            s_sdl_pad[i] = NULL;
++            last_scan = 0;
++            printf("[cellPad] port %d: controller removed\n", i);
++            fflush(stdout);
++        }
++    }
 +    if (!last_scan || now - last_scan >= 1000) { last_scan = now; pad_sdl_dyn_scan(); }
 +
 +    for (int i = 0; i < PAD_MAX_HOST_PORTS; i++) {
 +        void* gc = s_sdl_pad[i];
-+        PadHostState* hs = &s_host_state[i];
++        PadHostState* hs = &s_sdl_state[i];
++        memset(hs, 0, sizeof(*hs));
++        hs->analog_lx = hs->analog_ly = hs->analog_rx = hs->analog_ry = 128;
 +        if (!gc || !s_sdl.GameControllerGetAttached(gc)) {
 +            if (gc) { s_sdl.GameControllerClose(gc); s_sdl_pad[i] = NULL;
 +                      printf("[cellPad] port %d: controller removed%c", i, 10); fflush(stdout); }
@@ -4864,7 +5169,7 @@ index f2b4c11..eb1bee6 100644
 +        if (rt > 3000) btns |= CELL_PAD_CTRL_R2;
 +        /* SDL_CONTROLLER_BUTTON_GUIDE (the PS button): not a game button, for
 +         * the port's own overlay (g_pad_menu_buttons). */
-+        if (s_sdl.GameControllerGetButton(gc, 5)) s_guide |= 1u << i;
++        if (s_sdl.GameControllerGetButton(gc, 5)) s_sdl_guide |= 1u << i;
 +
 +        hs->connected = 1;
 +        hs->buttons = btns;
@@ -4887,12 +5192,76 @@ index f2b4c11..eb1bee6 100644
 +    }
 +}
 +
++/* SDL's device/event handling has one owner, including initialization. Guest
++ * threads only copy a snapshot; none can close a handle another is reading.
++ * Pump and drain events even with no SDL window (the game uses a Win32 one).
++ * This worker, like the dynamically loaded SDL subsystem, lives until exit. */
++static SRWLOCK s_sdl_snapshot_lock = SRWLOCK_INIT;
++static unsigned s_sdl_snapshot_guide;
++static PadHostState s_sdl_snapshot[PAD_MAX_HOST_PORTS];
++static DWORD WINAPI pad_sdl_worker(void* ready)
++{
++    int ok = pad_sdl_dyn_init();
++    if (!ok) { SetEvent((HANDLE)ready); return 0; }
++    for (;;) {
++        s_sdl.PumpEvents();
++        /* Input is read directly, so discard queued SDL events after pumping. */
++        s_sdl.FlushEvents(0, 0xFFFFu);
++        pad_poll_sdl_dyn();
++        AcquireSRWLockExclusive(&s_sdl_snapshot_lock);
++        memcpy(s_sdl_snapshot, s_sdl_state, sizeof(s_sdl_snapshot));
++        s_sdl_snapshot_guide = s_sdl_guide;
++        ReleaseSRWLockExclusive(&s_sdl_snapshot_lock);
++        if (ready) { SetEvent((HANDLE)ready); ready = NULL; }
++        Sleep(PAD_POLL_INTERVAL_MS);
++    }
++}
++
++static int pad_sdl_dyn_read(void)
++{
++    static int started;
++    static int hotplug = -1;
++    if (hotplug < 0) {
++        const char* e = getenv("PAD_HOTPLUG");
++        hotplug = !e || strcmp(e, "0");
++    }
++    if (!hotplug) {
++        if (!pad_sdl_dyn_init()) return 0;
++        pad_poll_sdl_dyn();
++        memcpy(s_host_state, s_sdl_state, sizeof(s_host_state));
++        s_guide = s_sdl_guide;
++        return 1;
++    }
++    if (!started) {
++        started = 1;
++        HANDLE ready = CreateEventW(NULL, TRUE, FALSE, NULL);
++        HANDLE thread = ready ? CreateThread(NULL, 0, pad_sdl_worker, ready, 0, NULL) : NULL;
++        if (thread) { WaitForSingleObject(ready, INFINITE); CloseHandle(thread); }
++        if (ready) CloseHandle(ready);
++        if (!thread) return 0;
++    }
++    if (!s_sdl_ok) return 0;
++    AcquireSRWLockShared(&s_sdl_snapshot_lock);
++    memcpy(s_host_state, s_sdl_snapshot, sizeof(s_host_state));
++    s_guide = s_sdl_snapshot_guide;
++    ReleaseSRWLockShared(&s_sdl_snapshot_lock);
++    return 1;
++}
++
 +#endif /* PAD_BACKEND_XINPUT: SDL2 at run time */
 +
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -421,6 +768,35 @@ static unsigned long long pad_now_ms(void)
+@@ -407,7 +829,6 @@ static void pad_shutdown_backend(void)
+  * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
+  * a real DualShock 3's own report rate), so no game can tell the difference,
+  * including one sampling for button-press edges. */
+-#define PAD_POLL_INTERVAL_MS 4
+ 
+ static unsigned long long pad_now_ms(void)
+ {
+@@ -421,13 +842,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -4927,14 +5296,25 @@ index f2b4c11..eb1bee6 100644
 +
  static void pad_poll_backend(void)
  {
-     /* Benign race: two threads may poll in the same tick. That costs one extra
-@@ -435,13 +811,38 @@ static void pad_poll_backend(void)
+-    /* Benign race: two threads may poll in the same tick. That costs one extra
+-     * sweep, never a missed or stale-forever read. */
++#if PAD_BACKEND_XINPUT
++    static SRWLOCK poll_lock = SRWLOCK_INIT;
++    AcquireSRWLockExclusive(&poll_lock);
++#endif
+     static unsigned long long s_last_ms = 0;
+     unsigned long long now = pad_now_ms();
+-    if (s_last_ms && now - s_last_ms < PAD_POLL_INTERVAL_MS) return;
++    if (s_last_ms && now - s_last_ms < PAD_POLL_INTERVAL_MS) goto done;
+     s_last_ms = now;
+     /* A real pad streams reports at roughly this rate whether or not anything
+      * changed, and libpad buffers them; a fresh sweep is a fresh report for
+@@ -435,12 +887,42 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT
 -    pad_poll_xinput();
-+    if (pad_sdl_dyn_init()) pad_poll_sdl_dyn();
-+    else                    pad_poll_xinput();
++    if (!pad_sdl_dyn_read()) pad_poll_xinput();
  #elif PAD_BACKEND_SDL2
      pad_poll_sdl2();
  #endif
@@ -4956,7 +5336,7 @@ index f2b4c11..eb1bee6 100644
 +          if (s_host_state[i].connected) all |= s_host_state[i].buttons;
 +#if PAD_BACKEND_XINPUT
 +      if (s_guide) all |= 1u << 16;
- #endif
++#endif
 +      g_pad_menu_buttons = all;
 +      if (g_pad_input_blocked)
 +          for (int i = 0; i < PAD_MAX_HOST_PORTS; i++) {
@@ -4966,9 +5346,14 @@ index f2b4c11..eb1bee6 100644
 +              hs->connected = c;
 +              hs->analog_lx = hs->analog_ly = hs->analog_rx = hs->analog_ry = 128;
 +          } }
++done:
++#if PAD_BACKEND_XINPUT
++    ReleaseSRWLockExclusive(&poll_lock);
++#else
++    ;
+ #endif
  }
  
- /* ---------------------------------------------------------------------------
 diff --git a/libs/network/cellHttpUtil.c b/libs/network/cellHttpUtil.c
 index 2c557f4..c890d64 100644
 --- a/libs/network/cellHttpUtil.c
