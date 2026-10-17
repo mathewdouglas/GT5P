@@ -3,10 +3,12 @@
 For the disc build (BCUS98158), the current state is maintained in
 [AGENTS.md](AGENTS.md) under "Start here", with evidence in
 [docs/progress.md](docs/progress.md). This file lists the work ahead. It was
-updated 2026-10-18, after Phase 72.
+updated 2026-10-18, after Phase 74.
 
 ## Next (disc build)
 
+- **Race crowd.** Dark vertical smears at 720p and 1080p; not yet traced.
+  The 1080p menu's black tree rectangles are fixed (Phase 74).
 - **Texture-load warning.** When a texture cannot be read (an unmapped
   address, an unsupported format or no free slot), show an on-screen badge
   like "Compiling shaders" and write a log line.

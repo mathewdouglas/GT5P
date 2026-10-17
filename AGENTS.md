@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 73)
+## Start here: state of play (2026-10-18, Phase 74)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 73 is the latest).
+has the evidence, newest phase first (Phase 74 is the latest).
 
 ### What works now
 
@@ -55,20 +55,22 @@ has the evidence, newest phase first (Phase 73 is the latest).
 - The opening movie plays when the TV content is visible (Phases 50, 67).
   Menu sound plays.
 - 1080p is multisampled, and shadows are softened (Phase 71).
+- The 1080p Kyoto menu's black tree rectangles are fixed (Phase 74).
 
 ### Open work, in the order the user left it
 
-0. **Phase 73 (2026-10-18), read it first.** The race start froze every
+0. **Phases 74 and 73 (2026-10-18), read them first.** The race start froze every
    time; fixed in the walker (11 of 12 races clean at 1080p). The user's
    four reports, by state:
-   - **1080p menu black slab**: found by RenderDoc to be tree cards drawn
-     with no alpha test. `RSX_A2CDBG=1` showed that the title clears
-     alpha-to-coverage too at 1080p (`0xFFFF0000`), so the obvious fix is
-     wrong. Find how the console hides the cards' transparent texels at
-     1080p (Phase 73).
-   - **Dealer floor reflects the menu's trees**: re-check after the slab
-     fix.
-   - **Race crowd smeared**: not started (it is bad at 720p too).
+   - **1080p menu black slab**: fixed in Phase 74. The title sets A2C
+     without the AA bit (`0xFFFF0010`); the cutout substitute now follows
+     A2C alone (`RSX_A2C_REQUIRE_AA=1` restores the old rule). Phase 73's
+     contrary trace never reached the menu scene; do not use it as evidence.
+   - **Dealer floor reflects the menu's trees**: not visible on one direct
+     menu-to-Acura visit after Phase 74's fix; pit round trip still unverified.
+   - **Race crowd smeared**: still visible after Phase 74's cutout fix
+     (bad at 720p too). `cutfixrace1080.err` also reports 512 texture slots
+     full and heavy pipeline turnover; their relation to the crowd is untested.
    - **Race freeze and noise**: fixed, except for a rarer second shape
      (Phase 73, "Open").
    Test at the user's settings: `GT5P_RESOLUTION=1080p RSX_MSAA=2`. Drive
@@ -150,7 +152,7 @@ has the evidence, newest phase first (Phase 73 is the latest).
 | `milestone.ps1` | (library) | `$ToDealers`, `$DealerHold`, `$DaytonaHold`, `$DaytonaRaceHold`, `$FerrariHold`, `Wait-Milestone`, `Stop-Stragglers` |
 | `winshot.ps1` | Acura dealer page | `-Tag t -Settle 20 -Shots 3 -Gap 3`: window shots (PrintWindow) |
 | `pitshot.ps1` | Daytona Race Mode page | The same. For the race: `"PAD_HOLD=$DaytonaHold,$DaytonaRaceHold"` after dot-sourcing `milestone.ps1`, with `-Settle 70` |
-| `roundtrip.ps1` | menu, Arcade or pit, menu, dealer | `-Pit`, `-Every 3` (a shot every 3 s), `-NoArcade` |
+| `roundtrip.ps1` | menu, Arcade or pit, menu, dealer | `-Pit`, `-Every 3` (a shot every 3 s), `-NoArcade`, `-MenuOnly` (stop after menu shot) |
 | `dealer.ps1`, `revisit.ps1` | any dealer, or N in a row | `-Moves "DOWN,RIGHT,..." -Enter`; Ferrari is `DOWN,RIGHT,RIGHT,RIGHT,RIGHT` |
 | `perf.ps1` | dealer page | fps and CPU, median of `-N` runs; `-Ferrari`, `-Watch <s>` for stalls |
 | `cpu3.ps1` | dealer page | CPU per host thread, named by guest thread |

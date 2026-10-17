@@ -9,6 +9,56 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 74 - The 1080p tree cards keep their cutouts (2026-10-18)
+
+**Fixed:** the black rectangle behind the Kyoto menu's trees at 1080p.
+The alpha-to-coverage substitute required both bit 0 (AA) and bit 4 (A2C)
+of `SET_ANTI_ALIASING_CONTROL`. The title sets `0xFFFF0010` for the tree
+draws at 1080p, so the substitute now follows bit 4 independently.
+`RSX_A2C_REQUIRE_AA=1` restores the old requirement; `RSX_NO_A2C=1` still
+disables the substitute altogether. This keeps the existing half-alpha
+cutout approximation; it does not implement sample coverage.
+
+**Phase 73's last trace did not reach the scene.**
+`scratch/pv/a2c1080.out` has `BootRoot` but no `TopMenuTemplate`, and its
+renderer had only one or two pipelines. Its single `0xFFFF0000` observation
+was boot UI, not the tree cards. A completed boot with both `RSX_A2CDBG=1`
+and the new `RSX_CUTOUTDBG=1` logs `0xFFFF0010` for fp `0x066D6141`,
+texture offset `0x05EEAD00`, alpha test off, blend off. The original
+bit-0 hypothesis was right. This corrects the final reading in Phase 73;
+no console-state workaround or shader-specific heuristic was needed.
+
+**A/B at the user's settings (`GT5P_RESOLUTION=1080p RSX_MSAA=2`):**
+
+- `cut1080.menu.png`: old build, a black rectangle around the tree.
+- `cutfix1080.menu.png`: fixed, sky visible around the leaves.
+- `cutold1080.menu.png`: same rebuilt executable with
+  `RSX_A2C_REQUIRE_AA=1`, the rectangle returns.
+
+All are PrintWindow shots under `scratch/pv/`, after `TopMenuTemplate`,
+with settings ignored and `PS3_VERBOSE=0`.
+
+**Other checks:** `cutfix720.menu.png` retains the expected tree cutouts
+at 720p (`0xFFFF0011`). `cutfixdealer1080.dealer.png`, 30 s after
+`DealerTopRoot`, shows the Acura cars and floor at 30 fps without visible
+menu trees on the floor. That was a direct menu-to-dealer visit; the
+pit-to-menu-to-dealer report remains unverified.
+
+**Race check:** `cutfixrace1080` uses all three Daytona holds, including
+`$DaytonaStartHold`, at 1080p/2x MSAA. Three shots four seconds apart show
+the race timer advancing from 13.600 to 17.333 s with cars moving; no
+freeze, stuck-get resync, recursion-cap or stale `[fnc]` lines in this run.
+The crowd still has bad grey silhouettes. The log also reports texture
+slots full at the default 512 (over 28,000 failed binds) and heavy pipeline
+compilation/cache turnover. This is an open race-rendering finding, not a
+clean performance result or evidence that the cutout fix caused it.
+
+**Tools:** `RSX_CUTOUTDBG=1` logs distinct program, A2C, alpha-test,
+texture-0 and blend state on the walker before asynchronous replay can
+observe a newer global state. `roundtrip.ps1 -NoArcade -MenuOnly` stops
+after its menu shot. The no-Arcade dealer route now uses `Get-ToDealers`
+instead of eight Right taps from an assumed starting tab.
+
 ## Phase 73 - The race start froze; a stale build (2026-10-18)
 
 **Reported:** pressing Start on the starting grid stalls the frame rate

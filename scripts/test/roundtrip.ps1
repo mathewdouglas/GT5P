@@ -2,10 +2,10 @@
 # four Rights to Dealerships, Cross, Cross -> dealer page -> shot(s).
 # The user's report (2026-10-17): after the Arcade round trip the menu scene
 # has black slabs, and the dealer's reflections show the menu's trees.
-#   scripts\test\roundtrip.ps1 -Tag t [-NoArcade] NAME=VALUE ...
+#   scripts\test\roundtrip.ps1 -Tag t [-NoArcade] [-MenuOnly] NAME=VALUE ...
 #   -> scratch\pv\<t>.menu.png, <t>.dealer.png
 [CmdletBinding(PositionalBinding = $false)]
-param([string]$Tag = "rt", [switch]$NoArcade, [switch]$Pit, [int]$MenuSettle = 20, [int]$DealerSettle = 20, [int]$Every = 0,
+param([string]$Tag = "rt", [switch]$NoArcade, [switch]$Pit, [switch]$MenuOnly, [int]$MenuSettle = 20, [int]$DealerSettle = 20, [int]$Every = 0,
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot\milestone.ps1"
 Add-Type -AssemblyName System.Drawing
@@ -31,8 +31,9 @@ if ($NoArcade) {
     $menuMs = 6000 + 1000 * $MenuSettle
     $hold = "@TopMenuTemplate+6000-6300:CIRCLE"
     $b = 6000 + 1000 * $MenuSettle + 1000
-    foreach ($k in 0..7) { $t = $b + 350 * $k; $hold += ",@TopMenuTemplate+$t-$($t+100):RIGHT" }
-    $hold += ",@TopMenuTemplate+$($b+3500)-$($b+3800):CROSS"
+    # The remembered tab can differ between runs; use the shared route that
+    # parks at the strip's right edge, then moves left to Dealerships.
+    $hold += "," + (Get-ToDealers $b)
     $anchor = "TopMenuTemplate"
 } elseif ($Pit) {
     # Daytona's Race Mode page (the pit), then Circle, Circle back to the menu.
@@ -70,6 +71,7 @@ if ($Every -gt 0) {
     }
 } else { Start-Sleep -Milliseconds ($menuMs - 1000) }
 Save-Shot $p "$dir\$Tag.menu.png"; "menu shot"
+if ($MenuOnly) { return }
 if ((Wait-Milestone $p $tl "DealerTopRoot" 90) -lt 0) { "dealer page not reached"; return }
 Start-Sleep -Seconds $DealerSettle
 Save-Shot $p "$dir\$Tag.dealer.png"; "dealer shot; title: $($p.MainWindowTitle)"
