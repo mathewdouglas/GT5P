@@ -83,13 +83,19 @@ exhaustion (9 targets), and every `RT_TEXDBG` match was legitimate.
   one half only when `SET_ANTI_ALIASING_CONTROL` (`0x1D7C`) has both bit 0
   (AA on) and bit 4 (A2C). Hypothesis: at 1080p the title turns AA off
   (bit 0 clear) and leaves A2C set, so the trees get no test at all.
-- Next: `RSX_A2CDBG=1` (new, ps3recomp, built but not yet run) prints each
-  distinct control word with the alpha test state. If 1080p shows bit 4
-  without bit 0, apply the stand-in on bit 4 alone. A single-sample
-  target's one sample is then covered only when alpha >= 0.5, as the
-  hardware does. Then check the dealer floor's tree reflection again: it
-  may be the same tree cards seen through the reflection, not a stale
-  target.
+- Measured with `RSX_A2CDBG=1` (new, ps3recomp): that hypothesis is
+  wrong as stated. At 720p the control word takes `0xFFFF0000`,
+  `0xFFFF0001` and `0xFFFF0011` (A2C on for fp `0x66D6141`); at 1080p it
+  is `0xFFFF0000` for every draw, and the alpha test is off throughout.
+  The title turns A2C off as well at 1080p, and still draws the trees with
+  no test. So the console must hide those texels some other way at 1080p.
+  Not found yet. Candidates: a different program or blend for the cards
+  at 1080p (compare fp addresses and blend state across resolutions), or
+  the title expecting A2C to stay latched. Check RPCS3's capture at 1080p
+  before changing `rsx_alpha_ctl`. Logs: `scratch/pv/a2c1080.err`,
+  `a2c720.err`.
+- Then check the dealer floor's tree reflection again: it may be the same
+  tree cards seen through the reflection, not a stale target.
 
 **Not started:** the race crowd (dark vertical smears drawn over the fence
 and banner, at 720p too, so not resolution-specific; check whether it is

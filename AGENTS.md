@@ -62,10 +62,10 @@ has the evidence, newest phase first (Phase 73 is the latest).
    time; fixed in the walker (11 of 12 races clean at 1080p). The user's
    four reports, by state:
    - **1080p menu black slab**: found by RenderDoc to be tree cards drawn
-     with no alpha test. Likely the alpha-to-coverage stand-in requires
-     the AA-enable bit, and the title clears it at 1080p. Run
-     `RSX_A2CDBG=1` at 1080p and at 720p to confirm, then fix
-     `rsx_alpha_ctl`.
+     with no alpha test. `RSX_A2CDBG=1` showed that the title clears
+     alpha-to-coverage too at 1080p (`0xFFFF0000`), so the obvious fix is
+     wrong. Find how the console hides the cards' transparent texels at
+     1080p (Phase 73).
    - **Dealer floor reflects the menu's trees**: re-check after the slab
      fix.
    - **Race crowd smeared**: not started (it is bad at 720p too).
