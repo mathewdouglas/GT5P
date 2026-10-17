@@ -54,6 +54,7 @@ extern "C" {
 void ppu_register_function(uint64_t addr, void (*fn)(ppu_context*));
 void ppu_recomp_register(void);           /* installs function_table[] */
 void ppu_install_thread_trampoline(void);
+extern PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);
 void ppu_hle_register_all(void);          /* generated: src/gen/ppu_hle_nids.cpp */
 void ppu_sysprx_register(void);
 void ps3_install_guest_ptr_trap(void);
@@ -877,6 +878,11 @@ int main(int argc, char* argv[])
     }
 
     g_main_ctx.gpr[2] = elf.toc;
+    g_main_ctx.gpr[7] = 1;                /* main PPU id for sys_initialize_tls */
+    g_main_ctx.gpr[8] = elf.tls_vaddr;
+    g_main_ctx.gpr[9] = elf.tls_filesz;
+    g_main_ctx.gpr[10] = elf.tls_memsz;
+    g_main_ctx.gpr[12] = 0x100000;         /* LV2 page size used by the CRT */
 
     /* Give the main thread an identity. ps3recomp's own loader does this; a
      * title with its own main() has to. Left at 0, main is the one thread the
@@ -955,6 +961,11 @@ int main(int argc, char* argv[])
     fflush(stdout);
 
     entry_func(&g_main_ctx);
+    while (g_trampoline_fn) {
+        void (*trampoline)(void*) = g_trampoline_fn;
+        g_trampoline_fn = nullptr;
+        trampoline(&g_main_ctx);
+    }
 
     printf("\n[GT5P] Guest returned. r3=0x%llX\n",
            (unsigned long long)g_main_ctx.gpr[3]);

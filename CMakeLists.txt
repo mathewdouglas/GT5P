@@ -43,6 +43,10 @@ if(GT5P_T_ERR)
     message(FATAL_ERROR "GT5P_TARGET=${GT5P_TARGET} is not in config/targets.json")
 endif()
 string(JSON GT5P_CODE_END     GET "${GT5P_T}" code_end)
+string(JSON GT5P_EXE_NAME     ERROR_VARIABLE GT5P_EXE_NAME_ERR GET "${GT5P_T}" exe_name)
+if(GT5P_EXE_NAME_ERR)
+    set(GT5P_EXE_NAME "gt5p")
+endif()
 string(JSON GT5P_BOOT_FROM    GET "${GT5P_T}" boot_from)
 string(JSON GT5P_HDD_TITLE    GET "${GT5P_T}" hdd_title)
 string(JSON GT5P_SPU_REGISTRY GET "${GT5P_T}" spu_registry)
@@ -143,6 +147,7 @@ add_executable(gt5p
     ${PS3RECOMP_PPU_SOURCES}
     ${GENERATED_SOURCES}
 )
+set_target_properties(gt5p PROPERTIES OUTPUT_NAME "${GT5P_EXE_NAME}")
 
 target_include_directories(gt5p PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -171,6 +176,10 @@ else()
     list(APPEND GT5P_MAIN_DEFS "GT5P_SPURS_SYNTH_DONE=0")
 endif()
 set_source_files_properties(src/main.cpp PROPERTIES COMPILE_DEFINITIONS "${GT5P_MAIN_DEFS}")
+if(GT5P_TARGET STREQUAL "BCUS98114")
+    set_source_files_properties(src/gt5p_present.cpp PROPERTIES
+        COMPILE_DEFINITIONS "GT5P_DEFAULT_WINDOW_TITLE=\"Gran Turismo 5 (ps3recomp)\"")
+endif()
 # toml++ (MIT, external/tomlplusplus, v3.4.0) for gt5p_settings.toml. Scoped to
 # the one file that uses it, like the definitions above, so adding it does not
 # change the lifted chunks' command lines and rebuild them.

@@ -33,6 +33,10 @@
 #include "gt5p_settings.h"
 #include "ps3emu/timeline.h"
 
+#ifndef GT5P_DEFAULT_WINDOW_TITLE
+#define GT5P_DEFAULT_WINDOW_TITLE "Gran Turismo 5 Prologue (ps3recomp)"
+#endif
+
 /* GT5P_THREADS=1: every 2 s, print each PPU thread's state and the guest
  * address of its last syscall/HLE call. "Runs its job loop but never loads
  * anything" is exactly the shape a wedged worker produces, and nothing else
@@ -578,7 +582,7 @@ static DWORD WINAPI present_thread(LPVOID)
         g_spurs_lane_start_hook = lane_start_hook;
     }
     const char* title = getenv("PS3_TITLE");
-    if (!title || !*title) title = "Gran Turismo 5 Prologue (ps3recomp)";
+    if (!title || !*title) title = GT5P_DEFAULT_WINDOW_TITLE;
 
     /* PS3_HEADLESS=1: no window (RDP / unattended runs), but the vblank and
      * flip clock and the FIFO drain still run, so the guest sees the same

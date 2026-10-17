@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bootcheck
+import target
 NOISE = ("faulted in guest page", "timer_usleep", "[null-read]")
 
 
@@ -51,7 +52,8 @@ def main():
     tries = int(env.get("BOOT_TRIES", "4"))
     for attempt in range(1, tries + 1):
         with open(out, "wb") as fo, open(err, "wb") as fe:
-            p = subprocess.Popen([str(ROOT / "build" / "gt5p.exe")], cwd=ROOT, env=env, stdout=fo, stderr=fe)
+            p = subprocess.Popen([str(ROOT / "build" / (target.EXE_NAME + ".exe"))],
+                                 cwd=ROOT, env=env, stdout=fo, stderr=fe)
             try:
                 rc = p.wait(timeout=secs)
                 status = "exited rc=%d (0x%X)" % (rc, rc & 0xFFFFFFFF)

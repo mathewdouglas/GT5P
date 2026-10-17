@@ -16,9 +16,10 @@ lifter emitted 83,175 functions, including 14,207 mid-function tail-entry
 wrappers, in 11 source chunks. The setjmp/longjmp pass patched the two scanned
 call sites at `0x00D00D74` and `0x00D00E98`.
 
-The target's SPU policy image was lifted from `0x0177F200` (11,648 bytes,
-190 discovered functions). No runtime job bodies have been captured yet; the
-registry contains only the policy module.
+The initial policy-image estimate was 11,648 bytes and 190 discovered
+functions; runtime later showed that the title requests 12,032 bytes. The
+corrected lift contains 194 functions. The initial registry contained only
+the policy module; the follow-up below records captured runtime job images.
 
 `lift_audit.py` completed and wrote its baseline under ignored
 `analysis/gt5/`. It found 14,074 TODO markers: 14,051 `.word` data-in-text
@@ -46,6 +47,36 @@ cause is unknown. No claim is made yet about the title's actual boot path,
 SPU job requirements, or frame output. The initial target choices
 `spurs_synth_job_done=true`, `boot_from=bdvd`, and `hdd_title=false` remain
 baseline hypotheses.
+
+### Follow-up: launcher, policy size and captured jobs
+
+The immediate return was caused by the custom entry setup: the ELF entry
+requires its thread/TLS and LV2 page-size registers, and the top-level launcher
+must drain generated tail-call trampolines after the entry returns. Seeding
+those inputs and draining the trampoline queue lets startup proceed. The
+runtime then showed that the policy module registered with the initial
+11,648-byte size did not match the 12,032 bytes requested by the title. The
+BCUS98114-only target value was corrected and the policy relifted.
+
+With `SPU_DUMP_MISS=analysis/spu/dump` and that directory present, a 30-second
+headless run captured 14 unique SPURS job images. `lift_spu_jobs.py` found
+6,384 functions across them and regenerated the BCUS98114 registry. The
+Release rebuild succeeded. A further bounded headless run remained alive
+until the 30-second harness timeout, read `GT.VOL`, initialized graphics and
+issued `SetPrepareFlip` calls. The log showed jobs returning/completing and no
+SPURS `dispatch MISS` entries; this verifies the captured registry is being
+used, not that the game reached a usable screen.
+
+The BCUS98114 target now builds as `build/gt5.exe`; Prologue targets retain
+`build/gt5p.exe`. The boot and soak scripts select the executable from the
+same target configuration.
+
+The remaining observed wait is not explained. The run logged
+`sys_spu_thread_write_spu_mb` attempts for thread `0x30040000` that the runtime
+could not resolve and therefore dropped, and the sampled main-thread path
+waited on `ppu_thread_join(tid=27)`. These coincide in the run but are not yet
+proven causal. No visual boot has been confirmed; trace the missing thread and
+join before claiming the game has booted.
 
 ## Phase 1 — Disc and executable triage (2026-10-17)
 

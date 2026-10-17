@@ -5,7 +5,7 @@ SPURS job binaries are raw code+data blobs, not ELFs, and this title's are not
 at a fixed address -- the runtime only sees one when the chain dispatches it.
 Capture them first, then lift:
 
-    SPU_DUMP_MISS=analysis/spu/dump ./build/gt5p.exe      # run until quiet
+    SPU_DUMP_MISS=analysis/spu/dump ./build/gt5.exe       # GT5 target; run until quiet
     python scripts/lift_spu_jobs.py
 
 The dump filenames carry the fingerprint the runtime computed

@@ -94,10 +94,14 @@ OPD functions. Compared with BCUS98158, GT5 imports these additional modules:
 `sceNpUtil`; GT5 does not import `cellMusicUtility`, `cellSync` or
 `cellSysutilAvconfExt`.
 
-This is triage only: BCUS98114 has not been lifted, built or booted. Its
-build-specific addresses, SPU workloads, data-loading behavior and any
-required runtime changes remain to be measured. See
-[docs/progress-gt5.md](docs/progress-gt5.md).
+BCUS98114 now has a separate baseline lift and Release build. A bounded
+headless run reads `GT.VOL`, initializes graphics and issues flip commands;
+the policy image size has been corrected to 12,032 bytes and 14 captured SPU
+job images are registered. This is not yet a confirmed visual boot: the latest
+run waits on a PPU thread join and logs dropped mailbox writes to unresolved
+SPU thread `0x30040000`. Their causal relationship is unproven. Build-specific
+data-loading behavior and any further runtime changes remain to be measured.
+See [docs/progress-gt5.md](docs/progress-gt5.md).
 
 ## What is tied to v02.00
 
@@ -242,7 +246,8 @@ Each corrects the one before.
   ones, `RSX_SAMPDBG=1` to list what the title sets). A `ps_5_0` shader has
   sixteen sampler registers; do not declare one past s15.
 - **To play it:** `play.cmd` in the project root, or double-click
-  `build\gt5p.exe`. The exe finds the project root by looking for
+  `build\gt5.exe` for BCUS98114 (`build\gt5p.exe` for Prologue targets). The
+  exe finds the project root by looking for
   `input\EMAIN.ELF` upwards from its own folder (`GT5P_ROOT` to name it),
   turns verbose logging off when its output is a console, and exits when
   the window is closed. Keyboard: arrows, Z Cross, X Circle, A Square,

@@ -34,10 +34,37 @@ extern void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int 
 extern void gt5p_wwsjob_spu_func_00000A00(spu_context*);
 extern void gt5p_wwsjob_spu_recomp_register(void);
 
-
+extern void gt5p_j1B6BDAC3_spu_func_00000000(spu_context*);
+extern void gt5p_j1B6BDAC3_spu_recomp_register(void);
+extern void gt5p_j48AF2BC7_spu_func_00000000(spu_context*);
+extern void gt5p_j48AF2BC7_spu_recomp_register(void);
+extern void gt5p_j49C1D6C4_spu_func_00000000(spu_context*);
+extern void gt5p_j49C1D6C4_spu_recomp_register(void);
+extern void gt5p_j5DA19516_spu_func_00000000(spu_context*);
+extern void gt5p_j5DA19516_spu_recomp_register(void);
+extern void gt5p_j650EE1A0_spu_func_00000000(spu_context*);
+extern void gt5p_j650EE1A0_spu_recomp_register(void);
+extern void gt5p_j80435D36_spu_func_00000000(spu_context*);
+extern void gt5p_j80435D36_spu_recomp_register(void);
+extern void gt5p_j82D0BE14_spu_func_00000000(spu_context*);
+extern void gt5p_j82D0BE14_spu_recomp_register(void);
+extern void gt5p_j9804ABA8_spu_func_00000000(spu_context*);
+extern void gt5p_j9804ABA8_spu_recomp_register(void);
+extern void gt5p_jABD49FC5_spu_func_00000000(spu_context*);
+extern void gt5p_jABD49FC5_spu_recomp_register(void);
+extern void gt5p_jD58063CD_spu_func_00000000(spu_context*);
+extern void gt5p_jD58063CD_spu_recomp_register(void);
+extern void gt5p_jEB79FDFC_spu_func_00000000(spu_context*);
+extern void gt5p_jEB79FDFC_spu_recomp_register(void);
+extern void gt5p_jF523F26F_spu_func_00000000(spu_context*);
+extern void gt5p_jF523F26F_spu_recomp_register(void);
+extern void gt5p_jFDFFAAC1_spu_func_00000000(spu_context*);
+extern void gt5p_jFDFFAAC1_spu_recomp_register(void);
+extern void gt5p_jFE031AF6_spu_func_00000000(spu_context*);
+extern void gt5p_jFE031AF6_spu_recomp_register(void);
 
 #define WWS_JOB_PM_EA   0x0177F200u
-#define WWS_JOB_PM_SIZE 11648u
+#define WWS_JOB_PM_SIZE 12032u
 
 /* Call after the ELF is in memory and before the game creates any SPURS
  * workload, job chain or task -- main.cpp does both. */
@@ -49,10 +76,92 @@ void gt5p_spu_register_all(void)
     gt5p_wwsjob_spu_recomp_register();
     spu_workload_register_img(fp, gt5p_wwsjob_spu_func_00000A00, 1, "Wws_Job");
 
+    /* spujob_1B6BDAC375C5438D_13840.bin */
+    spu_begin_image(2);
+    gt5p_j1B6BDAC3_spu_recomp_register();
+    spu_workload_register_img(0x1B6BDAC375C5438DULL, gt5p_j1B6BDAC3_spu_func_00000000, 2,
+                              "j1B6BDAC3");
 
+    /* spujob_48AF2BC79A72CB50_25232.bin */
+    spu_begin_image(3);
+    gt5p_j48AF2BC7_spu_recomp_register();
+    spu_workload_register_img(0x48AF2BC79A72CB50ULL, gt5p_j48AF2BC7_spu_func_00000000, 3,
+                              "j48AF2BC7");
+
+    /* spujob_49C1D6C47E80AF43_24720.bin */
+    spu_begin_image(4);
+    gt5p_j49C1D6C4_spu_recomp_register();
+    spu_workload_register_img(0x49C1D6C47E80AF43ULL, gt5p_j49C1D6C4_spu_func_00000000, 4,
+                              "j49C1D6C4");
+
+    /* spujob_5DA195169669A5FF_72464.bin */
+    spu_begin_image(5);
+    gt5p_j5DA19516_spu_recomp_register();
+    spu_workload_register_img(0x5DA195169669A5FFULL, gt5p_j5DA19516_spu_func_00000000, 5,
+                              "j5DA19516");
+
+    /* spujob_650EE1A07AEBB151_22032.bin */
+    spu_begin_image(6);
+    gt5p_j650EE1A0_spu_recomp_register();
+    spu_workload_register_img(0x650EE1A07AEBB151ULL, gt5p_j650EE1A0_spu_func_00000000, 6,
+                              "j650EE1A0");
+
+    /* spujob_80435D36E623FAA0_19488.bin */
+    spu_begin_image(7);
+    gt5p_j80435D36_spu_recomp_register();
+    spu_workload_register_img(0x80435D36E623FAA0ULL, gt5p_j80435D36_spu_func_00000000, 7,
+                              "j80435D36");
+
+    /* spujob_82D0BE145EC28AEE_17424.bin */
+    spu_begin_image(8);
+    gt5p_j82D0BE14_spu_recomp_register();
+    spu_workload_register_img(0x82D0BE145EC28AEEULL, gt5p_j82D0BE14_spu_func_00000000, 8,
+                              "j82D0BE14");
+
+    /* spujob_9804ABA84566F431_20624.bin */
+    spu_begin_image(9);
+    gt5p_j9804ABA8_spu_recomp_register();
+    spu_workload_register_img(0x9804ABA84566F431ULL, gt5p_j9804ABA8_spu_func_00000000, 9,
+                              "j9804ABA8");
+
+    /* spujob_ABD49FC58F53F368_9488.bin */
+    spu_begin_image(10);
+    gt5p_jABD49FC5_spu_recomp_register();
+    spu_workload_register_img(0xABD49FC58F53F368ULL, gt5p_jABD49FC5_spu_func_00000000, 10,
+                              "jABD49FC5");
+
+    /* spujob_D58063CD2A0236B5_53408.bin */
+    spu_begin_image(11);
+    gt5p_jD58063CD_spu_recomp_register();
+    spu_workload_register_img(0xD58063CD2A0236B5ULL, gt5p_jD58063CD_spu_func_00000000, 11,
+                              "jD58063CD");
+
+    /* spujob_EB79FDFCD7112702_22288.bin */
+    spu_begin_image(12);
+    gt5p_jEB79FDFC_spu_recomp_register();
+    spu_workload_register_img(0xEB79FDFCD7112702ULL, gt5p_jEB79FDFC_spu_func_00000000, 12,
+                              "jEB79FDFC");
+
+    /* spujob_F523F26F69764538_64912.bin */
+    spu_begin_image(13);
+    gt5p_jF523F26F_spu_recomp_register();
+    spu_workload_register_img(0xF523F26F69764538ULL, gt5p_jF523F26F_spu_func_00000000, 13,
+                              "jF523F26F");
+
+    /* spujob_FDFFAAC1BCD5352E_34704.bin */
+    spu_begin_image(14);
+    gt5p_jFDFFAAC1_spu_recomp_register();
+    spu_workload_register_img(0xFDFFAAC1BCD5352EULL, gt5p_jFDFFAAC1_spu_func_00000000, 14,
+                              "jFDFFAAC1");
+
+    /* spujob_FE031AF67ED048DE_46928.bin */
+    spu_begin_image(15);
+    gt5p_jFE031AF6_spu_recomp_register();
+    spu_workload_register_img(0xFE031AF67ED048DEULL, gt5p_jFE031AF6_spu_func_00000000, 15,
+                              "jFE031AF6");
 
     spu_begin_image(0);
 
-    printf("[GT5P] SPU: Wws_Job (fp=0x%016llX) + 0 job image(s) registered\n",
+    printf("[GT5P] SPU: Wws_Job (fp=0x%016llX) + 14 job image(s) registered\n",
            (unsigned long long)fp);
 }

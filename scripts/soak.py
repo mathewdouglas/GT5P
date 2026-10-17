@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bootcheck
+import target
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = 5          # seconds between main-thread samples (and stdout flushes)
@@ -51,7 +52,7 @@ def main():
         i += 1
         out, err = out_dir / f"run{i}.out", out_dir / f"run{i}.err"
         with open(out, "wb") as fo, open(err, "wb") as fe:
-            p = subprocess.Popen([str(ROOT / "build" / "gt5p.exe")], cwd=ROOT, env=env,
+            p = subprocess.Popen([str(ROOT / "build" / (target.EXE_NAME + ".exe"))], cwd=ROOT, env=env,
                                  stdout=fo, stderr=fe)
             try:
                 rc = "rc=0x%X" % (p.wait(timeout=secs) & 0xFFFFFFFF)
