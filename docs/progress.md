@@ -9,6 +9,42 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 70 - The race's ground and track (2026-10-17)
+
+**Reported:** the ground and track are black below the horizon on the
+starting grid and in the race. Sky, stands and fences draw.
+
+**Fixed.** Both now show (grass, track, stands, the lap board), at 25-30 fps.
+The dealer page is unchanged.
+
+**Cause 1: a stale colour target sampled as depth.** The race puts the
+scene's depth buffer at `0x02880000`, where the pit page had its 2048x1437
+exposure target. A race post pass (`fp 0x0507FA41`, t0 = that address)
+writes back into the scene. The texture lookup checked colour targets by
+address first, so it read the pit page's old picture: a ghost of the pit
+over the race. A depth surface drawn this frame now wins over a colour
+target not used this frame (`RT_DEPTH_FIRST=0` for the old order).
+
+**Cause 2: the race scene drew with no depth buffer.**
+- The race's scene surface is antialias mode 5 (2x2 samples, format
+  `0x5148`; the pit page uses mode 3).
+- That post pass declares the surface with a 1440-row clip, so the
+  1280x720 target grew to 1280x1440 (targets only grow).
+- The one multisampled depth buffer is window-sized, so the target lost its
+  multisampled twin. A non-window-sized target gets no depth buffer.
+- The race scene was then drawn with no depth test at all. RenderDoc pixel
+  history: the terrain writes (0.12, 0.15, 0.07), then the sky dome
+  (`t0` = the 2048x1024 sky texture) writes over it with the dark horizon
+  band of its texture.
+
+A draw's target is now sized no further than its viewport and scissor
+reach, because it cannot write outside them (`RSX_RT_CAP_VP=0` to let the
+clip decide alone).
+
+New: `RSX_CAP_AFTER` captures used in the race;
+`scratch/rdoc_ground.py` (pixel history on the busiest target),
+`scratch/rdoc_texsave.py` (a draw's textures as PNG).
+
 ## Phase 69 - The race load: a dropped jump table leaked a stack frame (2026-10-17)
 
 **Reported (Phase 66):** after the starting grid the race load stopped
