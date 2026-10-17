@@ -30,7 +30,11 @@ complex target, is 7,924 functions.
 
 ## Status
 
-**Pre-alpha. It boots and loads its own content. It does not draw a frame yet.**
+*This section is upstream's PSN build (NPUA80075), as last measured on
+2026-09-28. This fork's disc build (BCUS98158) is much further along: it runs
+from the menus into a race. See [This fork: the disc build](#this-fork-the-disc-build).*
+
+**NPUA80075: pre-alpha. It boots and loads its own content. It does not draw a frame yet.**
 
 | Area | State |
 |---|---|
@@ -56,23 +60,26 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status: pre-alpha. It loads its start-up assets and then waits. It
-does not draw a frame, and the boot is not yet the same on every run.**
+**Disc build status (2026-10-18, Phase 72): playable from the menus into a
+race.** It boots to the main menu, the dealerships draw, and Arcade reaches
+Daytona's Race Mode page with an animated pit crew. A Single Race loads and
+drives, all at about 22 to 30 fps. The rest of this section and
+[AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 
 | Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
 |---|---|---|
 | Decrypt | RAP-derived key, `ps3sce` | RPCS3 `--decrypt`, no RAP needed |
-| PPU lift | 42,316 functions | 50,075 functions, clean compile |
+| PPU lift | 42,316 functions | 50,065 functions, clean compile |
 | Imports | 439 across 26 modules | 565 across 31 modules |
-| SPU | 12 images | Policy module and 12 job images, 0 dispatch misses |
-| Boot | 116 `PDIPFS` assets, 8 of 8 runs | 127 `GT.VOL` opens in 12 of 14 runs; 2 deadlock after 40 |
-| Where main stops | `sys_cond_wait` | `sys_cond_wait` in the good runs |
-| Graphics, audio, input | Not reached | Audio port opened, pad polled, flips cycle; no frame |
+| SPU | 12 images | Policy module, 12 job images and 7 job bodies (9,115 functions), 0 dispatch misses |
+| Boot | 116 `PDIPFS` assets, 8 of 8 runs | Main menu in about 14 s |
+| Graphics | Not reached | D3D12: menus, dealer showroom, pit, race; MSAA, shadow maps, sRGB, cube maps |
+| Audio, input, video | Not reached | Menu music; pads through SDL2, XInput or the keyboard; the opening movie through FFmpeg |
 
-In the good runs the disc build's file activity matches an RPCS3 boot of the
-same disc through about the first 11 seconds of game time: the same 24 paths in
-the same order. The two builds' asset counts are not comparable, because one
-counts distinct files and the other counts opens of one volume.
+Settings (resolution, MSAA, vsync and more) are in `gt5p_settings.toml` at
+the root and on an in-game page (F1). F3 shows a profiler.
+
+The table above this section is upstream's and still describes NPUA80075.
 
 What the disc build needs that upstream does not:
 
@@ -84,10 +91,16 @@ What the disc build needs that upstream does not:
 - **Local ps3recomp changes.** The disc build does not boot on stock ps3recomp.
   The changes are in
   [patches/ps3recomp-5244db9-local.patch](patches/ps3recomp-5244db9-local.patch),
-  against ps3recomp `5244db9`: per-instance SPURS event ports, a per-pass job
-  index, a switch for the runtime's stand-in job-completion event, and a
-  game-data check that reports new data truthfully. They have not been sent to
-  ps3recomp.
+  against ps3recomp `5244db9`. They touch 58 files and cover:
+  - SPURS and the job manager;
+  - the PPU and SPU lifters (jump tables, `bisl`, vector stores);
+  - the D3D12 RSX backend (render targets, MSAA, shadow compares, samplers,
+    vertex fetch);
+  - cellGcm, cellPad, the codecs, and the diagnostics the progress log
+    names.
+
+  Each change has an environment switch that undoes it. They have not been
+  sent to ps3recomp.
 
 Building the disc build, from a dump of your own disc:
 
@@ -113,7 +126,18 @@ The SPU registry for the disc build is committed
 (`src/gen/spu_workloads_bcus98158.c`), but the lifted SPU sources are not, as
 with everything under `generated/`. To produce them, build once, run with
 `SPU_DUMP_MISS=analysis/spu/dump` to capture the job images, then run
-`python scripts/lift_spu_jobs.py` and rebuild.
+`python scripts/lift_spu_jobs.py` and rebuild. The job bodies come straight
+from the executable (`wws_job_bodies` in `config/targets.json`). Re-run both
+lifts whenever ps3recomp's lifters change: Phases 69 and 72 fixed lifter
+bugs that only a re-lift picks up.
+
+Optional run-time pieces, fetched into `third_party/` (gitignored) and
+copied beside the exe by the build:
+
+- `scripts\get_sdl2.ps1`: controllers through SDL2;
+- `scripts\get_ffmpeg.ps1`: the opening movie.
+
+Then run `play.cmd`.
 
 Tools added for this work:
 
@@ -121,18 +145,21 @@ Tools added for this work:
 |---|---|
 | `python scripts/soak.py 8 40` | 8 headless boots of 40 s; one line of counts per run. Works for either build |
 | `python scripts/boot.py 40 NAME=VALUE` | One boot with a log summary; extra arguments set the game's environment |
+| `scripts\test\*.ps1` | Drive the game by milestones to a page (dealer, pit, race) and shoot or measure it; see [AGENTS.md](AGENTS.md) |
+| `scripts\diag\*.py` | Log readers, call-count instrumenters for lifted code, RenderDoc scripts |
 | `python scripts/threads.py` | What each guest thread was last doing, from a boot log |
 | `python scripts/cdis.py 0xADDR` | Full disassembly of a function |
 | `python scripts/find_setjmp.py` | Locate the guest `setjmp`/`longjmp` in a build where they are unknown |
 | `python scripts/rpcs3log.py RPCS3.log` | Summarise an RPCS3 log for comparison against a port run |
 
-The investigation is Phase 17 of [docs/progress.md](docs/progress.md), and
-[AGENTS.md](AGENTS.md) is the working brief for the disc build.
+The investigation is Phases 17 to 72 of [docs/progress.md](docs/progress.md)
+(newest first), and [AGENTS.md](AGENTS.md) is the working brief for the disc
+build. Its "Start here" section is the current state.
 
 ## Screenshots
 
-None yet — the title has not presented a frame. This section gets real output
-the day it does.
+None are committed: they are pictures of the game's own assets. The disc
+build presents frames, from the menus to a race.
 
 ## Getting Started
 

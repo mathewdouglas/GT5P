@@ -2,7 +2,7 @@
 
 Written 2026-10-16 from the measurements in [progress.md](progress.md) Phase 53.
 Each step names its gate: the measurement that says it is done. Measure with
-`scratch\perf.ps1 -Tag <t> -N 3` (median of three, `FS_HIDE` on, no settings
+`scripts\test\perf.ps1 -Tag <t> -N 3` (median of three, `FS_HIDE` on, no settings
 file) unless a step says otherwise. Every change gets a switch to undo it.
 
 ## Status after Phase 63 (2026-10-17)
@@ -97,7 +97,7 @@ progress row: its plain `PUT`s overwrote the other SPUs' progress.
 
 - `rsx_vtx_pos_dbg` runs once per draw and returns at once; its 1.4% is more
   likely an unnamed static function after it, charged to the nearest name by
-  `scratch/maplook.py`. Left alone.
+  `scripts/diag/maplook.py`. Left alone.
 - `rsx_fp_code_hash`: cached per program address while the program's
   instruction slots are unchanged (`RSX_FPHASH_CACHE=0` to undo), instead of
   two byte-at-a-time walks every draw.
@@ -231,7 +231,7 @@ heaviest pair from about 36 ms to 20-26 ms, inside the 28 ms target.
    - **frames:** captures compared with the lifted build's, on the same car
      pair.
 4. **Measure it within one boot** with an A/B switch (Phase 62's method:
-   `SPURS_LANE_CYC=1`, `scratch/abcyc.py`).
+   `SPURS_LANE_CYC=1`, `scripts/diag/abcyc.py`).
 
 **Order:**
 1. 7d, to prove the method on something small.

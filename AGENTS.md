@@ -36,6 +36,166 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
+## Start here: state of play (2026-10-18)
+
+Read this section first when picking the work up in a new session on this
+machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
+has the evidence, newest phase first (Phase 72 is the latest).
+
+### What works now
+
+- Boots to the main menu (a save exists; a "Confirmation" popup shows on
+  News every boot), with the 3D scene behind it, about 30 fps.
+- Dealerships: every manufacturer page draws, cars and floor, 22 to 30 fps;
+  the page freeze is fixed (Phase 64).
+- Arcade, then Daytona: the Race Mode page (the "pit") draws, and the crew
+  walk and kneel (Phase 72), about 29 to 30 fps.
+- Single Race loads, and the track, ground and stands draw; about 30 fps
+  (Phases 69 and 70).
+- The opening movie plays when the TV content is visible (Phases 50, 67).
+  Menu sound plays.
+- 1080p is multisampled, and shadows are softened (Phase 71).
+
+### Open work, in the order the user left it
+
+1. **Texture-load warning (promised to the user, not started).** When a
+   texture cannot be read, show an on-screen badge like "Compiling shaders"
+   and log a line. Cases: an unmapped address, an unsupported format, slot
+   exhaustion. The badge to copy is `src/gt5p_shaderbusy.cpp`, which reads
+   `g_rsx_shader_busy` from the backend. It needs an env switch, like every
+   new behaviour.
+2. **Parked; the user is trying to reproduce it.** Go to the Race Mode page,
+   then back to the main menu: black slabs appear in the menu scene. Then
+   the dealer floor reflects the menu's trees. That suggests stale render
+   targets or cube faces reused by address; this is unverified.
+   `scripts\test\roundtrip.ps1 -Pit` drives menu, pit, menu, dealer. Its
+   Circle to close the menu popup (`@PitSceneRoot+23000`) comes too early,
+   so move it later. On the last runs, an Arcade round trip alone showed
+   nothing.
+3. **Reported before Phase 69 and not re-checked since:** black slabs in the
+   Kyoto menu scene, and loading-screen text with letters dropped or swapped
+   ("Car Na e"). Phase 69's stack-leak fix may have cured them.
+4. **Speed and long-standing items:** the "Next" bullet at the end of the
+   list below, and [docs/plan-30fps.md](docs/plan-30fps.md).
+
+### Local state of this machine
+
+- **ps3recomp** is at `../ps3recomp-gt5p-master`, based on `5244db9`, with
+  local changes in 58 files. `patches/ps3recomp-5244db9-local.patch` is
+  their backup. After every change there, refresh it with bash, not
+  PowerShell, whose `>` re-encodes the file:
+
+  ```bash
+  cd ../ps3recomp-gt5p-master && git diff > ../GT5P/patches/ps3recomp-5244db9-local.patch \
+    && git apply --check -R ../GT5P/patches/ps3recomp-5244db9-local.patch
+  ```
+
+- **`generated/` is current.** It was lifted with the PPU lifter of
+  Phase 69 and the SPU lifter of Phase 72, and `build/gt5p.exe` is built
+  from it. A ps3recomp lifter change needs a re-lift:
+  - PPU: the README steps, then `scripts/setjmp_patch.py`;
+  - SPU: `.venv\Scripts\python scripts\lift_spu_jobs.py`, which takes
+    about 20 s and rewrites `src/gen/spu_workloads_bcus98158.c` (diff it).
+
+  Then grep `generated/` for `/* TODO:` lines other than `.word`.
+- **Instrumentation helpers patch `generated/` in place.** Before any real
+  build, check that no `generated/*.fnc_orig`, `*.spc_orig` or
+  `generated/spu_lifted/*/*.sfc_orig` files are left; `--restore` puts the
+  originals back.
+- **`shadercache/`**: never move or delete it. For a cold test, use
+  `RSX_SHADER_CACHE=<empty dir>`.
+- **`scratch/`** is gitignored working space:
+  - `scratch/pv/` holds run logs and shots.
+  - It also holds the old copies of the scripts now in `scripts/test` and
+    `scripts/diag`. **The tracked copies are canonical.**
+  - One-off hooks written for Phase 72 (`palette_hook.py`,
+    `palcopy_hook.py`, `bonemat_hook.py`) have guest addresses baked in.
+- **`analysis/`** holds:
+  - `rtti.json` (class names for vtables);
+  - `b01376080.bin` and `.dis` (the SPU geometry job and its disassembly);
+  - `spu/body_*.bin` (the job bodies).
+- **Another session owns** `scripts/instrument_alloc.py` and
+  `src/gt5p_allocwatch.cpp`: never stage those.
+
+### Build, play, test
+
+- Build: `$env:CMAKE_BUILD_PARALLEL_LEVEL="4"; cmd /c "scripts\build.cmd -DGT5P_TARGET=BCUS98158"`
+  (PowerShell). Never put a compile definition on the whole target.
+- Play: `play.cmd`. F1 opens settings, F3 the profiler.
+- Automated runs: `scripts\test\*.ps1`. Each one launches the exe with
+  `GT5P_NO_SETTINGS=1`, `FS_HIDE=grim/file/contents` and `PS3_VERBOSE=0`.
+  Each follows `[milestone]` lines, not fixed sleeps, and kills the game in
+  a `finally`. Logs and shots go to `scratch\pv\<tag>.*`. Any extra
+  `NAME=VALUE` argument becomes an environment variable for the game. Quote
+  values that contain commas (`"PPU_WWATCH_REGS=26,27"`): PowerShell splits
+  them otherwise.
+
+| Script | Drives to | Use |
+| --- | --- | --- |
+| `milestone.ps1` | (library) | `$ToDealers`, `$DealerHold`, `$DaytonaHold`, `$DaytonaRaceHold`, `$FerrariHold`, `Wait-Milestone`, `Stop-Stragglers` |
+| `winshot.ps1` | Acura dealer page | `-Tag t -Settle 20 -Shots 3 -Gap 3`: window shots (PrintWindow) |
+| `pitshot.ps1` | Daytona Race Mode page | The same. For the race: `"PAD_HOLD=$DaytonaHold,$DaytonaRaceHold"` after dot-sourcing `milestone.ps1`, with `-Settle 70` |
+| `roundtrip.ps1` | menu, Arcade or pit, menu, dealer | `-Pit`, `-Every 3` (a shot every 3 s), `-NoArcade` |
+| `dealer.ps1`, `revisit.ps1` | any dealer, or N in a row | `-Moves "DOWN,RIGHT,..." -Enter`; Ferrari is `DOWN,RIGHT,RIGHT,RIGHT,RIGHT` |
+| `perf.ps1` | dealer page | fps and CPU, median of `-N` runs; `-Ferrari`, `-Watch <s>` for stalls |
+| `cpu3.ps1` | dealer page | CPU per host thread, named by guest thread |
+| `pvshot.ps1`, `capshot.ps1` | dealer page | hold a page for `RSX_CAP`; `capshot` saves the backbuffer |
+| `rdcap.ps1` | any (`-Hold`) | a RenderDoc capture of the `RSX_CAP` frame (`RENDERDOC_CMD` overrides the path) |
+| `movshot.ps1`, `winping.ps1` | boot with the movie | movie frames; whether the window answers messages |
+| `settings_test.ps1`, `settings_restart_test.ps1`, `badge_test.ps1` | F1 page, shader badge | UI checks |
+| `inp.ps1` | none | a windowed run for someone to drive, with a shot every 5 s |
+
+`scripts\diag\` holds the helpers:
+
+- Log readers:
+  - `maplook.py` and `lanesum.py`: sample profiles against `build/gt5p.map`;
+  - `tl.py`: `PS3_TIMELINE`;
+  - `abcyc.py`: `SPU_FAST_AB` runs;
+  - `ab.py`: A/B boots.
+- Instrumenters (all with `--restore`):
+  - `fncount_patch.py <lo-hi>...`: per-10-s call counts for PPU functions
+    in an address range;
+  - `spufn_count.py <body>`: the same for every lifted function of one SPU
+    body;
+  - `spcheck_patch.py <func>...`: callees that leak a stack frame.
+- `find_bodies.py`: finds SPU job bodies.
+- `rdoc_*.py`: run inside `qrenderdoc --python`, with `RDOC_CAP` and
+  `RDOC_OUT` set.
+
+### How the last bugs were found (Phases 68 to 72)
+
+Measure first, then narrow. These were the steps:
+
+1. Call counters, to see whether code runs at all.
+2. `SPU_DMA_RANGE` with `_AFTER`, `_HIST` and `HIST_LS`, to see what an SPU
+   job reads and writes.
+3. `PPU_WWATCH*`, to find who stores a value.
+4. `RSX_CAP` with `RSX_CAP_AFTER=<milestone>,<ms>` manifests (`a0=`, `fp=`,
+   textures per draw), to see what a draw used.
+5. RenderDoc, for pixel history.
+6. A perturbation test: halve the palette and see whether the picture
+   changes. That one separates "data wrong" from "data unused".
+
+Three bugs this way were lifter bugs that compile cleanly and fail
+silently. A dropped jump table and `bisl $r0,$r0` were found by asking
+"does this code ever run?", not by reading it.
+
+### The user's standing rules
+
+- Commit **and push** to `origin` at the end of every turn.
+- No game data, keys, decrypted executables, generated source or decompiled
+  code in tracked files. Never `--no-verify`, never `git add -f`.
+- RPCS3 is GPLv2: learn from it, never copy from it.
+- Use `PS3_VERBOSE=0` for anything measured.
+- One `gt5p.exe` at a time.
+- Never pipe a run script into `Select-Object -First`.
+- No desktop screen grabs; shoot the game window (PrintWindow).
+- Every new behaviour gets an env switch.
+- Never arm the page guard from boot on a hot page: the menus drop to
+  11 fps.
+- Don't spawn sub-agents unless asked.
+- Use they/them for the user. Give short status updates during long work.
+
 ## Measured on the disc build
 
 Measured 2026-10-12 with ps3recomp `master` tools. The game dump is at
@@ -88,16 +248,18 @@ re-verified against the disc executable.
 
 ## Where the disc build stands
 
-As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 44 of
-[docs/progress.md](docs/progress.md); read 44 down to 19 in that order.
-Each corrects the one before.
+This is the running record, oldest findings first, newest at the end of
+the list (Phase 72). For the current state, read "Start here" above. Some
+bullets near the top describe stages long since passed. They are kept
+because later phases refer to them; where they conflict with a later
+bullet, the later one is right.
 
-- **A save exists now, so the title boots straight to the main menu**
-  (no agreement, no "Confirmation"). `scratch/menu.ps1` scrolls an
-  agreement that is no longer shown; with the save, drive the dealership
-  with `scratch\inp.ps1 90 "PAD_HOLD=28000-28300:CROSS,34000-34300:CROSS,46000-46300:CROSS"`.
-  Move `gamedata/dev_hdd0` aside to get the first-boot screens back.
+- **A save exists, so the title boots straight to the main menu** (no
+  agreement). Since a car was bought, a "Confirmation" popup shows on News
+  every boot. The routes in `scripts\test\milestone.ps1` close it
+  (`$ToDealers`, `$DaytonaHold`). Move `gamedata/dev_hdd0` aside to get the
+  first-boot screens back. The old `scratch/menu.ps1` and
+  `scratch/auto.ps1` drive those first-boot screens and are not tracked.
 - **The Car Dealer page draws (Phase 42).** Choosing a manufacturer shows
   the cars on the showroom floor with the page's 2D layer, as on RPCS3. The
   backend had been dropping about 4,000 of each frame's 4,300 draws: its
@@ -128,7 +290,7 @@ Each corrects the one before.
   `GT5P_THREADS=2` and `GT5P_PEEK=016FA5E0,0139A880` are the tools.
   **Test runs follow milestones (Phase 54):** `[milestone] <screen>` lines,
   `PAD_HOLD` presses relative to one (`@TopMenuTemplate+8000-8300:CROSS`,
-  `!<other>` for a retry), and `scratch\milestone.ps1` (`$DealerHold`,
+  `!<other>` for a retry), and `scripts\test\milestone.ps1` (`$DealerHold`,
   `Wait-Milestone`) used by `perf.ps1`, `cpu3.ps1` and `capshot.ps1`. The
   page is up about 29 s after launch; `perf.ps1` counts and cuts short
   stalled runs (`-Watch <s>` to look for them).
@@ -143,7 +305,7 @@ Each corrects the one before.
   depth buffer (`RSX_ZONLY=0` to undo), and units bound to it with a depth
   format compare in the shader (`RSX_SHADOW=0`: always lit;
   `RSX_SHADOW_SHOW=1..6` views the term; `RSX_CAP` dumps the map;
-  `RSX_CAP_ZB=<n>` and `scratch\capshot.ps1` capture a dealership frame).
+  `RSX_CAP_ZB=<n>` and `scripts\test\capshot.ps1` capture a dealership frame).
   Debug views must skip programs that only have the unit bound, and the car
   pass writes three targets (`_out.t0`). Also from Phase 49:
 
@@ -162,9 +324,9 @@ Each corrects the one before.
   Frames are quantised to vblanks, so present-thread work must drop below
   about 33 ms for 30 fps.
   The job lanes are threads made per dispatch, so a
-  per-thread CPU table misses about 3 cores: use `scratch/cpu3.ps1` and
+  per-thread CPU table misses about 3 cores: use `scripts/test/cpu3.ps1` and
   `GT5P_SAMPLE=all` (or `GT5P_SAMPLE=4` for the busiest live threads), then
-  `scratch/maplook.py build/gt5p.map <log>`. `scratch/perf.ps1 -Tag <t> -N 3`
+  `scripts/diag/maplook.py build/gt5p.map <log>`. `scripts/test/perf.ps1 -Tag <t> -N 3`
   repeats the Phase 43 measurement and prints the median (Phase 44).
 - Guest PPU threads stay on mask 3 (both hardware threads of core 0): it
   measured faster than two separate cores or no pinning (Phase 44.1).
@@ -249,10 +411,10 @@ Each corrects the one before.
   tick jitter), `AUDIO_GAPDBG=1` (each dropout with the ring at that
   moment), `AUDIO_LEADDBG=1` (where the title writes), `SPURS_JC_STATS=1`
   (job rate and cost), `SPURS_JG_GAPDBG=<ms>` (late guard notifies),
-  `SPURS_JC_SAMPLE=<chain>` with `scratch/maplook.py` and a `/MAP` link
+  `SPURS_JC_SAMPLE=<chain>` with `scripts/diag/maplook.py` and a `/MAP` link
   (where the walker's time goes).
 - **Do not launch with `GT5P_MAINSTACK` set when judging sound or smoothness.**
-  It suspends guest threads every N seconds; `scratch/inp.ps1` used to set
+  It suspends guest threads every N seconds; `scripts/test/inp.ps1` used to set
   it to 5 and that alone was an 85 ms dropout every 5 s.
 - `scripts/lift_spu_jobs.py` now post-processes the job images it lifts
   (forward transfers become direct tail calls); `--chain` applies that to
@@ -283,7 +445,7 @@ Each corrects the one before.
   The entries below about that fault are history; keep them for the record of
   what was ruled out.
 - To test for it, do not rely on `bootcheck`: run with `GT5P_ARENA_TRACE=1`
-  and look for a fill pass larger than its dry run (`scratch/ab.py` counts
+  and look for a fill pass larger than its dry run (`scripts/diag/ab.py` counts
   them). `SPURS_JG_TRACE=1` prints each guard notify, guard opening and job.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
@@ -337,7 +499,7 @@ Each corrects the one before.
 - The crash that used to follow was `cellHttpUtilParseUri` zero-filling 2.7 KB
   of guest stack (Phase 27). When an HLE function takes a guest structure,
   check its size against the SDK before trusting a host-side `memset`.
-- `scratch/inp.ps1 <secs>` runs a windowed boot for someone to drive, with a
+- `scripts/test/inp.ps1 <secs>` runs a windowed boot for someone to drive, with a
   capture every 5 s. `scratch/auto.ps1 <tag>` builds and drives it unattended
   with `PAD_HOLD` (timed button presses, no keyboard or focus needed).
 - Frame rate was bounded by Windows timer granularity; `src/main.cpp` now
@@ -402,7 +564,7 @@ Each corrects the one before.
   over the game like the F3 profiler; the PS button opens it too. A new
   setting is a field, its TOML key and one row in `items()`. While it is open
   the title sees every pad at rest (`g_pad_input_blocked`, cellPad.c).
-  `GT5P_SETTINGS_UI=0` none, `=1` open at start; `scratch\settings_test.ps1`
+  `GT5P_SETTINGS_UI=0` none, `=1` open at start; `scripts\test\settings_test.ps1`
   drives it with posted keys against a scratch settings file. The
   "Compiling shaders" badge (`src/gt5p_shaderbusy.cpp`, 52.1) reads
   `g_rsx_shader_busy` from the backend; `GT5P_SHADER_INDICATOR=0` hides it.
@@ -421,8 +583,8 @@ Each corrects the one before.
   them (`RSX_VTX_GPU`, `=0` for the CPU path, `=check` to verify): 15.7 to
   17.2 fps with drawing. A triangle list split over records must carry its
   leftover indices (256-index batches): never let a batch become its own
-  record without that. `PS3_TIMELINE` + `scratch/tl.py` show what a frame
-  waits on; `scratch\winshot.ps1` captures the game window at the page.
+  record without that. `PS3_TIMELINE` + `scripts/diag/tl.py` show what a frame
+  waits on; `scripts\test\winshot.ps1` captures the game window at the page.
   Never pipe a run script into `Select-Object -First` (it skipped closing the
   game; the scripts now close it in a `finally`).
 - **Phase 57 (cross-frame vertex cache):** vertex streams that repeat from
@@ -440,8 +602,8 @@ Each corrects the one before.
   replays the other. Per-frame record state must live in `FrameSet`, never in
   a plain global. That gives 25.1 fps. The frame is now about 8 ms of flip
   wait plus a 30 ms SPU pass; the title alone does 29.3.
-  `scratch\movshot.ps1` captures the opening movie, and
-  `scratch\winping.ps1` checks that the window answers messages.
+  `scripts\test\movshot.ps1` captures the opening movie, and
+  `scripts\test\winping.ps1` checks that the window answers messages.
 - **Phase 59:** `GT5P_PRESENT_SLEEP` defaults to 1 ms, and lifted SPU code is
   built with `SPU_LS_NO_PROBES` (`-DGT5P_SPU_PROBES=ON` keeps the probes).
   That gives about 30.6 fps at the page. Never evict by shifting a cache that
@@ -455,7 +617,7 @@ Each corrects the one before.
     write head (`GCM_PARK_RESYNC=1` for the old rule);
   - there are 512 texture slots (`RSX_TEX_SLOTS`).
 
-  Mercedes and Ferrari now run at 22-23 fps. `scratch\dealer.ps1 -Moves
+  Mercedes and Ferrari now run at 22-23 fps. `scripts\test\dealer.ps1 -Moves
   "DOWN,RIGHT,RIGHT,RIGHT,RIGHT" -Enter` is Ferrari. Scripted directions are
   D-pad only (`PAD_HOLD_STICK=1`): the stick doubled every move.
 - **Phase 61 (Ferrari):** the cars change per visit, and with them the frame
@@ -465,7 +627,7 @@ Each corrects the one before.
   - the contention byte is stored under the lock line (`SPURS_CONT_COH=0`);
     this was a stall;
   - texture-slot views sit past the per-draw windows;
-  - three more job bodies are lifted (`scratch/find_bodies.py`);
+  - three more job bodies are lifted (`scripts/diag/find_bodies.py`);
   - the vblank runs at 59.94 Hz (`GT5P_VBLANK_HZ`);
   - the walker wakes on the SPU write it waits for (`GCM_WALK_WAKE=0`).
 
@@ -475,10 +637,10 @@ Each corrects the one before.
   fast paths behind `g_spu_fast` (`SPU_FAST=0` for the old ones): render
   lanes need 1.15 times less CPU, and Ferrari runs at a median 25 fps.
   - Measure SPU changes within one boot: `SPU_FAST_AB=1 SPURS_LANE_CYC=1`,
-    then `scratch/abcyc.py`. Across boots the car pair changes the numbers
+    then `scripts/diag/abcyc.py`. Across boots the car pair changes the numbers
     more than any change does.
   - Profile with `GT5P_SAMPLE=all GT5P_SAMPLE_GRAIN=16 GT5P_SAMPLE_TOP=1500`
-    and `scratch/lanesum.py`; 256-byte buckets misname functions.
+    and `scripts/diag/lanesum.py`; 256-byte buckets misname functions.
   - The SPU lifter turns `ila $rN,X; bi $rN` into a direct transfer
     (`SPU_LIFT_CONST_BI=0` at lift time to stop).
 - **Phase 63:**
@@ -507,7 +669,7 @@ Each corrects the one before.
 - **Phase 65: dealers visited one after another no longer slow down.** The
   pipeline cache thrashed once a 128-entry list of texel-addressed programs
   ran out (`RSX_UNNORM_KEYFIX=0` for the old way). `PSOMISSDBG=2` names the
-  key field behind pipeline misses; `scratch\revisit.ps1` visits N dealers
+  key field behind pipeline misses; `scripts\test\revisit.ps1` visits N dealers
   in a row (a 2 s Circle backs out, after any other press on the page).
   - **Shaders not on disk compile on a worker pool** (`RSX_SHADER_ASYNC=1`,
     set by `src/main.cpp`; settings "Precompile shaders", on). Draws wait
@@ -519,7 +681,7 @@ Each corrects the one before.
     63's first deadlock shape back in 2 of 3 cold visits: that race is
     still there, only rare.
 - **Phase 66 (a track):** with a car bought the menu opens on News under a
-  popup; `$ToDealers` in `scratch/milestone.ps1` (Circle, hold Right to the
+  popup; `$ToDealers` in `scripts/test/milestone.ps1` (Circle, hold Right to the
   end, four Lefts, Cross) is the route now, `$DaytonaHold` drives Arcade to
   Daytona. Daytona froze on its logo: a render job the job manager suspended
   at an interrupt point and resumed in a later run returned through
@@ -554,7 +716,7 @@ Each corrects the one before.
   thread leaked 0x150 bytes per call and sank into the next thread's stack.
   - The lifter now retries such bases from the real entry. **Re-lift after
     updating ps3recomp.**
-  - `PPU_STACK_CHECK=1` and `scratch/spcheck_patch.py` find a leaking
+  - `PPU_STACK_CHECK=1` and `scripts/diag/spcheck_patch.py` find a leaking
     callee. `[ppu] indirect tail to ...: no lifted entry` names a dropped
     jump.
   - Library callbacks run on the caller's stack (`PPU_CB_SHARED_STACK=1` for
@@ -582,15 +744,23 @@ Each corrects the one before.
   - `SPU_DMA_RANGE_HIST` shows a job's inputs.
   - Open, left at the user's request: the menu's black slabs after the
     Race Mode page, and the menu's trees reflected on the dealer floor
-    (`scratch/roundtrip.ps1 -Pit`).
-- Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
-  voices than the menu; the main thread's 93% of a core at 31 frames a
-  second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
-  dealership, not re-examined since Phase 33 beyond seeing it draw text on
-  black at 25 frames a second without freezing; immediate-mode strips and
-  fans, which are still dropped. Then which per-SPU counter the dealership's
-  render thread waits on (Phase 31), and the `TV.DAT` install RPCS3 starts
-  about 20 s after `BootRoot.gpb`.
+    (`scripts/test/roundtrip.ps1 -Pit`).
+- Next, as of Phase 72 (the user's own order is under "Start here"):
+  - the texture-load warning;
+  - the menu after the Race Mode page, and the dealer reflection;
+  - re-check the Kyoto slabs and the loading-screen text.
+
+  Then the older items, none re-measured since the phase named:
+  - the 30 fps plan, `docs/plan-30fps.md`. Phase 55 put the title's ceiling
+    in the SPU job pipeline, so step 5b and the job lists' critical path
+    are next;
+  - Ferrari-class dealer pages at 20 to 28 fps (Phase 61);
+  - the floor reflection (46.4);
+  - the dim 2D layer (Phase 37);
+  - texture units 4 and up in fragment programs;
+  - sound in a race, which has more voices than the menu;
+  - the audio thread's 14 to 30 ms stalls (Phase 36);
+  - the `TV.DAT` install that RPCS3 starts about 20 s after `BootRoot.gpb`.
 
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
 mutex with each main-thread sample), `PS3_SYNCLOG=1` (failed locks, with the
@@ -611,7 +781,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-nine files under `include/`, `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in 58 files under `include/`, `libs/`, `runtime/` and `tools/` (2026-10-18). The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
@@ -698,9 +868,11 @@ Run Python through the repo's virtual environment: `.venv\Scripts\python`.
 | `scripts/build.cmd` | Configure and build Release with clang-cl and Ninja |
 | `scripts/self_metainfo.py`, `scripts/decrypt_self.py` | SELF decryption helpers; need a `data/keys` file that is not in the repo |
 | `scripts/setjmp_patch.py` | Post-lift patch, required after every lift |
-| `scripts/lift_spu_jobs.py` | Lift captured SPU jobs |
-| `scripts/soak.sh` | Repeated headless boots; prints assets loaded per run |
-| `scripts/dis.py`, `xref.py`, `vtab.py`, `rtti.py`, `jumptables.py` | Static analysis helpers over the ELF |
+| `scripts/lift_spu_jobs.py` | Lift the policy module, the captured job images and the job bodies; writes `src/gen/spu_workloads_bcus98158.c` |
+| `scripts/soak.sh`, `soak.py`, `boot.py` | Repeated or single headless boots with a summary |
+| `scripts/test/*.ps1` | Drive the game to a page and measure or shoot it (table under "Start here") |
+| `scripts/diag/*.py` | Log readers, call-count instrumenters, RenderDoc scripts (under "Start here") |
+| `scripts/dis.py`, `cdis.py`, `xref.py`, `vtab.py`, `rtti.py`, `jumptables.py` | Static analysis helpers over the ELF (`cdis.py 0xADDR` disassembles a function, `xref.py 0xADDR` lists callers, `vtab.py 0xVTABLE` lists slots) |
 | `scripts/audit_branch.py`, `audit_cmp.py`, `bbcount.py` | Lifter audits and basic-block counting |
 
 ### ps3recomp

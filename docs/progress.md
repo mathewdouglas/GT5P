@@ -68,14 +68,21 @@ New diagnostics:
   SPU thread made before it, so you can see the job's inputs.
 - `SPU_DMA_HIST_LS=<lsa>:<len>,...` adds local-store bytes to those lines.
 - `[dma-range]` lines now name the image.
-- Scratch tools: `scratch/fncount_patch.py` counts PPU functions in an
-  address range; `scratch/spufn_count.py <body>` counts every lifted
+- Scratch tools: `scripts/diag/fncount_patch.py` counts PPU functions in an
+  address range; `scripts/diag/spufn_count.py <body>` counts every lifted
   function of one SPU body. Both print every 10 s, and both have
-  `--restore`. `scratch/pitshot.ps1` shoots the Race Mode page.
+  `--restore`. `scripts/test/pitshot.ps1` shoots the Race Mode page.
+
+**Scripts tracked (2026-10-18).** The test drivers and helpers referred to
+throughout this log as `scratch\*.ps1` or `scratch/*.py` are now tracked in
+`scripts/test/` and `scripts/diag/`. Their output still goes to `scratch/`,
+which stays gitignored. Paths in this log were updated to match. Scripts
+left out are `menu.ps1`, `auto.ps1`, `cpu.ps1` and `cpu2.ps1`, which drive
+the first-boot screens, and the Phase 72 one-off hooks.
 
 **Left alone, at the user's request:** the menu's black slabs after
 leaving the Race Mode page, and the menu's trees reflected on the dealer
-floor. `scratch/roundtrip.ps1 -Pit` drives menu, pit, menu, dealer; the
+floor. `scripts/test/roundtrip.ps1 -Pit` drives menu, pit, menu, dealer; the
 popup Circle needs moving later than +23 s.
 
 ## Phase 71 - Aliasing at 1080p; the pit crew's bind pose, part one (2026-10-17)
@@ -150,8 +157,8 @@ reach, because it cannot write outside them (`RSX_RT_CAP_VP=0` to let the
 clip decide alone).
 
 New: `RSX_CAP_AFTER` captures used in the race;
-`scratch/rdoc_ground.py` (pixel history on the busiest target),
-`scratch/rdoc_texsave.py` (a draw's textures as PNG).
+`scripts/diag/rdoc_ground.py` (pixel history on the busiest target),
+`scripts/diag/rdoc_texsave.py` (a draw's textures as PNG).
 
 ## Phase 69 - The race load: a dropped jump table leaked a stack frame (2026-10-17)
 
@@ -176,7 +183,7 @@ thread off its stack. The Ferrari dealer page is unchanged.
    stack (`0xD0099000-0xD00A9000`), through its guard page.
 3. Its lowest r1 dropped by the same 0x930 bytes on each pass of the main
    loop `0x007AE990` (`[stack-low]`, new): a leak, not deep recursion.
-4. `scratch/spcheck_patch.py` (new) wraps every call in chosen lifted
+4. `scripts/diag/spcheck_patch.py` (new) wraps every call in chosen lifted
    functions and reports a callee that returns with a different r1. That
    chain led down
    `0x79F4D8 → 0x7A0250 → (vcall) 0x79F838 → 0x7BA580 → 0x5C7530 → 0x6ABB08
@@ -227,7 +234,7 @@ restores the old way. It was not the race cause.
 - `[null-call]` prints the frame chain.
 - `[ppu] indirect tail to ...: no lifted entry there`, once per target.
 - `PPU_WWATCH_FRAMES=<n>`: the back chain on watch lines.
-- `scratch/spcheck_patch.py <func>... | --restore`: temporary r1 checks
+- `scripts/diag/spcheck_patch.py <func>... | --restore`: temporary r1 checks
   around calls in `generated/`.
 
 ## Phase 68 - The black track behind the race menus (2026-10-17)
@@ -283,8 +290,8 @@ New diagnostics:
 - The manifest prints `a3=<format>/(<constant>)` for attribute 3.
 - `RSX_VDATA_TRACE=<milestone>`, with `_RARE`, `_A3`, `_MS`, `_MAX`: trace
   the constant vertex-data writes.
-- `scratch/rdoc_vsall.py` (every post-VS output of the last draws) and
-  `scratch/rdoc_disasm.py` (a draw's shaders and inputs).
+- `scripts/diag/rdoc_vsall.py` (every post-VS output of the last draws) and
+  `scripts/diag/rdoc_disasm.py` (a draw's shaders and inputs).
 
 **Reported:** Daytona's Race Mode page and the starting grid show black
 where the track should be.
@@ -302,7 +309,7 @@ where the track should be.
   (`RSX_VTX_GPU=0`), not the depth test (new `RSX_DEPTH_ALWAYS=1`), not
   culling (`CULL_OFF=1`); no PSO or compile failures.
 - RenderDoc (new: `RSX_RDOC=1` triggers a capture at the `RSX_CAP` frame;
-  `scratch/rdcap.ps1`, `scratch/rdoc_vsout.py`, `rdoc_state.py`,
+  `scripts/test/rdcap.ps1`, `scripts/diag/rdoc_vsout.py`, `rdoc_state.py`,
   `rdoc_pixhist.py` run under `qrenderdoc --python`): the scene's vertices
   are a sane 16:9 perspective and reach the screen; viewport, scissor, 4x
   MSAA target and depth are normal; pixel history shows the fragments pass
@@ -323,7 +330,7 @@ did not change `k2`.
 
 **RPCS3 (the user's RenderDoc capture, `scratch/renderdoc/daytona-pit.rdc`,
 Vulkan, 785 batched draws):** RPCS3 keeps every draw's fragment constants in
-one `fc` array; scanning it (`scratch/rdoc_fpconst.py`, `RDOC_SCAN=1`) finds
+one `fc` array; scanning it (`scripts/diag/rdoc_fpconst.py`, `RDOC_SCAN=1`) finds
 this program 151 times as k0 0, k1 0.15, **k2 (0.0496, 0.0496, 0.0496, 0)**,
 k3 0, k4 0.0002. Ours: k2 about (0.00009 x3, 15). Same k0, k1, k3, k4; the
 bit patterns rule out a decoding or half-swap error. So the game writes a
@@ -410,7 +417,7 @@ track sticks on the Daytona logo (Arcade, Track Select, Daytona).
 popup on every boot (Cross on it is not remembered); Circle closes it. Tabs:
 News TV Online Rankings Arcade 2P-Battle Events Garage Dealerships Replay
 Options Manual Save, no wrap. Held Right repeats about every 110 ms, too
-fast to release on a tab by time, so `scratch/milestone.ps1` (`$ToDealers`)
+fast to release on a tab by time, so `scripts/test/milestone.ps1` (`$ToDealers`)
 holds Right 2 s to park on Save, taps Left four times, then Cross; the whole
 run is retried once unless `DealerSelectRoot` was read. The list opens 11.8 s
 after the menu (15.9 s before). `$DealerHold`, `$FerrariHold`, `dealer.ps1`
@@ -467,7 +474,7 @@ Race reaches the starting grid.
 **Reported:** go into a dealer, back out, go into another: the second runs
 at a much lower frame rate, the third lower still.
 
-**Reproduced** with `scratch/revisit.ps1 -UseSettings` (four dealers in a
+**Reproduced** with `scripts/test/revisit.ps1 -UseSettings` (four dealers in a
 row at 1080p; back out with Right, Left, then a 2 s Circle, as the page
 ignores Circle until it has had input). Visits 1 and 2 ran at 30 fps,
 visit 3 at 3 to 5 and visit 4 at about 2, recovering at once on leaving.
@@ -638,7 +645,7 @@ re-entered module left again within microseconds, as it held no job.
 **Pinning the render lanes is 1.14 times faster, and is off by default.**
 - `SPURS_LANE_PIN_AB=1` (with `SPURS_LANE_CYC=1`) puts each render lane on a
   core of its own in every other lane window, measured with
-  `scratch/abcyc.py --key pin`. Within one boot the lane wall time per run
+  `scripts/diag/abcyc.py --key pin`. Within one boot the lane wall time per run
   fell 1.138x and 1.137x, and the CPU time with it: left to the scheduler,
   two lanes often shared a core.
 - `spurs_lane_cpu` takes the cores from the processor topology, leaves out
@@ -713,7 +720,7 @@ unfilled block (`0xFFFFFFFF`) in an SPU command ring:
 **Measuring within one boot.** The car pair changes per visit, so builds
 compared across boots differ by more than the changes do.
 - `SPU_FAST_AB=1` with `SPURS_LANE_CYC=1` flips the new paths (`g_spu_fast`)
-  at every 5 s lane window. `scratch/abcyc.py <run.err>` compares the mean
+  at every 5 s lane window. `scripts/diag/abcyc.py <run.err>` compares the mean
   lane CPU per run in "fast" windows against "slow" ones.
 - Two boots agree within about 2%.
 
@@ -722,7 +729,7 @@ compared across boots differ by more than the changes do.
   bucket was named after the function before the hot one (for example
   `spu_recent_pcs` for `spu_task_launch_check`).
 - `GT5P_SAMPLE_TOP=<n>` sets how many buckets each table prints.
-- `scratch/lanesum.py` sums the lane tables of several rounds.
+- `scripts/diag/lanesum.py` sums the lane tables of several rounds.
 - Before this phase, about 37% of a lane's busy samples were runtime around
   the job code.
 
@@ -814,7 +821,7 @@ different pair, and every dealer with more than two cars does the same
    windows (`TEXSLOT_SRV_BASE`); `RSX_TEXSLOT_SRV_LOW=1` restores the old
    place.
 3. **Three more job bodies lifted.**
-   - The bodies carry `0xC0DEC0DE` at +0x20. `scratch/find_bodies.py` scans
+   - The bodies carry `0xC0DEC0DE` at +0x20. `scripts/diag/find_bodies.py` scans
      the executable for them: seven in all, four already listed.
    - `0x0133A300` (944 bytes), `0x0133A700` (98,640) and `0x01360100`
      (57,600) are in `wws_job_bodies` now, at LS `0x4000`, sized from their
@@ -922,7 +929,7 @@ and Ferrari froze. Three separate faults were behind it.
   first-entry stall of Phase 42, not this fault.
 
 **Measuring it:**
-- `scratch\dealer.ps1 -Tag t -Moves "DOWN,RIGHT,RIGHT,RIGHT,RIGHT" -Enter`
+- `scripts\test\dealer.ps1 -Tag t -Moves "DOWN,RIGHT,RIGHT,RIGHT,RIGHT" -Enter`
   drives to the manufacturer list, moves, enters, and takes a window shot
   every few seconds. That sequence is Ferrari.
 - A scripted direction used to push the left stick as well as the D-pad.
@@ -941,7 +948,7 @@ and Ferrari froze. Three separate faults were behind it.
 
 ### Where the walker's time went
 
-`GT5P_SAMPLE=6`, resolved with `scratch/maplook.py`. The walker (the
+`GT5P_SAMPLE=6`, resolved with `scripts/diag/maplook.py`. The walker (the
 `present` host thread) was about 62% busy. Of its busy samples:
 
 | Work | Samples |
@@ -1057,7 +1064,7 @@ ticks normal), the Phase 54 stall. `RSX_VTX_GPU=check` is clean.
 
 ### Where the present's time went
 
-A timeline (`PS3_TIMELINE`, `scratch/tl.py --sum`) after Phase 57:
+A timeline (`PS3_TIMELINE`, `scripts/diag/tl.py --sum`) after Phase 57:
 - the present thread spends 25.6 ms a frame walking the FIFO and 13.2 ms
   presenting;
 - each SPU render pass (workloads 0 and 1) lasts about 39 ms (max 58).
@@ -1116,7 +1123,7 @@ recording set everywhere else. At a frame boundary the walker:
 **A known gap.** Texture bytes and fragment-program code are still read from
 guest memory at replay, now up to a frame later than before. A title that
 reuses an address within that window would show it. The movie
-(volatile textures) plays without tearing (`scratch\movshot.ps1`).
+(volatile textures) plays without tearing (`scripts\test\movshot.ps1`).
 
 `[present-thread]` prints every 5 s: replay time per frame, and how long the
 walker waited for the thread and for the GPU. At the Car Dealer page the
@@ -1243,7 +1250,7 @@ and 38 MB of referenced vertex bytes.
 - workload-info changes, `usleep` asked against slept;
 - flips, FIFO walks and presents.
 
-`python scratch/tl.py <csv> <run.err> [frame] [--sum]` prints one frame in
+`python scripts/diag/tl.py <csv> <run.err> [frame] [--sum]` prints one frame in
 order, or per-frame totals. (Quote the value in PowerShell:
 `'PS3_TIMELINE=42,3'`, or the comma makes it an array.)
 
@@ -1345,13 +1352,13 @@ critical path.
   CPU, every number wrong).
   - The scripts now stop leftovers before launching (`Stop-Stragglers`) and
     close the game in a `finally`.
-  - `scratch\winshot.ps1` captures the game window itself (`PrintWindow`) at
+  - `scripts\test\winshot.ps1` captures the game window itself (`PrintWindow`) at
     the page.
   - `perf.ps1` and `cpu3.ps1` take `-MinDraws`.
 
 ## Phase 55 - PPU-side speed-ups measured: none moves the dealership (2026-10-16)
 
-Plan steps 5a and part of 5c, measured with `scratch\perf.ps1` against the
+Plan steps 5a and part of 5c, measured with `scripts\test\perf.ps1` against the
 Phase 54 exe (normal: 5 runs; title-only, `RSX_VTX_SKIP=1 -MinDraws 0`: 3):
 
 | Build | Car Dealer page | Title-only ceiling | Main menu |
@@ -1485,7 +1492,7 @@ first time the title reads each screen's `.gpb` (`cellFs` stat/open;
 - `PAD_HOLD` presses can count from a milestone
   (`@TopMenuTemplate+8000-8300:CROSS`). `!<other>` skips a retry once that
   milestone has appeared.
-- `scratch\perf.ps1`, `cpu3.ps1`, `pvshot.ps1` and `capshot.ps1` now wait
+- `scripts\test\perf.ps1`, `cpu3.ps1`, `pvshot.ps1` and `capshot.ps1` now wait
   for `DealerTopRoot` and over 1,000 draws instead of fixed sleeps. The
   page comes up about 29 s after launch, against 47 s.
 - `perf.ps1` ends a run at the first 5 s block with no presents, and counts
@@ -1493,7 +1500,7 @@ first time the title reads each screen's `.gpb` (`cellFs` stat/open;
 
 ## Phase 53 - Dealership frame rate: the baseline for a 30 fps plan (2026-10-15)
 
-Measured with `scratch\perf.ps1` (`FS_HIDE`, no settings file), current
+Measured with `scripts\test\perf.ps1` (`FS_HIDE`, no settings file), current
 build (shadow pass, rims, glass all drawn):
 
 - **17.6 and 18.1 fps** in the clean runs; one run of three stalled.
@@ -1545,7 +1552,7 @@ ORed with the PS button as bit 16 (`g_pad_menu_buttons`), for the page to
 read.
 
 Two faults found by driving it with posted keys and `PAD_HOLD`
-(`scratch\settings_test.ps1`, `scratch\settings_restart_test.ps1`):
+(`scripts\test\settings_test.ps1`, `scripts\test\settings_restart_test.ps1`):
 
 - The page repositioned itself every 16 ms with a synchronous
   `SetWindowPos(HWND_TOP)`. That waits on the owner window's thread, the
@@ -1579,7 +1586,7 @@ the game window's thread is the busy one).
 On an empty shader cache a boot showed it four times (3, 13, 18 and 107
 shaders and pipelines; 0.6-1.9 s each) and hid it after each. New setting
 `[video] shader_indicator` (default on), on the F1 page and live;
-`GT5P_SHADER_INDICATOR=0` overrides. `scratch\badge_test.ps1` repeats the
+`GT5P_SHADER_INDICATOR=0` overrides. `scripts\test\badge_test.ps1` repeats the
 test.
 
 ## Phase 51 - Car paint, floor reflection and glass against RPCS3 (2026-10-15)
@@ -1794,7 +1801,7 @@ Mistakes made while checking, to save the next person:
   `return _o`, so the first views never reached it.
 - **The capture fires in the logo fade.** The shadow pass already runs
   there. Use `RSX_CAP_ZB=<n>` to capture n frames after the first
-  depth-only pass, and `scratch\capshot.ps1` to drive it.
+  depth-only pass, and `scripts\test\capshot.ps1` to drive it.
 
 **Polygon offset.** It is now decoded (`poly_offset_*` in `rsx_state`;
 `RSX_POLYOFS_DBG=1`, `RSX_POFSDBG=<n>`), but not applied. The title sets
@@ -1878,7 +1885,7 @@ Also added:
 - `RSX_LUMA_POKE=<word>`, which writes a word into the pixel of the
   frame's last single-pixel offscreen draw. It hit a reflection cube's mip
   tail, so it is only a starting point.
-- `scratch\capshot.ps1`, which saves the game's own backbuffer, never the
+- `scripts\test\capshot.ps1`, which saves the game's own backbuffer, never the
   desktop.
 
 ## Phase 48 - Player settings file, and a first look at 1080p (2026-10-15)
@@ -2172,7 +2179,7 @@ coordinate bit set, which the backend only honours on units 0-3, and units
 
 ## Phase 45 - SPU register cache, and the present thread is the bottleneck (2026-10-15)
 
-Measured as in Phase 44 (`scratch/perf.ps1`), two runs per setting unless
+Measured as in Phase 44 (`scripts/test/perf.ps1`), two runs per setting unless
 stated.
 
 ### 45.1 SPU register cache: correct, not faster
@@ -2288,7 +2295,7 @@ that changes little.
 
 Each part is one change, measured the Phase 43 way: Car Dealer page with the
 Showroom panel open, windowed, `PS3_VERBOSE=0`, warm shader cache.
-`scratch/perf.ps1 -Tag <t> -N 3 [NAME=VALUE ...]` repeats it N times: the
+`scripts/test/perf.ps1 -Tag <t> -N 3 [NAME=VALUE ...]` repeats it N times: the
 title-bar fps at 85 s, then 15 s of CPU (process total, and threads that
 exited, which are the job manager's lanes). Medians of three runs. The
 baseline exe is in `scratch/baseline/`.
@@ -2375,7 +2382,7 @@ Changes (ps3recomp, each with a way back):
   instructions, 0 differ. About 4.5% of lane samples were these calls.
 - `getenv` is cached per call site in `spu_channels.c` and `spu_drain.c` too.
 
-Result, `scratch/perf.ps1`, which now also reports the average presents per
+Result, `scripts/test/perf.ps1`, which now also reports the average presents per
 second over the window (`GT5P_PRESENT_PROF`), more stable than one title-bar
 reading: baseline exe 17.5 fps (17.5, 17.5, 17.3), this build 17.6 and 17.4
 (a third run was ended early when the window was closed on the menu). **No
@@ -2403,7 +2410,7 @@ Tools added:
 - `GT5P_SAMPLE=<n>` (`src/gt5p_present.cpp`): a sampling profiler for the n
   busiest threads, re-chosen every 10 s by CPU used. Samples in a DLL are
   unwound to their first caller in the executable, so CRT and driver time is
-  charged to whoever called it. `scratch/maplook.py build/gt5p.map <log>`
+  charged to whoever called it. `scripts/diag/maplook.py build/gt5p.map <log>`
   names the buckets per thread. One sample is about 2.3 ms of wall time when
   four threads are sampled.
 - `GT5P_PRESENT_PROF=1` (existed): the present thread's split. At 7.4 fps it
@@ -2475,7 +2482,7 @@ Where it stands at 17.5 fps:
   dispatch (2,455 in 75 s) and live for milliseconds, so a per-thread CPU
   table misses them. Over 15 s the process used 97 s of CPU and 48.6 s of it
   was in threads that had already exited: about 3.2 cores of lanes.
-  `scratch/cpu3.ps1` prints process, live and exited CPU.
+  `scripts/test/cpu3.ps1` prints process, live and exited CPU.
   `GT5P_SAMPLE=all` samples the whole process, and lanes register themselves
   through `g_spurs_lane_start_hook` (cellSpurs.c) so they are sampled for
   their whole life.
@@ -2560,7 +2567,7 @@ Fixes (ps3recomp, `libs/video` and `runtime/spu`):
     label. Each halted job left its block unfilled for good. Now 120 s
     (`SPU_DMA_REPEAT_MS`).
 
-Measured: three windowed runs with `scratch\inp.ps1 ... PAD_HOLD=...` all
+Measured: three windowed runs with `scripts\test\inp.ps1 ... PAD_HOLD=...` all
 reached the page. The disc-mode `gamedata/` (no install) was used for the
 last of them.
 
@@ -2627,7 +2634,7 @@ scripts end a run with `Stop-Process -Force`, so the last 64 KB of output was
 never written: everything after choosing a manufacturer. A thread now flushes
 both streams every second (`GT5P_FLUSH_MS`, default 1000, 0 turns it off).
 
-With the tail kept, a run that picks Acura (`scratch\inp.ps1 90`, the
+With the tail kept, a run that picks Acura (`scripts\test\inp.ps1 90`, the
 Phase 39 `PAD_HOLD`) reads, after `DealerTopRoot.gpb`: `TopMenuTemplate.gpb`,
 scene script `s0079`, `DLSGadgetRoot.gpb`, character `mb14`, motions
 `m0105` to `m0112`, scripts `s0078`, then `s0081` and `s0080`. An RPCS3 log of
@@ -3045,7 +3052,7 @@ two new logs: `AUDIO_GAPDBG=1` prints each run of empty blocks with the
 ring at that moment, and `AUDIO_LEADDBG=1` prints where the title writes
 relative to the index it is shown.
 
-**1. The test launcher.** The gaps came every 5.1 s. `scratch/inp.ps1` set
+**1. The test launcher.** The gaps came every 5.1 s. `scripts/test/inp.ps1` set
 `GT5P_MAINSTACK=5`, which suspends guest threads every 5 s to print the
 main thread's call chain, and the sound stops for as long. Removed from the
 script's defaults. Anyone launching through that script has been hearing an
@@ -3172,7 +3179,7 @@ The sound mixer is the job chain at `0x20046600` (Phase 33's chain). New
 `SPURS_JC_STATS=1`: 1,700 jobs a second at 0.47 ms each, the walker 82%
 busy, where full rate is about 3,190 (17 jobs for each 5.33 ms block). A
 new sampler, `SPURS_JC_SAMPLE=<chain>`, prints where the walker's host
-thread is once a millisecond; `scratch/maplook.py` resolves it against a
+thread is once a millisecond; `scripts/diag/maplook.py` resolves it against a
 linker map (`-DCMAKE_EXE_LINKER_FLAGS=/MAP:gt5p.map`). What it showed, and
 what was done, in the order measured:
 
@@ -3450,7 +3457,7 @@ Shutdown.
 
 **A/B.** Same source otherwise, executables kept as
 `scratch/baseline/gt5p_prefix_t85.exe` and `gt5p_fix_t86.exe`, 20 s headless
-boots with `GT5P_ARENA_TRACE=1 SPURS_JG_TRACE=1`, run by `scratch/ab.py`,
+boots with `GT5P_ARENA_TRACE=1 SPURS_JG_TRACE=1`, run by `scripts/diag/ab.py`,
 which counts overruns from the arena trace:
 
 | | boots | with an overrun | reached 128+ `GT.VOL` opens |
@@ -3500,7 +3507,7 @@ unreachable, no separate v0.14.0 build was made; the checkout stays on
 
 Tools left in place: `SPURS_JG_TRACE=1`; `scratch/instrument_txt.py` (wraps
 `func_007D3580` in `generated/`, so it is lost on a re-lift);
-`scratch/ab.py <exe> <outdir> <runs> <secs>`.
+`scripts/diag/ab.py <exe> <outdir> <runs> <secs>`.
 
 ### The device removal at the menu and dealership (2026-10-13)
 
@@ -4047,7 +4054,7 @@ that is all that can be said.
   bytes).
 
 **Harness.** `PrintWindow` blocks for ever on a window that has stopped
-answering; `scratch/inp.ps1` now stops instead. A run that hung this way sat
+answering; `scripts/test/inp.ps1` now stops instead. A run that hung this way sat
 for 18 minutes.
 
 Diagnostics added: `RSX_VP_LOOP_MAX`, `PERF=<n>`, the device-removed report
@@ -4232,7 +4239,7 @@ Still BCUS98158. Phase 25 left the process exiting after the agreement. Two
 controlled runs settle what triggers it: left alone for 60 s the title stays on
 the agreement (1,117 flips, alive); with the user pressing down to the end,
 right, Z, then Z on "Confirmation", it exits 5 to 10 s later, every time
-(four runs). `scratch/inp.ps1 <secs>` is the harness: it captures the window
+(four runs). `scripts/test/inp.ps1 <secs>` is the harness: it captures the window
 every 5 s and reports when the process goes away.
 
 **What the exit was.** Just before the stack overflow the runtime prints
