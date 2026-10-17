@@ -226,6 +226,18 @@ comments) wins over it; delete the file to get the defaults back.
 `GT5P_SETTINGS=<path>` names another file, and `GT5P_NO_SETTINGS=1` ignores it,
 as `scripts/boot.py` and `scripts/soak.py` do.
 
+**Warming race shaders.** Run `scripts/test/race.ps1 -Track HighSpeedRing
+-Tag warm-hsr -Seconds 60` in PowerShell to load the pit and race and populate
+the local caches before playing. `-Track Daytona` selects Daytona instead;
+append `GT5P_RESOLUTION=1080p RSX_MSAA=2` for that configuration. The helper
+closes the game when finished. It warms materials seen during the run; other
+cars, views or tracks can still need new shaders on their first appearance.
+Both shader bytecode and driver-compiled pipelines are cached locally.
+Driver updates invalidate pipeline blobs safely; rejected entries are rebuilt.
+`RSX_PSO_DISK=0` disables the driver cache, and disabling the shader cache in
+settings disables both. Keep `shadercache/`; do not download another machine's
+pipeline blobs.
+
 **Movies.** The opening movie is decoded with FFmpeg, loaded at run time. Run
 `scripts\get_ffmpeg.ps1` once (it fetches a pinned LGPL build into
 `third_party\ffmpeg`), then rebuild; without it movies play black and silent.

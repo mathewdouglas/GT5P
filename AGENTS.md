@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 77)
+## Start here: state of play (2026-10-18, Phase 78)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 77 is the latest).
+has the evidence, newest phase first (Phase 78 is the latest).
 
 ### What works now
 
@@ -65,8 +65,21 @@ has the evidence, newest phase first (Phase 77 is the latest).
   retired before rescanning. WASAPI follows default-output changes and retries
   lost devices (Phase 77). `PAD_HOTPLUG=0` and `AUDIO_HOTPLUG=0` disable these
   paths. Isolated recovery checks: `scripts/test/hotplug.ps1`.
+- High Speed Ring's heavily speckled road is improved by correct samplers on
+  all 16 units and authored compressed-texture mips (Phase 78). Pipeline keys
+  ignore unused texture bindings and share identical fragment code across
+  addresses; native driver pipelines now persist beside DXBC in `shadercache/`.
+  `scripts/test/race.ps1 -Track HighSpeedRing` warms a local race cache.
 
 ### Open work, in the order the user left it
+
+The latest request is **High Speed Ring: loading/compilation, 60 fps, and race
+graphics** (Phase 78). The road corruption and redundant pipeline builds have
+fixes; a verified 720p/2x-MSAA race measured a median 41 fps over 25 s, not 60.
+Other black materials/geometry in the race remain to investigate. Beware
+benchmarking the starting-grid preview: Start at `QuickArcadeRoot+5000`, with
+retries, and inspect the final shot for the racing HUD. Dropping all draws
+also removes the HUD, so that alone cannot confirm the race actually started.
 
 0. **Phases 76 to 73 (2026-10-18), read them first.** The race start froze every
    time; fixed in the walker (11 of 12 races clean at 1080p). The user's

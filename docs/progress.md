@@ -9,6 +9,80 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 78 - High Speed Ring road, redundant pipelines and local prewarming (2026-10-18)
+
+**Reproduced the user's speckled road at 720p, 2x MSAA.**
+`scratch/pv/hsrbase.win.png` shows heavy noise over the asphalt. In
+`scratch/rdoc/hsr_frame3190.rdc`, draw 293 samples an asphalt normal map on
+unit 5 through static sampler 5: point filtering and clamp. The sampler bank
+occupies registers 4-15, but only texture units 0-3 were remapped into it.
+Units 4-15 accidentally used those bank registers directly. This is distinct
+from the spectator-atlas fog bug fixed in Phase 76.
+
+**Samplers and mipmaps.** A four-bit register selection for each of all 16
+texture units replaces the four-unit sampler key. Mapping is a single pass,
+so remapping texture 0 to sampler 13 does not then remap that 13 as a texture
+unit. `RSX_SAMP_HI=0` keeps the previous high-unit selections; the existing
+`RSX_SAMP_FIXED=1` still bypasses remapping. Authored mip levels of 2D BC1/2/3
+textures are now decoded/uploaded with D3D12 copyable footprints and exposed
+through their SRVs. The cache identity includes the uploaded level count and
+checksums cover the source chain. `RSX_TEX_MIPS=0` keeps only level zero.
+Uncompressed textures and cubes keep their previous upload path.
+
+**Pipeline churn.** The baseline race filled the 8,192-entry pipeline cache
+and flushed it. `PSOMISSDBG=2` attributed many misses to cube/gamma/shadow and
+sampler state left bound on units the current program never sampled. A decoded
+texture-use mask now removes that irrelevant state before keying or generating
+HLSL (`RSX_PSO_USED_TEXTURES=0` restores it). Packed low-unit depth-copy,
+crossbar and mip flags retain their meanings. Malformed programs conservatively
+retain all units. Pipelines can also share a 64-bit structural fragment-code
+identity across guest addresses, while per-draw inline constants remain dynamic
+(`RSX_PSO_CODE_SHARE=0` keeps address-specific lookup; literal-constant mode
+also keeps address-specific lookup). The instruction-validation cache retains
+both the legacy hash and structural identity.
+
+**Driver compilation persists too.** The existing `.dxbc` files avoid the
+HLSL compiler, but not driver pipeline creation. `GetCachedBlob` results now
+persist as local `pso_*.bin` files in the same cache directory. Identity includes
+shader bytecode, input layout and pipeline state, excluding process pointers.
+Files have a size/checksum header and are written atomically. A corrupt blob,
+adapter change or driver rejection falls back to the complete descriptor and
+replaces the entry. `RSX_PSO_DISK=0` disables this; `RSX_SHADER_CACHE=0`
+disables both disk caches. These are local derived data, never tracked or
+distributed. API semantics: [Microsoft cached pipeline state](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_cached_pipeline_state).
+
+**Local prewarming and checks.** `scripts/test/race.ps1 -Track HighSpeedRing`
+(or `Daytona`) drives the pit/grid/race, leaves time for new shaders, records
+fps samples and a PrintWindow shot, then stops the game. It defaults to 720p,
+2x MSAA; extra environment arguments override that. It only warms materials
+actually encountered. Early Start plus retries is necessary: delayed Start
+alone left an earlier check on the animated starting-grid preview. Inspect
+the final racing HUD before treating a run as a race measurement.
+
+- `scripts/test/rsx_textures.ps1` passes synthetic checks for sampled-unit
+  masks, inline-constant skipping, malformed streams, structural identity
+  across relocation/constant changes, invalidation on instruction changes,
+  sampler-bank remapping without cascades, and bounded HLSL writes.
+- `hsrmips` completed the pit and racing HUD with D3D12 validation enabled;
+  no validation errors were logged. Road images in `hsrsamp`, `hsrmips` and
+  `hsrshare` have asphalt detail in place of the baseline's heavy speckling.
+- `hsrshare` is a verified race at the default sample-shading setting:
+  720p/2x MSAA, median **41.07 fps over 25 s**. It ends with 1,559 pipelines
+  looked up/built during the session, rather than repeated 8,192-entry fills.
+  Its disk-cache report has 628 hits, 931 misses, no rejected blobs; six HLSL
+  compiles occurred. This is an observed run, not a guaranteed steady rate.
+- `psorecovery` uses an isolated cache copied under `scratch/`, with one
+  native blob deliberately truncated. The menu draws normally; the report
+  records 13 native-cache hits, one rejection and one replacement. The file
+  is repaired to 12,586 bytes. D3D12 validation reports no errors.
+
+**Open:** steady 60 fps is not achieved, and other black materials/geometry
+remain. A drawing-disabled run can fall below 60 with sub-millisecond GPU time,
+but deleting the HUD makes its gameplay state harder to verify. A tick-only
+flip-callback experiment did not remove the grid preview's 30 fps and was not
+adopted. Race CPU sampling charges substantial time to PPU memory access and
+the SPU/runtime paths; treat these as leads, not proof of one bottleneck.
+
 ## Phase 77 - Controller reconnects and changing audio outputs (2026-10-18)
 
 **Windows device recovery is implemented.** The previous SDL path initialized

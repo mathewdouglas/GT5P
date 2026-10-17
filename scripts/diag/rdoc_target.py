@@ -1,5 +1,6 @@
 # Inspect the first draws writing a target: RDOC_CAP, RDOC_OUT (directory),
-# RDOC_TARGET (numeric resource id), RDOC_N (default 2). Derived dumps stay
+# RDOC_TARGET (numeric resource id) or RDOC_DRAWS (draw indices), RDOC_N
+# (default 2). Derived dumps stay
 # in the ignored output directory, never beside this script.
 import os, struct, traceback
 import renderdoc as rd
@@ -23,9 +24,10 @@ try:
     cf.OpenFile(os.environ["RDOC_CAP"], "", None)
     status, ctrl = cf.OpenCapture(rd.ReplayOptions(), None)
     textures = {t.resourceId: t for t in ctrl.GetTextures()}
-    want = int(os.environ["RDOC_TARGET"])
+    want = int(os.environ.get("RDOC_TARGET", "0"))
+    indices = {int(i) for i in os.environ.get("RDOC_DRAWS", "").split(",") if i}
     selected = [(i,a) for i,a in enumerate(flatten(ctrl.GetRootActions()))
-                if any(int(o) == want for o in a.outputs)]
+                if (i in indices if indices else any(int(o) == want for o in a.outputs))]
     p("draws", [(i,a.eventId,a.numIndices) for i,a in selected])
     shaders = set()
     for i,a in selected[:int(os.environ.get("RDOC_N", "2"))]:
@@ -55,7 +57,7 @@ try:
                 d = st.GetConstantBlock(rd.ShaderStage.Pixel, bi, 0).descriptor
                 if d.resource == rd.ResourceId.Null():
                     continue
-                data = ctrl.GetBufferData(d.resource, d.byteOffset, min(d.byteSize, cb.byteSize, 512))
+                data = ctrl.GetBufferData(d.resource, d.byteOffset, min(d.byteSize, cb.byteSize, 4352))
                 vals = struct.unpack(f"{len(data)//4}f", data)
                 p("constants", cb.name, vals)
     ctrl.SetFrameEvent(ctrl.GetRootActions()[-1].eventId, True)
