@@ -571,6 +571,18 @@ Each corrects the one before.
   - Shadow compares average four 2x2 compares (`RSX_SHADOW_SOFT=0`).
   - The pit crew's bind pose is open: motions load and `CMotionEx` runs,
     but the SPU skins with bind-pose matrices.
+- **Phase 72: the pit crew animate.** The SPU skinning never ran.
+  - The SPU lifter's `bisl $r0, $r0` wrote the link before reading the
+    target (`SPU_LIFT_BISL_LINKFIRST=1` at lift time for the old order).
+  - Indirect branch targets now drop their two low bits, as the hardware
+    does (`SPU_BI_LOWBITS=1` keeps them).
+  - `lift_spu_jobs.py` seeds the targets of absolute code-address tables
+    (`SPU_ABS_TABLES=0` without).
+  - **Re-lift the SPU code after updating ps3recomp.**
+  - `SPU_DMA_RANGE_HIST` shows a job's inputs.
+  - Open, left at the user's request: the menu's black slabs after the
+    Race Mode page, and the menu's trees reflected on the dealer floor
+    (`scratch/roundtrip.ps1 -Pit`).
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

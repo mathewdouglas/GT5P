@@ -60,6 +60,10 @@ PIC_TABLES = os.environ.get("SPU_PIC_TABLES", "1") != "0"
 # lifted unchanged. SPU_RESUME_SEEDS=0 lifts without them.
 RESUME_SEEDS = os.environ.get("SPU_RESUME_SEEDS", "1") != "0"
 
+# Absolute code-address tables in job bodies (Phase 72, abs_tables).
+# SPU_ABS_TABLES=0 lifts without their targets.
+ABS_TABLES = os.environ.get("SPU_ABS_TABLES", "1") != "0"
+
 
 def run(*args):
     r = subprocess.run([sys.executable, *map(str, args)],
@@ -82,6 +86,26 @@ def lift(blob, prefix, outdir, base=0, extra=None):
         *(["--resume-funcs", ",".join(map(hex, sorted(resume)))] if resume else []),
         *(["--regcache"] if REGCACHE else []))
     return int(n_funcs.group(1).replace(",", "")) if n_funcs else 0
+
+
+def abs_tables(raw, lsa):
+    """Targets of absolute code-address tables: quadwords whose four words are
+    each 0 or a word-aligned address inside the image, at least two of them
+    set. The render body's skinning keeps its software-pipelined loop entries
+    that way (LS 0x16330-0x16400 in 0x01376080) and reaches them by `lqa`,
+    `rotqbyi` and `bi`; 0x11520 was never lifted, so every skinned draw fell
+    to the SPU interpreter (Phase 72). Shuffle-pattern constants have their
+    low bits set and fail the alignment test."""
+    lo, hi = lsa + 0x10, lsa + len(raw)
+    found = set()
+    # The first 0x20 bytes are the body's header: entry OFFSETS, not addresses.
+    for o in range(0x20, len(raw) - 15, 16):
+        ws = [int.from_bytes(raw[o + i:o + i + 4], "big") for i in range(0, 16, 4)]
+        ok = [w == 0 or (w % 4 == 0 and lo <= w < hi) for w in ws]
+        if all(ok) and sum(1 for w in ws if w) >= 2:
+            found |= {w for w in ws if w}
+    # A target must hold an instruction, not more table.
+    return {t for t in found if int.from_bytes(raw[t - lsa:t - lsa + 4], "big") != 0}
 
 
 def resume_points(raw, base, funcs_json):
@@ -271,6 +295,8 @@ def main():    # --chain: apply chain_forward to the job images already generate
         seeds = {lsa + int.from_bytes(raw[0x10:0x14], "big")} | pic_continuations(raw, lsa)
         if PIC_TABLES:
             seeds |= pic_tables(raw, lsa)
+        if ABS_TABLES:
+            seeds |= abs_tables(raw, lsa)
         n = lift(blob, prefix, outdir, base=lsa, extra=",".join(map(hex, sorted(seeds))))
         total += n
         print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}")

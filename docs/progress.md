@@ -9,6 +9,75 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 72 - The pit crew animate (2026-10-17)
+
+**Fixed.** On Daytona's Race Mode page the crew now walk around the car
+and kneel at the wheels, as in RPCS3; before, they stood in the bind pose.
+The dealer page and the race are unchanged (both checked after the fix).
+The page runs at 28.6-30 fps.
+
+**The PPU side was right.**
+- Six `PDIMotion::ModelBone` objects (50, 36, 36, 36, 38 and 38 bones) get
+  a new pose every frame. `CMotionEx` slot 25 (`0x83CCD0`) applies each
+  motion through the bone to channel map, into a triple-buffered 3x4
+  palette (`0x839F10` rotates it).
+- `0x618CC8` puts the palette in the render state (`+0x1BCC`, count
+  `+0x1BD0`) before each skinned draw, and `0x618B78` clears it after.
+  The draw reads it back (`0x82CF28`: about 3,000 times a second, never the
+  64-matrix default) and `0xBA41C8` copies it into the frame ring.
+- The geometry job (`b01376080`) fetches those matrices: its command list
+  (LS `0x17000`) has `19 <offset> <count>` naming them, after a `18`
+  list of bone groups.
+- Yet halving every copied palette changed nothing on screen. The drawn
+  vertices did not depend on the matrices.
+
+**Cause 1: `bisl $r0, $r0` in the SPU lifter.** At LS `0xAC24` the job
+picks its skinning routine by mode (`0x11040`, `0x11060` or `0x11078`;
+else `0xAC28`, no skinning) into `r0` and calls it with
+`bisl $r0, $r0`. The lifter wrote the link before reading the target, so
+the call always went to its own return address, `0xAC28`. Call counters on
+every lifted function of the body showed `0xABC0` and `0xAC28` about 2,900
+times a second and the three skinning routines never. `bisl` and `bisled`
+now read the target first (`SPU_LIFT_BISL_LINKFIRST=1` at lift time for
+the old order). It was the only such site in all of the title's lifted SPU
+code.
+
+**Cause 2: indirect branch targets with low bits set.** The skinning loops
+branch through registers to loop heads, one with bit 0 set (`0x113B1`).
+The hardware ignores the two low bits; the runtime looked the address up as
+given, missed, and handed the job to the interpreter, which halted it, and
+the page froze on the Daytona logo. `spu_indirect_branch` now clears them
+(`SPU_BI_LOWBITS=1` keeps them).
+
+**Cause 3: a loop entry only reached through a table.** The loop entries
+are in an absolute address table in the body's data (LS `0x16330` to
+`0x16400`). All but `0x11520` were lifted through branch hints.
+`scripts/lift_spu_jobs.py` now seeds every target of such tables
+(`abs_tables`: quadwords of zeros and word-aligned in-image addresses; the
+body header is skipped). Of the 123 targets in `b01376080`, 122 were
+already function starts. `SPU_ABS_TABLES=0` at lift time lifts without
+them.
+
+**Re-lift the SPU code** (`scripts/lift_spu_jobs.py`) after updating
+ps3recomp. The diff against the old lift is the 36 `bisl` lines and the
+new entry.
+
+New diagnostics:
+- `SPU_DMA_RANGE_AFTER=<milestone>` and `SPU_DMA_RANGE_MAX=<n>`.
+- `SPU_DMA_RANGE_HIST=<n>`: a PUT into the range prints the GETs the same
+  SPU thread made before it, so you can see the job's inputs.
+- `SPU_DMA_HIST_LS=<lsa>:<len>,...` adds local-store bytes to those lines.
+- `[dma-range]` lines now name the image.
+- Scratch tools: `scratch/fncount_patch.py` counts PPU functions in an
+  address range; `scratch/spufn_count.py <body>` counts every lifted
+  function of one SPU body. Both print every 10 s, and both have
+  `--restore`. `scratch/pitshot.ps1` shoots the Race Mode page.
+
+**Left alone, at the user's request:** the menu's black slabs after
+leaving the Race Mode page, and the menu's trees reflected on the dealer
+floor. `scratch/roundtrip.ps1 -Pit` drives menu, pit, menu, dealer; the
+popup Circle needs moving later than +23 s.
+
 ## Phase 71 - Aliasing at 1080p; the pit crew's bind pose, part one (2026-10-17)
 
 **Reported:** jagged edges and shadows when the camera moves (the user plays

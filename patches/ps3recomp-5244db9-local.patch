@@ -17306,7 +17306,7 @@ index 9cc3670..5ca4416 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d0..3f5119b 100644
+index 0b235d0..b117f39 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,11 +21,12 @@
@@ -17645,10 +17645,21 @@ index 0b235d0..3f5119b 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2051,12 +2156,52 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2049,14 +2154,61 @@ void spu_indirect_branch(spu_context* ctx)
+      * of a computed pointer (e.g. a packed handle like 0x7a028803) are ignored.
+      * Without this, any indirect branch through such a value fails the lookup
       * and falls into branch-to-0. All lifted funcs live below SPU_LS_SIZE, so
-      * masking is a no-op for already-valid targets. */
-     ctx->pc &= SPU_LS_MASK;
+-     * masking is a no-op for already-valid targets. */
+-    ctx->pc &= SPU_LS_MASK;
++     * masking is a no-op for already-valid targets.
++     * The two low bits go too: instructions are word-aligned and the hardware
++     * ignores them. GT5 Prologue's skinning loops keep their loop heads in a
++     * constant table with bit 0 set (0x113B1) and `bi` through them; looked up
++     * as given, every skinned draw fell to the interpreter and halted.
++     * SPU_BI_LOWBITS=1 keeps them (the old behaviour). */
++    { static int s_keep = -1;
++      if (s_keep < 0) { const char* e = getenv("SPU_BI_LOWBITS"); s_keep = e && *e == '1'; }
++      ctx->pc &= s_keep ? SPU_LS_MASK : (SPU_LS_MASK & ~3u); }
 +    /* SPU_FAST (Phase 61): the common case first. With none of the switches
 +     * below set, no taskset task registered, no interrupt return pending and
 +     * the target not one of the reserved addresses, everything before the
@@ -17699,7 +17710,7 @@ index 0b235d0..3f5119b 100644
            static int s_it = -1; if (s_it < 0) s_it = getenv("SPU_IRQTRACE") ? 1 : 0;
            static int _r = 0;
            if (s_it && _r++ < 200)
-@@ -2084,10 +2229,21 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2084,10 +2236,21 @@ void spu_indirect_branch(spu_context* ctx)
              /* cellSpursModulePoll: report "no contention — keep running".
               * (One virtual SPU per workload here, so nothing ever preempts.) */
              unsigned n = ++g_spurs_pm_polls;
@@ -17723,7 +17734,7 @@ index 0b235d0..3f5119b 100644
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
          }
-@@ -2502,7 +2658,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2502,7 +2665,7 @@ void spu_indirect_branch(spu_context* ctx)
                    s_dumped = 1; } } }
      }
      if (fn) {
@@ -18304,7 +18315,7 @@ index 8d8e4aa..f742f02 100644
                  ((ctx)->event_status & (ctx)->event_mask))      \
                  _tf = spu_take_interrupt((ctx), _tf);          \
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..b245c8b 100644
+index 90f3221..ac8ed72 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -20,6 +20,7 @@
@@ -18315,7 +18326,7 @@ index 90f3221..b245c8b 100644
  #include <stdio.h>
  #include "../platform/win32_compat.h"
  
-@@ -165,6 +166,13 @@ static inline int mfc_is_fence(uint32_t cmd)
+@@ -165,6 +166,18 @@ static inline int mfc_is_fence(uint32_t cmd)
   * Execute a single DMA transfer between local store and main memory.
   * Returns 0 on success, -1 on error.
   */
@@ -18326,10 +18337,82 @@ index 90f3221..b245c8b 100644
 +#    define SPU_DMA_TLS __thread
 +#  endif
 +#endif
++#ifdef __cplusplus
++extern "C" int pad_milestone_reached(const char*);
++#else
++extern int pad_milestone_reached(const char*);
++#endif
  static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                                     uint32_t size, uint32_t cmd)
  {
-@@ -205,6 +213,28 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -186,15 +199,59 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+                       (uint32_t)spu->pc & SPU_LS_MASK, cmd, lsa, (uint32_t)ea, size,
+                       (uint32_t)s_w); } }
+     /* SPU_DMA_RANGE=<lo>-<hi> (hex EAs): log transfers touching [lo,hi), first
+-     * 64 -- who reads or writes a buffer the RSX shares with the SPUs. */
+-    { static uint32_t s_lo = 1, s_hi;
++     * 64 -- who reads or writes a buffer the RSX shares with the SPUs.
++     * SPU_DMA_RANGE_AFTER=<milestone> arms it once that screen is read;
++     * SPU_DMA_RANGE_MAX=<n> changes the 64. */
++    { static uint32_t s_lo = 1, s_hi; static const char* s_after; static int s_go, s_max = 64;
+       if (s_lo == 1) { const char* e = getenv("SPU_DMA_RANGE"); s_lo = 0;
+-          if (e) { char* d; s_lo = (uint32_t)strtoul(e, &d, 16); if (*d == '-') s_hi = (uint32_t)strtoul(d + 1, 0, 16); } }
+-      if (s_hi && (uint32_t)ea < s_hi && (uint32_t)ea + size > s_lo) {
++          if (e) { char* d; s_lo = (uint32_t)strtoul(e, &d, 16); if (*d == '-') s_hi = (uint32_t)strtoul(d + 1, 0, 16); }
++          s_after = getenv("SPU_DMA_RANGE_AFTER"); s_go = !s_after;
++          { const char* m = getenv("SPU_DMA_RANGE_MAX"); if (m) s_max = atoi(m); } }
++      if (s_hi && (uint32_t)ea < s_hi && (uint32_t)ea + size > s_lo && !s_go && pad_milestone_reached(s_after)) s_go = 1;
++      /* SPU_DMA_RANGE_HIST=<n>: each SPU thread keeps its last 32 GETs once
++       * armed, and the first n PUTs into the range print them: the inputs
++       * of the job that wrote there. */
++      { static int s_hist = -1; static SPU_DMA_TLS uint32_t h_ea[32], h_sz[32], h_ls[32], h_pc[32], h_n;
++        if (s_hist < 0) { const char* h = getenv("SPU_DMA_RANGE_HIST"); s_hist = h ? atoi(h) : 0; }
++        if (s_hist && s_go) {
++            if ((cmd & 0xF0) == 0x40) {
++                uint32_t k = h_n++ & 31;
++                h_ea[k] = (uint32_t)ea; h_sz[k] = size; h_ls[k] = lsa; h_pc[k] = (uint32_t)spu->pc & SPU_LS_MASK;
++            } else if ((cmd & 0xF0) == 0x20 && (uint32_t)ea < s_hi && (uint32_t)ea + size > s_lo) {
++                static volatile long s_hn = 0;
++                if (_InterlockedIncrement(&s_hn) <= s_hist) {
++                    char buf[4096]; int o = snprintf(buf, sizeof buf, "[dma-hist] PUT ea=0x%08X size=%u lsa=0x%05X pc=0x%05X after GETs:",
++                                                     (uint32_t)ea, size, lsa, (uint32_t)spu->pc & SPU_LS_MASK);
++                    uint32_t m = h_n < 32 ? h_n : 32;
++                    for (uint32_t j = h_n - m; j != h_n && o < (int)sizeof buf - 64; j++)
++                        o += snprintf(buf + o, sizeof buf - o, " %08X/%u>%05X@%05X", h_ea[j & 31], h_sz[j & 31], h_ls[j & 31], h_pc[j & 31]);
++                    fprintf(stderr, "%s\n", buf);
++                    h_n = 0;
++                    /* SPU_DMA_HIST_LS=<lsa>:<len>,... (hex): local-store bytes
++                     * at that moment, e.g. the job's parameter blocks. */
++                    { const char* ls = getenv("SPU_DMA_HIST_LS");
++                      while (ls && *ls) {
++                          char* d; uint32_t a = (uint32_t)strtoul(ls, &d, 16), n = 0x40;
++                          if (*d == ':') n = (uint32_t)strtoul(d + 1, &d, 16);
++                          for (uint32_t o = 0; o < n; o += 32) {
++                              int q = snprintf(buf, sizeof buf, "[dma-hist]   ls %05X:", (a + o) & SPU_LS_MASK);
++                              for (uint32_t w = 0; w < 32 && o + w < n; w += 4) {
++                                  const uint8_t* p = &spu->ls[(a + o + w) & SPU_LS_MASK];
++                                  q += snprintf(buf + q, sizeof buf - q, " %02X%02X%02X%02X", p[0], p[1], p[2], p[3]);
++                              }
++                              fprintf(stderr, "%s\n", buf);
++                          }
++                          ls = strchr(d, ','); if (ls) ls++;
++                      } }
++                }
++            }
++        } }
++      if (s_hi && s_go && (uint32_t)ea < s_hi && (uint32_t)ea + size > s_lo) {
+           static int _n = 0;
+-          if (_n++ < 64)
+-              fprintf(stderr, "[dma-range] pc=0x%05X cmd=0x%X lsa=0x%05X ea=0x%08X size=%u\n",
+-                      (uint32_t)spu->pc & SPU_LS_MASK, cmd, lsa, (uint32_t)ea, size);
++          if (_n++ < s_max)
++              fprintf(stderr, "[dma-range] pc=0x%05X cmd=0x%X lsa=0x%05X ea=0x%08X size=%u img=%d ovl=%d\n",
++                      (uint32_t)spu->pc & SPU_LS_MASK, cmd, lsa, (uint32_t)ea, size,
++                      spu->image_id, spu->resident_ovl);
+           /* ...and every 5 s, the bytes PUT into / GOT from the range. */
+           { static volatile long long s_put, s_get; static unsigned long long s_t0;
+             extern unsigned long long ps3_ms_now(void);
+@@ -205,6 +262,28 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                  fprintf(stderr, "[dma-range] %.0f B/s put, %.0f B/s get\n",
                          s_put * 1000.0 / (now - s_t0), s_get * 1000.0 / (now - s_t0));
                  s_put = s_get = 0; s_t0 = now; } } } }
@@ -18358,7 +18441,7 @@ index 90f3221..b245c8b 100644
      /* Malformed transfers are REJECTED, as the hardware MFC does. The rules
       * are the ones the SDK's own dma.h asserts: a non-zero size, at most
       * 16 KB, a multiple of 16 once >= 16 bytes, and LSA/EA sharing 16-byte
-@@ -673,6 +703,29 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -673,6 +752,29 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
           * find the pushbuffer; NULL for every title that does not. */
          { extern void (*g_spu_put_hook)(uint32_t ea, uint32_t size);
            if (g_spu_put_hook) g_spu_put_hook((uint32_t)ea, size); }
@@ -18388,7 +18471,7 @@ index 90f3221..b245c8b 100644
          /* Bink sync-area watch (armed by the PPU barrier probe): log SPU PUTs
           * that touch the per-SPU lane counters. */
          { extern uint32_t g_barrier_sync_watch;
-@@ -811,7 +864,10 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -811,7 +913,10 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
       * about to land. If the handler was supposed to fill in the claimed job's
       * EA and did not, the elements read back empty and the transfer is a no-op
       * -- which looks identical to "the pipeline never ran" from the PPU side. */
@@ -18400,7 +18483,7 @@ index 90f3221..b245c8b 100644
        fprintf(stderr, "[mfc-list] RESUME-ELEMS dest=0x%05X elems\n0x%05X:",
                spu->list_stall_dest_lsa[t], _e);
        for (uint32_t _o = 0; _o < 16 && (_e + _o) + 3 < SPU_LS_SIZE; _o += 4)
-@@ -937,9 +993,16 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -937,9 +1042,16 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
        if (s_wl == -2) { const char* e7 = getenv("SPU_WATCHLSA");
                          s_wl = e7 ? 1 : 0;
                          s_wlsa = e7 ? (uint32_t)strtoul(e7, 0, 16) : 0u; }
@@ -18419,7 +18502,7 @@ index 90f3221..b245c8b 100644
                const uint8_t* q = spu->ls + (s_wlsa & SPU_LS_MASK);
                fprintf(stderr, "[watchlsa] n=%lu spu%u cmd=0x%02X ea=0x%08X"
                                " lsa=0x%05X size=%u pc=0x%05X ->"
-@@ -1176,18 +1239,61 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1176,18 +1288,61 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * pages on demand the counter never advanced and a spinning job simply hung
       * the chain walker instead. Count repeats whether or not the transfer
       * succeeds, and halt at a known pc rather than hanging silently. */
@@ -20131,7 +20214,7 @@ index 2630352..d29c28a 100644
      0b01111100: "ceqi",   # compare equal word immediate
      0b01111101: "ceqhi",  # compare equal halfword immediate
 diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
-index bfc9af4..72f6c2f 100644
+index bfc9af4..ed3acd2 100644
 --- a/tools/spu_lifter.py
 +++ b/tools/spu_lifter.py
 @@ -456,9 +456,35 @@ def compute_link_returns(insns, bounds) -> set:
@@ -20367,12 +20450,28 @@ index bfc9af4..72f6c2f 100644
                      "g_spu_trampoline_fn = spu_indirect_branch; return;")
          if mn in ("bisl",):
              # `bisl rt, ra`: rt = link, ra = TARGET. The disassembler emits BOTH
-@@ -927,16 +1023,16 @@ class SPULifter:
+@@ -925,19 +1021,33 @@ class SPULifter:
+             # Indirect call: nested dispatch bracketed like brsl (host_depth +
+             # SPU_DRAIN + image save/restore) so the callee's tail-chains drain
              # here and its `bi $r0` returns via host return.
-             return (f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
-                     f"{{ int32_t _si = (int32_t)ctx->image_id; "
+-            return (f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
+-                    f"{{ int32_t _si = (int32_t)ctx->image_id; "
 -                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; ctx->host_depth++; "
-+                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; {_RC_OUT}ctx->host_depth++; "
++            # The target is read BEFORE the link is written: `bisl $r0, $r0`
++            # (GT5 Prologue's geometry job picks its skinning routine into r0
++            # and calls it that way) otherwise always "called" its own return
++            # address, and no character was ever skinned.
++            # SPU_LIFT_BISL_LINKFIRST=1 at lift time emits the old order.
++            if os.environ.get("SPU_LIFT_BISL_LINKFIRST") == "1":
++                return (f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
++                        f"{{ int32_t _si = (int32_t)ctx->image_id; "
++                        f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; {_RC_OUT}ctx->host_depth++; "
++                        f"spu_indirect_branch(ctx); spu_drain_call(ctx, 0x{addr + 4:X}); "
++                        f"ctx->host_depth--; spu_img_restore(ctx, _si); {_RC_IN}}}")
++            return (f"{{ uint32_t _bt = {g(tgt_reg)}._u32[0]; "
++                    f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
++                    f"int32_t _si = (int32_t)ctx->image_id; "
++                    f"{_ied}ctx->pc = _bt; {_RC_OUT}ctx->host_depth++; "
                      f"spu_indirect_branch(ctx); spu_drain_call(ctx, 0x{addr + 4:X}); "
 -                    f"ctx->host_depth--; spu_img_restore(ctx, _si); }}")
 +                    f"ctx->host_depth--; spu_img_restore(ctx, _si); {_RC_IN}}}")
@@ -20380,14 +20479,19 @@ index bfc9af4..72f6c2f 100644
          if mn in ("bisled",):
              link_rt = insn.raw & 0x7F            # rt = link; ra (last) = target
              tgt_reg = _reg(ops[-1])
-             return (f"{g(link_rt)} = spu_splat_u32(0x{addr + 4:X}); "
+-            return (f"{g(link_rt)} = spu_splat_u32(0x{addr + 4:X}); "
++            # Target read before the link is written, as for bisl.
++            return (f"{{ uint32_t _bt = {g(tgt_reg)}._u32[0]; "
++                    f"{g(link_rt)} = spu_splat_u32(0x{addr + 4:X}); "
                      f"if ((ctx->event_status & ctx->event_mask) != 0) {{ "
 -                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; "
-+                    f"{_ied}{_RC_EXIT}ctx->pc = {g(tgt_reg)}._u32[0]; "
-                     f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
+-                    f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
++                    f"{_ied}{_RC_EXIT}ctx->pc = _bt; "
++                    f"g_spu_trampoline_fn = spu_indirect_branch; return; }} }}")
          # biz/binz/bihz/bihnz: ops[0] = condition reg, ops[1] = target reg.
          if mn in ("biz", "binz", "bihz", "bihnz"):
-@@ -950,9 +1046,9 @@ class SPULifter:
+             cond = self._cond(mn[1:], _reg(ops[0]))   # strip leading 'b' -> iz/inz...
+@@ -950,9 +1060,9 @@ class SPULifter:
              if (tgt_reg == "0" and addr not in self.bi_r0_jump) \
                      or addr in self.link_return:
                  if tgt_reg != "0":
@@ -20400,7 +20504,7 @@ index bfc9af4..72f6c2f 100644
                      f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
  
          # hint-for-branch: pure performance hint, safe to drop
-@@ -967,6 +1063,29 @@ class SPULifter:
+@@ -967,6 +1077,29 @@ class SPULifter:
          return (f'/* TODO spu: {mn} {insn.operands} */ '
                  f'spu_unsupported(0x{insn.addr:X}, "{mn}");')
  
@@ -20430,7 +20534,7 @@ index bfc9af4..72f6c2f 100644
      # ------------------------------------------------------------------ #
      def _cond(self, mn: str, reg: str) -> str:
          """Condition expression on preferred slot for conditional branches."""
-@@ -988,7 +1107,7 @@ class SPULifter:
+@@ -988,7 +1121,7 @@ class SPULifter:
          self.branch_targets.add(tgt)
          # Cross-function unconditional tail: hand the target to the trampoline
          # and unwind so the enclosing SPU_DRAIN re-enters (no host-stack growth).
@@ -20439,7 +20543,7 @@ index bfc9af4..72f6c2f 100644
                  f"g_spu_trampoline_fn = {self.prefix}spu_func_{tgt:08X}; return; }}")
  
      # ------------------------------------------------------------------ #
-@@ -1080,6 +1199,10 @@ def main() -> None:
+@@ -1080,6 +1213,10 @@ def main() -> None:
                     help="Emit spu_trace_pc/spu_trace_rt around each instruction "
                          "for §3 diff-vs-RPCS3 validation. Output goes to stderr "
                          "unless spu_trace_init(path) is called by the harness.")
@@ -20450,7 +20554,7 @@ index bfc9af4..72f6c2f 100644
      p.add_argument("--symbol-prefix", default="",
                     help="Prefix for all emitted spu_func_* / spu_recomp_register "
                          "symbols, so multiple lifted SPU images can link into one "
-@@ -1089,6 +1212,14 @@ def main() -> None:
+@@ -1089,6 +1226,14 @@ def main() -> None:
                          "0x10F8,0x808) to add as boundaries -- for indirect-branch "
                          "targets that --auto-functions can't detect statically. "
                          "Splits the containing auto-detected function at each addr.")
@@ -20465,7 +20569,7 @@ index bfc9af4..72f6c2f 100644
      p.add_argument("--code-end", type=lambda x: int(x, 0), default=0,
                     help="Address where executable code ends and an embedded "
                          "rodata/const tail begins. Drops any auto-detected "
-@@ -1199,7 +1330,8 @@ def main() -> None:
+@@ -1199,7 +1344,8 @@ def main() -> None:
  
      insns = disassemble_spu(data, base)
  
@@ -20475,7 +20579,7 @@ index bfc9af4..72f6c2f 100644
      lifter.bi_r0_jump = compute_bi_r0_jumps(insns, bounds)
      if lifter.bi_r0_jump:
          print(f"  {len(lifter.bi_r0_jump)} `bi $r0` computed-jump site(s) "
-@@ -1223,6 +1355,22 @@ def main() -> None:
+@@ -1223,6 +1369,22 @@ def main() -> None:
      lifter.func_starts = {s for s, e in bounds}  # for fall-through tail-call chaining
      for s, e in bounds:
          lifter.lift_function(insns, s, e)
