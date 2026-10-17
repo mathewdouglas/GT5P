@@ -20,6 +20,8 @@ import re
 import sys
 from pathlib import Path
 
+import target
+
 GEN = Path(__file__).resolve().parent.parent / "generated"
 
 WRAPPER = '''
@@ -121,6 +123,11 @@ def instrument(addr):
 
 
 def main():
+    if not target.TARGET.get("gt5p_allocwatch", False):
+        raise SystemExit(
+            f"allocator instrumentation uses GT5P-specific observations and "
+            f"is disabled for {target.NAME}"
+        )
     if len(sys.argv) < 2:
         print(__doc__)
         return 1

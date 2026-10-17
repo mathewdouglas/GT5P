@@ -213,13 +213,19 @@ def main():    # --chain: apply chain_forward to the job images already generate
             if d.is_dir():
                 print(f"  {d.name}: {chain_forward(d)} forward transfers made direct")
         return
+    policy_only = "--policy-only" in sys.argv
     dumps = sorted(p for p in DUMPS.glob("spujob_*.bin") if NAME_RE.match(p.name))
-    if not dumps:
+    if policy_only:
+        dumps = []
+    elif not dumps:
         raise SystemExit(f"no spujob_*.bin in {DUMPS} -- run with SPU_DUMP_MISS first")
+    if policy_only:
+        print("policy-only mode: no captured SPU job images will be registered")
 
     # image_id 1 is the policy module. It is embedded in the executable, so it
     # is cut out of input/EMAIN.ELF here instead of being captured at run time.
     pm_blob = ROOT / "analysis" / "spu" / "wwsjob.bin"
+    pm_blob.parent.mkdir(parents=True, exist_ok=True)
     pm_blob.write_bytes(read(WWS_JOB_PM_EA, WWS_JOB_PM_SIZE))
     pm_dir = OUT / "wwsjob"
     pm_dir.mkdir(parents=True, exist_ok=True)
@@ -231,7 +237,7 @@ def main():    # --chain: apply chain_forward to the job images already generate
     print(f"  policy module at 0x{WWS_JOB_PM_EA:08X}: {n} functions -> {pm_dir.relative_to(ROOT)}")
 
     # Jobs take 2..N.
-    jobs, total = [], 0
+    jobs, total = [], n
     for i, blob in enumerate(dumps, start=2):
         fp, size = NAME_RE.match(blob.name).groups()
         prefix = f"gt5p_j{fp[:8]}"

@@ -87,7 +87,6 @@ void gt5p_start_present_thread(void);     /* src/gt5p_present.cpp */
 
 /* GCM control/label page. cellGcmSys keeps put/get/ref and the label slots
  * here, and the RSX pump reads them every frame. */
-#define GT5P_GCM_CTRL_BASE  0x03000000u
 #define GT5P_GCM_CTRL_SIZE  0x00010000u
 
 /* argv/envp block handed to the guest _start. */
@@ -780,11 +779,8 @@ int main(int argc, char* argv[])
 #endif
 
     /* Move the HLE-visible GCM window (labels, control register, and the 16 KB
-     * of offset tables) off this title's heap. NPUA80075 maps 174 MB at
-     * 0x20000000 -- the runtime's default base -- and publishing the offset
-     * tables there overwrote the CRT allocator's size-class pool, which wedged
-     * the main thread in a livelock for the whole boot. 0x03000000 is free
-     * here, and main() commits it below. Must be set before any guest code. */
+     * of offset tables) off this title's heap. The selected base is in
+     * config/targets.json; it must be set before any guest code. */
     ppu_hle_inject_base = GT5P_GCM_CTRL_BASE;
 
     if (int32_t rc = vm_init()) {

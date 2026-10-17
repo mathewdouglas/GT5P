@@ -240,6 +240,7 @@ extern "C" {
     void cellGcm_fifo_kick_event(void);
     void cellGcm_fifo_kick_wait(void);
     void cellGcm_ref_on_poll(void);
+    void cellGcm_debug_dump(void);
     void cellGcm_rsx_process_fifo(void);
     void cellGcm_fifo_recycle(void);
     void cellGcmSetDisplayBuffer(void);
@@ -698,6 +699,7 @@ extern "C" {
     void cellSpursWorkloadAttributeSetName(void);
     void cellSpursRemoveWorkload(void);
     void cellSpursWorkloadAttributeInitialize(void);
+    void cellSpurs_debug_dump(void);
     void cellSpursReadyCountStore(void);
     void cellSpursReadyCountSwap(void);
     void cellSpursReadyCountCompareAndSwap(void);
@@ -1443,6 +1445,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0xAD1F71FCu, "cellGcm_fifo_kick_event", (void*)cellGcm_fifo_kick_event);
     ps3_hle_register(0x9D310E99u, "cellGcm_fifo_kick_wait", (void*)cellGcm_fifo_kick_wait);
     ps3_hle_register(0x574A78E2u, "cellGcm_ref_on_poll", (void*)cellGcm_ref_on_poll);
+    ps3_hle_register(0x4F76118Au, "cellGcm_debug_dump", (void*)cellGcm_debug_dump);
     ps3_hle_register(0x89626052u, "cellGcm_rsx_process_fifo", (void*)cellGcm_rsx_process_fifo);
     ps3_hle_register(0x6CBB16D4u, "cellGcm_fifo_recycle", (void*)cellGcm_fifo_recycle);
     ps3_hle_register(0xA53D12AEu, "cellGcmSetDisplayBuffer", (void*)cellGcmSetDisplayBuffer);
@@ -1901,6 +1904,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x4A5EAB63u, "cellSpursWorkloadAttributeSetName", (void*)cellSpursWorkloadAttributeSetName);
     ps3_hle_register(0x57E4DEC3u, "cellSpursRemoveWorkload", (void*)cellSpursRemoveWorkload);
     ps3_hle_register(0xFD4204D7u, "cellSpursWorkloadAttributeInitialize", (void*)cellSpursWorkloadAttributeInitialize);
+    ps3_hle_register(0xC2F6C916u, "cellSpurs_debug_dump", (void*)cellSpurs_debug_dump);
     ps3_hle_register(0xF843818Du, "cellSpursReadyCountStore", (void*)cellSpursReadyCountStore);
     ps3_hle_register(0x49A3426Du, "cellSpursReadyCountSwap", (void*)cellSpursReadyCountSwap);
     ps3_hle_register(0xF1D3552Du, "cellSpursReadyCountCompareAndSwap", (void*)cellSpursReadyCountCompareAndSwap);

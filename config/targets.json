@@ -10,7 +10,9 @@
     "spu_registry": "src/gen/spu_workloads.c",
     "boot_from": "gamedata",
     "hdd_title": true,
-    "spurs_synth_job_done": true
+    "spurs_synth_job_done": true,
+    "gcm_ctrl_base": "0x03000000",
+    "gt5p_allocwatch": true
   },
   "BCUS98158": {
     "description": "US disc, v03.00",
@@ -25,6 +27,24 @@
     "spu_registry": "src/gen/spu_workloads_bcus98158.c",
     "boot_from": "bdvd",
     "hdd_title": false,
-    "spurs_synth_job_done": false
+    "spurs_synth_job_done": false,
+    "gcm_ctrl_base": "0x03000000",
+    "gt5p_allocwatch": true
+  },
+  "BCUS98114": {
+    "description": "US disc, Gran Turismo 5 v02.00",
+    "code_end": "0x0111C684",
+    "seeds": "config/extra_seeds_bcus98114.json",
+    "setjmp": "0x00D00D74",
+    "longjmp": "0x00D00E98",
+    "wws_job_pm_ea": "0x0177F200",
+    "wws_job_pm_size": 11648,
+    "wws_job_pm_extra_funcs": "0xA2C",
+    "spu_registry": "src/gen/spu_workloads_bcus98114.c",
+    "boot_from": "bdvd",
+    "hdd_title": false,
+    "spurs_synth_job_done": true,
+    "gcm_ctrl_base": "0x03000000",
+    "gt5p_allocwatch": false
   }
 }

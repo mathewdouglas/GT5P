@@ -47,6 +47,7 @@ string(JSON GT5P_BOOT_FROM    GET "${GT5P_T}" boot_from)
 string(JSON GT5P_HDD_TITLE    GET "${GT5P_T}" hdd_title)
 string(JSON GT5P_SPU_REGISTRY GET "${GT5P_T}" spu_registry)
 string(JSON GT5P_SYNTH_DONE   GET "${GT5P_T}" spurs_synth_job_done)
+string(JSON GT5P_GCM_CTRL_BASE GET "${GT5P_T}" gcm_ctrl_base)
 message(STATUS "game build: ${GT5P_TARGET} (code end ${GT5P_CODE_END}, boot_from=${GT5P_BOOT_FROM})")
 
 # =============================================================================
@@ -159,7 +160,8 @@ target_include_directories(gt5p PRIVATE
 set(GT5P_MAIN_DEFS
     "GT5P_TITLE_ID=\"${GT5P_TARGET}\""
     "GT5P_CODE_END=${GT5P_CODE_END}u"
-    "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\"")
+    "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\""
+    "GT5P_GCM_CTRL_BASE=${GT5P_GCM_CTRL_BASE}u")
 if(GT5P_HDD_TITLE)
     list(APPEND GT5P_MAIN_DEFS "GT5P_HDD_TITLE=1")
 endif()
