@@ -9,7 +9,61 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 68 - The black track behind the race menus (in progress, 2026-10-17)
+## Phase 68 - The black track behind the race menus (2026-10-17)
+
+**Fixed: a vertex-data method decoded with the wrong stride.**
+`NV4097_SET_VERTEX_DATA3F_M` gives each attribute a 16-byte slot: the
+title's own libgcm builds the method as `0x1500 + (index << 4)`, count 3
+(`SetVertexData3f` at `0x00BCF4B0` and `0x00BDA3F0`; ps3recomp's
+`rsx_dispatch.c` already decoded it so). `rsx_commands.c` used a 12-byte
+stride, so the title's white `(1,1,1)` for attribute 3 (diffuse, `0x1530`)
+landed in attribute 4. The race pages' screen copy (op ~1721: the scene
+`0x01980000` into the exposure surface `0x02880000`, fragment program
+`0x0FFFFD41` = `tex0 x col0`, attribute 3 array disabled) then took the
+constant left by the previous frame's last UI panel, `(0,0,0,0.7)`, and the
+copy, the exposure chain and the composite were black. RPCS3's capture has
+`diff_color = (1,1,1,1)` for the same draw. After the fix the Daytona pit
+shows behind Race Mode (29-30 fps), the starting grid shows sky and
+horizon, the Ferrari dealer page is unchanged (27 fps).
+`RSX_VDATA3F_STRIDE12=1` for the old decode.
+
+**The scene was never black.** A capture 40 s into the page
+(`RSX_CAP_AFTER=PitSceneRoot,40000`, new) shows `0x01980000` with the whole
+pit drawn; only `0x02880000` and the display were black. The reading below
+("k2 about 550 times too small") came from a capture taken in the first
+seconds, while the page fades in: `k2` is the title's exposure global
+`0x015FA284` (pointer at `0x012894E8`), written each frame on thread 21 by
+two exposure modes (`0x007131F8`, w = 0, and `0x007132C0`, w = f/e[0x1C],
+chosen per view by `0x00811B90` in `0x00715550`) from `e.rgb`
+(`object+0xB30`, set by `0x00705078` via `0x00712B18`), which fades in as
+n^4 over about 6 s and then follows the camera (2 to 5.7). Ours uploads
+mode B's value (0.75, 15) at steady state where RPCS3's draw has mode A's
+(0.0496, 0); not investigated further, since the picture now matches.
+
+**Still open:** the starting grid has no ground or track below the horizon,
+and the race load stops after `QuickArcadeRoot` at 1 fps with the
+`[ppu] bctr to NULL` calls from `0x0080EF74` (Phase 66).
+
+New diagnostics:
+
+- `PPU_WWATCH_AFTER=<milestone>`: arm the store watch only from that screen.
+- `PPU_WWATCH_REGS=<n>,...`: print those GPRs on each `[ww]` line.
+- `PPU_WWATCH_PEEK=<ea>[,<words>]`: print those words on each `[ww]` line.
+  - `PPU_WWATCH_PEEK_REG=<n>`: the ea is relative to a GPR.
+  - `PPU_WWATCH_PEEK_DEREF=1`: through the pointer the GPR holds.
+- `PPU_GUARD_LINE=1`, `PPU_GUARD_MAX`, `PPU_GUARD_SKIP_LR=<lr>,...`,
+  `PPU_GUARD_AFTER=<milestone>`: page-guard reports for the watched line only,
+  with the line after each write.
+- `PPU_GUARD_LATE=<ea>`: arm the guard on the first watched write after
+  `PPU_WWATCH_AFTER`. A guard armed from boot (`PPU_GUARD_EA`) on a busy page
+  slows the menus to 11 fps, and scripted presses then miss.
+- `RSX_CAP_AFTER=<milestone>,<ms>`: capture only that long after a screen
+  opens.
+- The manifest prints `a3=<format>/(<constant>)` for attribute 3.
+- `RSX_VDATA_TRACE=<milestone>`, with `_RARE`, `_A3`, `_MS`, `_MAX`: trace
+  the constant vertex-data writes.
+- `scratch/rdoc_vsall.py` (every post-VS output of the last draws) and
+  `scratch/rdoc_disasm.py` (a draw's shaders and inputs).
 
 **Reported:** Daytona's Race Mode page and the starting grid show black
 where the track should be.
@@ -66,8 +120,8 @@ code as the race load's `bctr to NULL` calls. New switches:
 `SPU_PUTWATCH=<ea>[,<n>]` (+`_DELAY=<ms>`), `PPU_WWATCH_STACK_NZ=1`,
 `PPU_WWATCH_STACK_FN=<fn>`. On this page no SPU writes that word.
 
-Next: where 0x832588's caller gets the four floats (Ghidra on 0x832588 and
-0x833848), then what feeds them.
+Next (superseded above): where 0x832588's caller gets the four floats
+(Ghidra on 0x832588 and 0x833848), then what feeds them.
 
 ## Phase 67 - The movie played out, the window's own thread, a two-column settings page (2026-10-17)
 
