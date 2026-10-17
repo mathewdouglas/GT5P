@@ -117,6 +117,12 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.keyboard ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.keyboard = v != 0; },
           [](int v) { pad_set_keyboard_enabled(v); } },
+        { L"GAME", L"Skip opening movie",
+          L"Press through the opening movie as soon as it starts. It only plays when the TV "
+          L"content is installed.",
+          "PAD_SKIP_MOVIE", kOnOff,
+          [](const Gt5pSettings& s) { return s.skip_movie ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.skip_movie = v != 0; }, nullptr },
         { L"PERFORMANCE", L"Frame clock",
           L"The vblank the game paces its frames to. 59.94 Hz is the console's (30 fps at "
           L"most). 62.5 Hz allows 31 fps, but a frame that just misses two vblanks drops to 20.",
@@ -142,8 +148,13 @@ const std::vector<Item>& items()
     return v;
 }
 
-const int kW = 660, kH = 712;   /* fits a 1280 x 720 window */
-const int kTop = 70, kRowH = 30, kSectionH = 26, kValX = 400;
+/* Two columns, VIDEO on the left and the other sections on the right; the
+ * "Restart now" and "Close" rows span both underneath. Fits 1280 x 720. */
+const int kColW = 520, kGap = 16, kMargin = 18;
+const int kW = 2 * kMargin + 2 * kColW + kGap, kH = 560;
+const int kTop = 70, kRowH = 30, kSectionH = 26, kValOff = 360;   /* value area, from a column's left */
+
+int column_of(const wchar_t* section) { return wcscmp(section, L"VIDEO") ? 1 : 0; }
 
 HWND s_game, s_wnd;
 bool s_open;
@@ -172,20 +183,30 @@ std::vector<int> rows()
     return r;
 }
 
-/* Layout: top y of each row, with section headers in between. */
-std::vector<int> row_tops(const std::vector<int>& r)
+/* Layout: where each row sits, with section headers above the first row of
+ * each section in its column. `head` is set on a row that starts a section. */
+struct Slot { int x0, x1, y; bool head; };
+std::vector<Slot> layout(const std::vector<int>& r)
 {
-    std::vector<int> y;
-    int at = kTop;
-    const wchar_t* sec = nullptr;
-    bool first_action = true;
+    std::vector<Slot> out;
+    int col_y[2] = { kTop, kTop };
+    const wchar_t* sec[2] = { nullptr, nullptr };
+    int at = -1;
     for (int id : r) {
-        if (id >= 0 && items()[id].section != sec) { sec = items()[id].section; at += kSectionH; }
-        if (id < 0 && first_action) { at += 14; first_action = false; }
-        y.push_back(at);
-        at += kRowH;
+        if (id >= 0) {
+            const wchar_t* s = items()[id].section;
+            const int c = column_of(s), x0 = kMargin + c * (kColW + kGap);
+            const bool head = s != sec[c];
+            if (head) { sec[c] = s; col_y[c] += kSectionH; }
+            out.push_back({ x0, x0 + kColW, col_y[c], head });
+            col_y[c] += kRowH;
+        } else {
+            if (at < 0) at = (col_y[0] > col_y[1] ? col_y[0] : col_y[1]) + 14;
+            out.push_back({ kMargin, kW - kMargin, at, false });
+            at += kRowH;
+        }
     }
-    return y;
+    return out;
 }
 
 int choice_index(const Item& it)
@@ -282,42 +303,38 @@ void paint(HDC dc)
     text(dc, fHelp, kW - 28, 26, RGB(120, 126, 140), L"F1 or PS button to close", TA_RIGHT);
 
     const std::vector<int> r = rows();
-    const std::vector<int> y = row_tops(r);
+    const std::vector<Slot> sl = layout(r);
     if (s_sel >= (int)r.size()) s_sel = (int)r.size() - 1;
-    const wchar_t* sec = nullptr;
     for (size_t i = 0; i < r.size(); i++) {
-        const int id = r[i], top = y[i];
+        const int id = r[i], top = sl[i].y, x0 = sl[i].x0, x1 = sl[i].x1, vx = x0 + kValOff;
         const bool sel = (int)i == s_sel;
-        if (id >= 0 && items()[id].section != sec) {
-            sec = items()[id].section;
-            text(dc, fSmall, 30, top - kSectionH + 8, RGB(110, 118, 135), sec);
-        }
-        if (sel) rounded(dc, 18, top, kW - 18, top + kRowH - 4, 8, RGB(38, 74, 132));
+        if (sl[i].head) text(dc, fSmall, x0 + 12, top - kSectionH + 8, RGB(110, 118, 135), items()[id].section);
+        if (sel) rounded(dc, x0, top, x1, top + kRowH - 4, 8, RGB(38, 74, 132));
         if (id == kRowRestart) {
-            text(dc, fRow, 30, top + 6, RGB(255, 210, 120), L"Restart now to apply");
+            text(dc, fRow, x0 + 12, top + 6, RGB(255, 210, 120), L"Restart now to apply");
             continue;
         }
         if (id == kRowClose) {
-            text(dc, fRow, 30, top + 6, RGB(220, 224, 232), L"Close");
+            text(dc, fRow, x0 + 12, top + 6, RGB(220, 224, 232), L"Close");
             continue;
         }
         const Item& it = items()[id];
         const bool over = gt5p_settings_overridden(it.env);
         const bool later = !it.apply && !over && it.get(s_edit) != it.get(s_boot);
-        text(dc, fRow, 30, top + 6, over ? RGB(130, 134, 145) : RGB(225, 228, 236), it.label);
+        text(dc, fRow, x0 + 12, top + 6, over ? RGB(130, 134, 145) : RGB(225, 228, 236), it.label);
         std::wstring val = it.choices[choice_index(it)].label;
         COLORREF vc = over ? RGB(130, 134, 145) : RGB(255, 255, 255);
-        text(dc, fRow, (kValX + kW - 30) / 2, top + 6, vc, val, TA_CENTER);
-        text(dc, fRow, kValX, top + 6, sel ? RGB(170, 200, 255) : RGB(80, 86, 100), L"‹");
-        text(dc, fRow, kW - 30, top + 6, sel ? RGB(170, 200, 255) : RGB(80, 86, 100), L"›", TA_RIGHT);
-        if (later) text(dc, fSmall, kValX - 12, top + 9, RGB(255, 190, 90), L"after restart", TA_RIGHT);
-        else if (over) text(dc, fSmall, kValX - 12, top + 9, RGB(150, 150, 160),
+        text(dc, fRow, (vx + x1 - 12) / 2, top + 6, vc, val, TA_CENTER);
+        text(dc, fRow, vx, top + 6, sel ? RGB(170, 200, 255) : RGB(80, 86, 100), L"‹");
+        text(dc, fRow, x1 - 12, top + 6, sel ? RGB(170, 200, 255) : RGB(80, 86, 100), L"›", TA_RIGHT);
+        if (later) text(dc, fSmall, vx - 12, top + 9, RGB(255, 190, 90), L"after restart", TA_RIGHT);
+        else if (over) text(dc, fSmall, vx - 12, top + 9, RGB(150, 150, 160),
                             L"set by " + widen(it.env), TA_RIGHT);
     }
 
     /* The selected item's help, the last status, the controls. */
     const int hy = kH - 108;
-    fill(dc, 18, hy - 8, kW - 18, hy - 7, RGB(40, 44, 54));
+    fill(dc, kMargin, hy - 8, kW - kMargin, hy - 7, RGB(40, 44, 54));
     if (s_sel >= 0 && s_sel < (int)r.size() && r[s_sel] >= 0) {
         RECT rc = { 30, hy, kW - 30, hy + 44 };
         HGDIOBJ o = SelectObject(dc, fHelp);
@@ -334,7 +351,8 @@ void paint(HDC dc)
 /* ---- window ---- */
 
 /* Centre the page over the game. Only when it moved, and asynchronously:
- * the game window belongs to the present thread, and a synchronous
+ * the game window belonged to the present thread (with RSX_WINDOW_THREAD=0
+ * it still does), and a synchronous
  * SetWindowPos every tick waited on it whenever the game was busy (a shader
  * compile), freezing the page for seconds. An owned window stays above its
  * owner, so the z-order is left alone. */
@@ -413,11 +431,12 @@ LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_LBUTTONDOWN: {
         const int mx = GET_X_LPARAM(l), my = GET_Y_LPARAM(l);
         const std::vector<int> r = rows();
-        const std::vector<int> y = row_tops(r);
+        const std::vector<Slot> sl = layout(r);
         for (size_t i = 0; i < r.size(); i++)
-            if (my >= y[i] && my < y[i] + kRowH - 4) {
+            if (my >= sl[i].y && my < sl[i].y + kRowH - 4 && mx >= sl[i].x0 && mx < sl[i].x1) {
                 s_sel = (int)i;
-                if (r[i] < 0 || mx >= kValX) activate(r[i] >= 0 && mx < (kValX + kW - 30) / 2 ? -1 : +1);
+                const int vx = sl[i].x0 + kValOff;
+                if (r[i] < 0 || mx >= vx) activate(r[i] >= 0 && mx < (vx + sl[i].x1 - 12) / 2 ? -1 : +1);
                 break;
             }
         InvalidateRect(h, NULL, FALSE);

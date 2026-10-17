@@ -9,6 +9,63 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 67 - The movie played out, the window's own thread, a two-column settings page (2026-10-17)
+
+**Reported:** (1) the game does not load if the opening movie plays to its
+end: the logo stays, nothing loads, no freeze; (2) clicking the window or
+giving it focus pauses the picture (sound goes on), and holding the title bar
+keeps it paused; (3) a skip-movie setting, the settings page in two columns;
+(4) staying long on a dealer page froze it, with SPU lanes at 100% in F3.
+
+**(1) The movie.** Reproduced with the TV content visible (`FS_HIDE=` empty):
+`MovieRoot` at 11 s, the movie to about 150 s, then the logo at 4 draws a
+frame for good; main joins two movie threads that never end.
+
+- First reading, half right: 8,370 AUs went into the video decoder and 8,365
+  pictures came out. FFmpeg keeps its reorder depth of frames until it is
+  told the stream is over, and the H.264 errors at the very end
+  (`Frame num change`) cost one more. The console's decoder hands out a
+  picture per AU. `cellVdec.c` now drains the decoder after 500 ms with
+  nothing sent and pictures owed, and stands in for any still missing with
+  black pictures carrying their AUs' timestamps (`VDEC_IDLE_DRAIN=<ms>`,
+  0 off); an AU ending in an end-of-sequence or end-of-stream NAL drains at
+  once (`VDEC_EOS_DRAIN=0`; this movie has none). Measured: 4 drained, 1
+  stood in for. The title still stopped.
+- The cause: at the end the player calls `cellDmuxResetStream` (never
+  `FlushEs`) and waits for its answer, a `DEMUX_DONE`. The demuxer sent one
+  only when the reset cut a chunk short; after the last chunk it was idle,
+  so nothing came. Skipping worked because that reset lands mid-chunk. A
+  reset is now always answered (`DMUX_RESET_DONE=0` for the old rule). After:
+  the menu loads at 153 s, at 30 fps. `DMUX_TRACE` now also prints
+  `FlushEs`, `ResetStream`, `DisableEs` and every ES message but AU_FOUND.
+
+**(3) Skip opening movie.** `PAD_SKIP_MOVIE=<milestone>` (cellPad.c) presses
+Cross on port 0 two seconds after that screen's file is first read, again
+every two seconds (at most four), until a newer milestone appears; settings
+"Skip opening movie" (`[game] skip_movie`, off by default) sets it to
+`MovieRoot`. Measured: the menu at 16.4 s against 153 s. The settings page is
+two columns now (VIDEO left; INPUT, GAME, PERFORMANCE, DEBUG right; Restart
+and Close under both), 1092 x 560; Up/Down run down the left column and on
+into the right. `scratch/setshot.ps1` captures it.
+
+**(2) The pause.** The game window belonged to the thread that runs the
+vblank clock and walks the FIFO, which also pumped its messages. A press on
+the title bar puts the pumping thread into Windows' modal move loop until the
+button comes up: no vblanks, no frames. The window now has a thread of its
+own that only pumps (`RSX_WINDOW_THREAD=0` for the old way); the title text
+goes to it by a posted message. `scratch/movetest.ps1` holds the move loop
+12 s by posting `SC_MOVE`: 151 frames per 5 s throughout with the thread,
+9 in one 5 s window without.
+
+**(4) Not reproduced.** Ten Right presses on the manufacturer list and over
+three minutes there, then four minutes on the Ferrari page (21 to 29 fps):
+no stall. Lanes at 100% with no picture is the ring-space deadlock still open
+from Phase 65 (about 1 visit in 10), which needs no long stay. A game started
+by hand had its stall dump on a console or nowhere: the dump now also goes to
+`logs\stall-<date>-<time>.log` unless stderr is a file already
+(`GT5P_STALL_LOG=0` off; `logs/` is gitignored). Checked on the race-load
+stall: 30 KB written.
+
 ## Phase 66 - A track: the Daytona freeze, and resumed SPU jobs (2026-10-17)
 
 **Reported:** with a car bought, the menu opens on News, and loading a

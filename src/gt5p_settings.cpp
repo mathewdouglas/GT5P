@@ -38,7 +38,7 @@ bool         g_enabled = false;
 const char* const kEnvNames[] = {
     "GT5P_RESOLUTION", "RSX_MSAA", "RSX_PRESENT_SYNC", "RSX_SHADER_CACHE", "GT5P_SHADER_INDICATOR",
     "PAD_NO_SDL", "PAD_NO_KEYBOARD", "PS3_VERBOSE",
-    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3", "RSX_SHADER_ASYNC",
+    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3", "RSX_SHADER_ASYNC", "PAD_SKIP_MOVIE",
 };
 bool g_env_set[sizeof kEnvNames / sizeof kEnvNames[0]];
 
@@ -188,6 +188,7 @@ bool known_key(std::string_view section, std::string_view key)
         {"video", "vsync"},          {"video", "shader_cache"},
         {"video", "shader_indicator"}, {"video", "shader_precompile"},
         {"input", "sdl_controllers"}, {"input", "keyboard"},
+        {"game", "skip_movie"},
         {"performance", "vblank_hz"}, {"performance", "lane_pinning"},
         {"performance", "fifth_spu_lane"},
         {"performance", "lane_cores"},   /* the old key (off by default then): read no more */
@@ -226,6 +227,7 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
     read_bool(tbl["video"]["shader_precompile"], "video.shader_precompile", s.shader_precompile);
     read_bool(tbl["input"]["sdl_controllers"], "input.sdl_controllers", s.sdl_controllers);
     read_bool(tbl["input"]["keyboard"], "input.keyboard", s.keyboard);
+    read_bool(tbl["game"]["skip_movie"], "game.skip_movie", s.skip_movie);
     read_vblank(tbl["performance"]["vblank_hz"], s.vblank_hz100);
     read_lane_cores(tbl["performance"]["lane_pinning"], s.lane_cores);
     read_bool(tbl["performance"]["fifth_spu_lane"], "performance.fifth_spu_lane", s.fifth_spu_lane);
@@ -247,6 +249,8 @@ void apply_env(const Gt5pSettings& s)
     /* The pad switches test for presence, so only the "off" case sets one. */
     if (!s.sdl_controllers) set_default_env("PAD_NO_SDL", "1");
     if (!s.keyboard)        set_default_env("PAD_NO_KEYBOARD", "1");
+    /* The screen whose first read starts the presses (cellPad.c). */
+    if (s.skip_movie)       set_default_env("PAD_SKIP_MOVIE", "MovieRoot");
     if (s.verbose_log >= 0) set_default_env("PS3_VERBOSE", s.verbose_log ? "1" : "0");
     set_default_env("GT5P_VBLANK_HZ", s.vblank_hz100 == 6250 ? "62.5" : "59.94");
     set_default_env("SPURS_LANE_PIN", s.lane_cores == 2 ? "2" : s.lane_cores == 1 ? "1" : "0");
@@ -269,6 +273,7 @@ void reflect_env(Gt5pSettings& s)
     if (const char* e = getenv("RSX_SHADER_ASYNC")) s.shader_precompile = e[0] == '1';
     s.sdl_controllers = getenv("PAD_NO_SDL") == nullptr;
     s.keyboard        = getenv("PAD_NO_KEYBOARD") == nullptr;
+    { const char* e = getenv("PAD_SKIP_MOVIE"); s.skip_movie = e && *e && strcmp(e, "0") != 0; }
     if (const char* e = getenv("PS3_VERBOSE")) s.verbose_log = (e[0] && e[0] != '0') ? 1 : 0;
     if (const char* e = getenv("GT5P_VBLANK_HZ")) s.vblank_hz100 = atof(e) > 62.0 ? 6250 : 5994;
     if (const char* e = getenv("SPURS_LANE_PIN")) s.lane_cores = atoi(e) >= 2 ? 2 : atoi(e) == 1 ? 1 : 0;
@@ -337,6 +342,11 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "sdl_controllers = " << (s.sdl_controllers ? "true" : "false") << "\n"
          "# Keyboard as controller 1 when none is connected. [PAD_NO_KEYBOARD]\n"
          "keyboard = " << (s.keyboard ? "true" : "false") << "\n"
+         "\n"
+         "[game]\n"
+         "# Skip the opening movie (it plays only when the TV content is installed):\n"
+         "# Cross is pressed for you once it starts. [PAD_SKIP_MOVIE]\n"
+         "skip_movie = " << (s.skip_movie ? "true" : "false") << "\n"
          "\n"
          "[performance]\n"
          "# The game paces its frames to the vblank. 59.94 is the console's rate\n"

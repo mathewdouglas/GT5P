@@ -31,6 +31,9 @@ struct Gt5pSettings {
     bool sdl_controllers = true;    /* PlayStation / Switch / generic pads via SDL2.dll */
     bool keyboard        = true;    /* keyboard as pad 1 when no controller is connected */
 
+    /* [game] */
+    bool skip_movie = false;    /* press through the opening movie (PAD_SKIP_MOVIE) */
+
     /* [performance] */
     int vblank_hz100 = 5994;    /* the vblank clock, in 1/100 Hz: 5994 (console) or 6250 */
     int lane_cores   = 2;       /* SPU render lanes on cores of their own: 0 off, 1 hint, 2 strict */

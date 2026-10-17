@@ -22,6 +22,9 @@
 #include <stdlib.h>
 #include <windows.h>
 #include <tlhelp32.h>
+#include <io.h>          /* _dup2: the stall dump's log file */
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #include "ppu_context.h"
 #include "sys_ppu_thread.h"
@@ -519,6 +522,29 @@ static void stall_dump_check(unsigned presents_total)
     /* At 3 s, and again at 8 s: whether the lanes' step counts moved. */
     if (dumped >= 2 || presents_total < 200 || now - last_ms < (dumped ? 8000u : 3000u)) return;
     dumped++;
+    /* GT5P_STALL_LOG (on; =0 off): a game started by hand has its stderr on
+     * a console or nowhere, so a freeze someone reports came with no dump.
+     * Unless stderr is already a file, the dump goes to
+     * logs\stall-<date>-<time>.log under the working directory (the project
+     * root) as well: stderr's descriptor points there for its length. */
+    static int to_file = -1;
+    if (to_file < 0) {
+        const char* e = getenv("GT5P_STALL_LOG");
+        to_file = !(e && *e == '0') && GetFileType(GetStdHandle(STD_ERROR_HANDLE)) != FILE_TYPE_DISK;
+    }
+    static char path[MAX_PATH] = "";
+    int saved = -1, fd = -1;
+    if (to_file) {
+        if (!path[0]) {
+            SYSTEMTIME st; GetLocalTime(&st);
+            CreateDirectoryA("logs", NULL);
+            snprintf(path, sizeof path, "logs\\stall-%04u%02u%02u-%02u%02u%02u.log",
+                     st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        }
+        fflush(stderr);
+        fd = _open(path, _O_WRONLY | _O_CREAT | _O_APPEND | _O_BINARY, _S_IREAD | _S_IWRITE);
+        if (fd >= 0) { saved = _dup(2); if (saved < 0 || _dup2(fd, 2) != 0) { if (saved >= 0) _close(saved); saved = -1; } }
+    }
     fprintf(stderr, "[stall] no present for %llu ms after %u presents\n",
             (unsigned long long)(now - last_ms), presents_total);
     dump_threads_now(1);
@@ -526,6 +552,13 @@ static void stall_dump_check(unsigned presents_total)
     spurs_pm_debug_dump();
     cellGcm_debug_dump();
     fflush(stderr);
+    if (saved >= 0) { _dup2(saved, 2); _close(saved); }
+    if (fd >= 0) {
+        _close(fd);
+        fprintf(stderr, "[stall] dump written to %s\n", path);
+        printf("[GT5P] the game stopped drawing; details in %s\n", path);
+        fflush(stdout);
+    }
 }
 
 extern "C" void gt5p_start_profview(void);

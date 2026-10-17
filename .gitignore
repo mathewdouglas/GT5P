@@ -127,3 +127,6 @@ third_party/
 
 # Player settings, written beside the game on first run
 gt5p_settings.toml
+
+# Stall dumps written by a game started by hand (gt5p_present.cpp)
+logs/

@@ -527,6 +527,15 @@ Each corrects the one before.
   (`--resume-funcs`, `SPU_RESUME_SEEDS=0` to lift without). Open: the track
   behind the race menus is black, and the race load stops after
   `[ppu] bctr to NULL` calls (Phase 66).
+- **Phase 67:** the opening movie played to its end now lets the game go
+  on: a demuxer reset is always answered with DEMUX_DONE
+  (`DMUX_RESET_DONE=0`), and the video decoder gives a picture per AU
+  (`VDEC_IDLE_DRAIN`, `VDEC_EOS_DRAIN`). "Skip opening movie" in settings
+  (`PAD_SKIP_MOVIE=MovieRoot`). The game window has its own message thread,
+  so dragging or clicking it no longer stops the picture
+  (`RSX_WINDOW_THREAD=0` undoes it). The settings page is two columns. A
+  stall dump from a game started by hand goes to `logs\stall-*.log`
+  (`GT5P_STALL_LOG=0`): ask for that file when someone reports a freeze.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
