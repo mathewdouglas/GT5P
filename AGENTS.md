@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18)
+## Start here: state of play (2026-10-18, Phase 73)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 72 is the latest).
+has the evidence, newest phase first (Phase 73 is the latest).
 
 ### What works now
 
@@ -58,6 +58,21 @@ has the evidence, newest phase first (Phase 72 is the latest).
 
 ### Open work, in the order the user left it
 
+0. **Phase 73 (2026-10-18), read it first.** The race start froze every
+   time; fixed in the walker (11 of 12 races clean at 1080p). The user's
+   four reports, by state:
+   - **1080p menu black slab**: found by RenderDoc to be tree cards drawn
+     with no alpha test. Likely the alpha-to-coverage stand-in requires
+     the AA-enable bit, and the title clears it at 1080p. Run
+     `RSX_A2CDBG=1` at 1080p and at 720p to confirm, then fix
+     `rsx_alpha_ctl`.
+   - **Dealer floor reflects the menu's trees**: re-check after the slab
+     fix.
+   - **Race crowd smeared**: not started (it is bad at 720p too).
+   - **Race freeze and noise**: fixed, except for a rarer second shape
+     (Phase 73, "Open").
+   Test at the user's settings: `GT5P_RESOLUTION=1080p RSX_MSAA=2`. Drive
+   into the race with `"PAD_HOLD=$DaytonaHold,$DaytonaRaceHold,$DaytonaStartHold"`.
 1. **Texture-load warning (promised to the user, not started).** When a
    texture cannot be read, show an on-screen badge like "Compiling shaders"
    and log a line. Cases: an unmapped address, an unsupported format, slot

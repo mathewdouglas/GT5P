@@ -70,6 +70,31 @@ restored file (`os.utime`). After any instrumented run, grep the log for
 test scripts can run at 1080p (`GT5P_RESOLUTION=1080p RSX_MSAA=2` is the
 user's setup).
 
+**The 1080p menu's black slab: found, not fixed.** Reproduced 2 of 2 at
+1080p (`roundtrip.ps1 -NoArcade GT5P_RESOLUTION=1080p RSX_MSAA=2`), never at
+720p; `RSX_MSAA_FORCE=0` does not remove it. No target eviction or slot
+exhaustion (9 targets), and every `RT_TEXDBG` match was legitimate.
+- RenderDoc (`scratch/rdoc/slab_frame4278.rdc`, scene target id 2256):
+  at a slab pixel, event 1612 draws the sky; then event 1945, a tree card
+  (512x512 BC3 tree with half its texels at alpha 0), writes (0,0,0,0)
+  with depth on, blend off and the generated alpha test not enabled. The
+  next tree layer (2009) then fails its depth test there.
+- `rsx_alpha_ctl` stands in for alpha-to-coverage with an alpha test at
+  one half only when `SET_ANTI_ALIASING_CONTROL` (`0x1D7C`) has both bit 0
+  (AA on) and bit 4 (A2C). Hypothesis: at 1080p the title turns AA off
+  (bit 0 clear) and leaves A2C set, so the trees get no test at all.
+- Next: `RSX_A2CDBG=1` (new, ps3recomp, built but not yet run) prints each
+  distinct control word with the alpha test state. If 1080p shows bit 4
+  without bit 0, apply the stand-in on bit 4 alone. A single-sample
+  target's one sample is then covered only when alpha >= 0.5, as the
+  hardware does. Then check the dealer floor's tree reflection again: it
+  may be the same tree cards seen through the reflection, not a stale
+  target.
+
+**Not started:** the race crowd (dark vertical smears drawn over the fence
+and banner, at 720p too, so not resolution-specific; check whether it is
+the same A2C path), and the texture-load warning badge.
+
 **Tools:** `scripts/diag/ringtrace_hook.py` traces `b01376080`'s ring
 allocations and job ends into `spurs_ring_trace` (ps3recomp
 `spurs_policy.c`); the stall dump prints each render lane's last 512.
