@@ -16180,7 +16180,7 @@ index acbaf12..cc5abca 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index e73a151..f3f056c 100644
+index e73a151..9fe553d 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -20,6 +20,7 @@
@@ -16217,7 +16217,15 @@ index e73a151..f3f056c 100644
  
  
  #include <stdint.h>
-@@ -1050,7 +1061,9 @@ static volatile uint32_t  s_guard_ea   = 0;   /* guest ea being watched */
+@@ -798,6 +809,7 @@ extern "C" void spu_coh_notify_write(uint32_t addr);
+  * lock is cheap enough; shard by address later if it shows up in a profile.
+  * -----------------------------------------------------------------------*/
+ extern "C" PPU_THREAD_LOCAL ppu_context* g_active_ctx;   /* fwd (defined below) */
++extern "C" int ppu_thread_stack_owner(uint32_t ea, char* name, size_t n);
+ #define PPU_RESV_MAX 128
+ #define PPU_RESV_INVALID 0x100000000ull   /* out of (uint32_t) ea range */
+ static ppu_context* g_resv_ctxs[PPU_RESV_MAX];
+@@ -1050,7 +1062,9 @@ static volatile uint32_t  s_guard_ea   = 0;   /* guest ea being watched */
   * block-scope plain declaration would mangle as C++ and fail to link. */
  extern "C" void ppu_guest_callstack(const char* tag);
  
@@ -16227,7 +16235,7 @@ index e73a151..f3f056c 100644
  static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
  {
      /* Re-entrancy guard. The handler logs with fprintf, and if the guarded page
-@@ -1070,10 +1083,42 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
+@@ -1070,10 +1084,42 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
          if (tgt >= s_guard_page && tgt < s_guard_page + 0x1000) {
              uint32_t guest = (uint32_t)(tgt - (uintptr_t)vm_base);
              char* mbase = (char*)GetModuleHandleA(NULL);
@@ -16271,7 +16279,7 @@ index e73a151..f3f056c 100644
                        (guest == s_guard_ea) ? "  <<< watched addr!" : ""); }
              /* On the watched word specifically, dump the guest call stack: with a
               * memset-style clear the writer is always the same memcpy body, and
-@@ -1129,6 +1174,13 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
+@@ -1129,6 +1175,13 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
          }
      }
      if (code == EXCEPTION_SINGLE_STEP && s_guard_page) {
@@ -16285,7 +16293,7 @@ index e73a151..f3f056c 100644
          { uint32_t nowv = __builtin_bswap32(*(volatile uint32_t*)(vm_base + s_guard_ea));
            if (s_guard_pre && !nowv) {
                static int _z = 0;
-@@ -1316,7 +1368,19 @@ static int vm_null_store_report(uint32_t a, uint32_t v, int width, void* ra)
+@@ -1316,7 +1369,19 @@ static int vm_null_store_report(uint32_t a, uint32_t v, int width, void* ra)
        { static uint32_t last_fn = 0; uint32_t fn = ppu_prof_resolve_host(ra);
          if (i < NW_MAX && fn != last_fn && g_active_ctx) {
              last_fn = fn; ppu_dump_guest_stack(g_active_ctx, "nw"); } }
@@ -16306,7 +16314,7 @@ index e73a151..f3f056c 100644
      return 1;
  }
  
-@@ -1517,7 +1581,69 @@ static inline void ppu_null_read_report(uint32_t a, int width, void* ra)
+@@ -1517,7 +1582,69 @@ static inline void ppu_null_read_report(uint32_t a, int width, void* ra)
      fflush(stderr);
  }
  
@@ -16377,7 +16385,7 @@ index e73a151..f3f056c 100644
      if ((uint32_t)a < 0x10000u) ppu_null_read_report((uint32_t)a, 1, __builtin_return_address(0));
  #ifdef VM_SAMPLE_READS
      { static uint64_t c=0; if ((++c % 2000000ull)==0) fprintf(stderr, "[sample] read8  0x%08X ra0=%p ra1=%p\n", (uint32_t)a, __builtin_return_address(0), __builtin_return_address(1)); }
-@@ -1553,11 +1679,24 @@ uint8_t  vm_read8 (uint64_t a) { if (vm_oob((uint32_t)a,1)) return 0; vm_hotmap(
+@@ -1553,11 +1680,24 @@ uint8_t  vm_read8 (uint64_t a) { if (vm_oob((uint32_t)a,1)) return 0; vm_hotmap(
            n=0; } }
        else { last=(uint32_t)a; n=0; } }
      return vm_base[(uint32_t)a]; }
@@ -16404,7 +16412,7 @@ index e73a151..f3f056c 100644
      if ((uint32_t)a < 0x10000u) ppu_null_read_report((uint32_t)a, 4, __builtin_return_address(0));
      /* Raw SPU problem state: reading the outbound mailbox POPS it, so that one
       * cannot be served out of memory. Everything else in the window the SPU
-@@ -1670,7 +1809,13 @@ uint32_t vm_read32(uint64_t a) { if (vm_oob((uint32_t)a,4)) return 0; ppu_rwatch
+@@ -1670,7 +1810,13 @@ uint32_t vm_read32(uint64_t a) { if (vm_oob((uint32_t)a,4)) return 0; ppu_rwatch
        } }
        else { last=(uint32_t)a; n=0; } }
      return __builtin_bswap32(v); }
@@ -16419,7 +16427,7 @@ index e73a151..f3f056c 100644
      if ((uint32_t)a < 0x10000u) ppu_null_read_report((uint32_t)a, 8, __builtin_return_address(0)); uint64_t v; memcpy(&v, vm_base + (uint32_t)a, 8);
  #ifdef VM_SAMPLE_READS
      { static uint64_t c=0; if ((++c % 2000000ull)==0) fprintf(stderr, "[sample] read64 0x%08X\n", (uint32_t)a); }
-@@ -1731,6 +1876,21 @@ static void ww_arm_inline_window(uint32_t ww)
+@@ -1731,6 +1877,21 @@ static void ww_arm_inline_window(uint32_t ww)
      g_ww_lo = ww & ~15u;
      g_ww_hi = (ww & ~15u) + len;
  }
@@ -16441,7 +16449,7 @@ index e73a151..f3f056c 100644
  static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra)
  {
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
-@@ -1790,7 +1950,23 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1790,7 +1951,23 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
        if (!s_wwlen) { const char* e2 = getenv("PPU_WWATCH_LEN");
                        s_wwlen = e2 ? (uint32_t)strtoul(e2,0,0) : 0x20;
                        if (s_wwlen < 0x20) s_wwlen = 0x20; }
@@ -16466,7 +16474,7 @@ index e73a151..f3f056c 100644
            /* PPU_WW_GUARD=1: once the watched word is first SET, page-guard it.
             * The store watch only sees lifted guest stores -- a host-side memset
             * or an atomic clears a field invisibly. flOw loses its render config
-@@ -1798,7 +1974,15 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1798,7 +1975,15 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
             * between. A page guard catches the writer whatever it is. */
            { static int _g = -1;
              if (_g < 0) { const char* e3 = getenv("PPU_WW_GUARD"); _g = e3 ? 1 : 0; }
@@ -16483,7 +16491,7 @@ index e73a151..f3f056c 100644
                  static int _armed = 0;
                  if (!_armed) { _armed = 1;
                      fprintf(stderr, "[GUARD] arming after first set of 0x%08X = 0x%X\n", a, v);
-@@ -1814,6 +1998,21 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1814,6 +1999,21 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
             * -- is dropped without a word. It produced four separate wrong
             * "nothing writes this field" conclusions in one debugging session.
             * Say so when the cap is reached, and let it be raised. */
@@ -16505,7 +16513,7 @@ index e73a151..f3f056c 100644
            static long _n = 0;
            static long _cap = -1;
            if (_cap < 0) { const char* e = getenv("PPU_WWATCH_MAX");
-@@ -1826,15 +2025,58 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1826,15 +2026,73 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
                 * as three different guest functions. ctx->lr is written by the
                 * lifter at every direct call site, so it names the real caller. */
                extern PPU_THREAD_LOCAL ppu_context* g_active_ctx;
@@ -16541,6 +16549,21 @@ index e73a151..f3f056c 100644
 +                  for (int k = 0; k < s_wpkn && rl < (int)sizeof regs - 10; k++)
 +                      rl += snprintf(regs + rl, sizeof regs - rl, "%08X ", vm_read32(pa + 4u * k));
 +              }
++              /* PPU_WWATCH_FRAMES=<n>: and the guest back chain (each
++               * frame's sp and the return address saved for it), on the
++               * first n lines. */
++              { static int s_wf = -1; static long s_wfn = 0;
++                if (s_wf < 0) { const char* e = getenv("PPU_WWATCH_FRAMES"); s_wf = e ? atoi(e) : 0; }
++                if (s_wf && s_wfn < s_wf && g_active_ctx && rl < (int)sizeof regs - 40) {
++                    s_wfn++;
++                    uint32_t sp = (uint32_t)g_active_ctx->gpr[1];
++                    rl += snprintf(regs + rl, sizeof regs - rl, " frames:");
++                    for (int k = 0; k < 12 && rl < (int)sizeof regs - 24; k++) {
++                        uint32_t back = vm_read32(sp + 4);
++                        if (back <= sp || back - sp > 0x10000u) break;
++                        rl += snprintf(regs + rl, sizeof regs - rl, " %08X/%08X", back, vm_read32(back + 20));
++                        sp = back;
++                    } } }
                fprintf(stderr, "[ww] 0x%08X <- 0x%X (w%d) guest-fn=0x%08X"
 -                              " lr=0x%08X tid=%u\n",
 +                              " lr=0x%08X tid=%u%s\n",
@@ -16566,7 +16589,7 @@ index e73a151..f3f056c 100644
            } else if (_i == _cap + 1) {
                fprintf(stderr, "[ww] --- print cap %ld reached; further writes to "
                                "this window are NOT shown (raise PPU_WWATCH_MAX, "
-@@ -1857,7 +2099,13 @@ extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* r
+@@ -1857,7 +2115,13 @@ extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* r
  {
      barrier_watch_hit(ea, val, width, ra);
  }
@@ -16581,7 +16604,7 @@ index e73a151..f3f056c 100644
  #ifdef _WIN32
      /* PT detector: does this byte-write turn its word into the hunted truncated value? */
      { if(g_pt_val==-2){const char*e=getenv("PT"); g_pt_val=e?(int64_t)strtoul(e,0,16):-1;}
-@@ -1867,9 +2115,22 @@ void vm_write8 (uint64_t a, uint8_t  v) { barrier_watch_hit((uint32_t)a, v, 1, _
+@@ -1867,9 +2131,22 @@ void vm_write8 (uint64_t a, uint8_t  v) { barrier_watch_hit((uint32_t)a, v, 1, _
          else if(((uint32_t)a&3)==0 && v!=0) pt_restore(wa); /* MSB byte set non-zero = restored */ } }
  #endif
      VM_WRITE_COH(a, &v, 1); }
@@ -16606,7 +16629,7 @@ index e73a151..f3f056c 100644
  #ifdef _WIN32
      /* PT restore: a full-word store of a valid pointer (high byte set) to a
       * previously-truncated slot clears the record (that truncation was transient). */
-@@ -1882,6 +2143,10 @@ void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, _
+@@ -1882,6 +2159,10 @@ void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, _
         * are guest memory and the PPU reads most of them straight back. */
        if (spu_raw_is_reg((uint32_t)a)) spu_raw_reg_store((uint32_t)a, _v, 4); } }
  void vm_write64(uint64_t a, uint64_t v) {
@@ -16617,7 +16640,20 @@ index e73a151..f3f056c 100644
      /* PPU_WWATCH covers the 64-bit store too. It did not, which made the watch
       * blind to exactly the code that matters most for it: every bignum and
       * every 64-bit struct field is written with std, so a watch on one would
-@@ -2338,6 +2603,24 @@ static void icall_hist(ppu_context* ctx, uint32_t tgt, int phase)
+@@ -2093,6 +2374,12 @@ extern "C" void ppu_dump_guest_stack(ppu_context* ctx, const char* tag)
+             (uint32_t)ctx->gpr[28], (uint32_t)ctx->gpr[29],
+             (uint32_t)ctx->gpr[31], (uint32_t)ctx->gpr[30],
+             (uint32_t)ctx->gpr[13], (unsigned)ctx->thread_id);
++    /* Whose stack sp is on, and which host thread is running this. */
++    { char on[64]; int own = ppu_thread_stack_owner(sp, on, sizeof on);
++      fprintf(stderr, "[GSTACK:%s] sp is on the stack of tid %d \"%s\"%s; host thread %lu, ctx %p\n",
++              tag ? tag : "?", own, on,
++              own && (unsigned)own != (unsigned)ctx->thread_id ? "  <<< NOT ITS OWN" : "",
++              (unsigned long)GetCurrentThreadId(), (void*)ctx); }
+     /* The whole GPR file, four rows of eight.
+      * The summary line above picks the registers that are usually interesting,
+      * and picking them one at a time is how this grew r13, then r4/r5, then
+@@ -2338,6 +2625,33 @@ static void icall_hist(ppu_context* ctx, uint32_t tgt, int phase)
      ReleaseSRWLockExclusive(&lk);
  }
  
@@ -16636,13 +16672,22 @@ index e73a151..f3f056c 100644
 +    if (off < 0) off = getenv("PPU_NO_INDIRECT_TAIL") ? 1 : 0;
 +    ppu_fn fn = off ? (ppu_fn)0 : ppu_lookup((uint32_t)ctx->ctr);
 +    if (fn && !g_trampoline_fn) { g_trampoline_fn = (void(*)(void*))fn; return; }
++    /* An indirect jump to an address that is not a lifted entry: usually a
++     * jump-table case the lifter did not list. The jump is lost (the rest of
++     * the function, its epilogue included, never runs). Say so, per target. */
++    if (!fn) { static uint32_t seen[64]; static volatile long ns = 0;
++        uint32_t t = (uint32_t)ctx->ctr; int dup = 0;
++        for (long i = 0; i < ns && i < 64; i++) if (seen[i] == t) dup = 1;
++        if (!dup && ns < 64) { seen[ns++] = t;
++            fprintf(stderr, "[ppu] indirect tail to 0x%08X: no lifted entry there (from guest-fn 0x%08X, r1=0x%08X)\n",
++                    t, ppu_prof_resolve_host(__builtin_return_address(0)), (uint32_t)ctx->gpr[1]); } }
 +    ps3_indirect_call(ctx);
 +}
 +
  extern "C" void ps3_indirect_call(ppu_context* ctx)
  {
      static int on = -1;
-@@ -2365,6 +2648,14 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
+@@ -2365,6 +2679,14 @@ extern "C" void ps3_indirect_call(ppu_context* ctx)
      }
  }
  
@@ -16657,7 +16702,36 @@ index e73a151..f3f056c 100644
  static void ps3_indirect_call_impl(ppu_context* ctx)
  {
      g_active_ctx = ctx;
-@@ -2639,11 +2930,20 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2539,7 +2861,27 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+                           (uint32_t)ctx->gpr[12]);
+               /* ...and who made it, once per thread: lr only names the last
+                * direct call, which is usually the lwmutex around the real one. */
+-              if (s_n == 0) ppu_dump_guest_stack(ctx, "nc");
++              if (s_n == 0) {
++                  /* Whose stack is r1 on? A thread running on another's
++                   * stack tramples that thread's frames. */
++                  char on[64]; int own = ppu_thread_stack_owner((uint32_t)ctx->gpr[1], on, sizeof on);
++                  fprintf(stderr, "[null-call] tid=%u sp=0x%08X is on the stack of tid %d \"%s\"%s\n",
++                          (unsigned)ctx->thread_id, (uint32_t)ctx->gpr[1], own, on,
++                          own && (unsigned)own != (unsigned)ctx->thread_id ? "  <<< NOT ITS OWN" : "");
++                  /* The ABI back chain: each frame's sp and the return
++                   * address its callee saved at back+16 (64-bit slot). */
++                  { uint32_t sp = (uint32_t)ctx->gpr[1];
++                    fprintf(stderr, "[null-call] frames:");
++                    for (int k = 0; k < 16 && sp >= 0xD0000000u && sp < 0xE0000000u; k++) {
++                        uint32_t back = vm_read32(sp + 4);   /* low word of the 64-bit back chain */
++                        if (back <= sp || back - sp > 0x10000u) break;
++                        uint32_t lr = vm_read32(back + 16 + 4);
++                        fprintf(stderr, " %08X(ret %08X)", back, lr);
++                        sp = back;
++                    }
++                    fprintf(stderr, "\n"); }
++                  ppu_dump_guest_stack(ctx, "nc");
++              }
+               else if (s_n == NC_PER)
+                   fprintf(stderr, "[null-call] tid=%u: further null calls not shown\n",
+                           (unsigned)ctx->thread_id);
+@@ -2639,11 +2981,20 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
          /* Recursion-depth guard: a malformed/cyclic jump table (or a tail-call
           * chain that never converges) can dispatch recursively without bound
           * and blow the host stack. Cap the depth, log once, then unwind. */
@@ -16680,7 +16754,7 @@ index e73a151..f3f056c 100644
              return;
          }
          s_depth++;
-@@ -2946,12 +3246,13 @@ extern "C" int lv2_try_syscall(ppu_context* ctx);
+@@ -2946,14 +3297,48 @@ extern "C" int lv2_try_syscall(ppu_context* ctx);
   * A few syscalls the CRT needs at boot are handled inline (boot-tuned); the
   * rest are dispatched to the real lv2 table, and only genuinely-unregistered
   * numbers fall through to the return-CELL_OK stub. */
@@ -16694,8 +16768,43 @@ index e73a151..f3f056c 100644
 +extern "C" void ps3_gcm_pump_if_present(void);   /* ppu_hle.cpp */
  extern "C" void lv2_syscall(ppu_context* ctx)
  {
++    /* PPU_STACK_CHECK=1: report (first 16) syscalls made with r1 outside the
++     * calling thread's own stack -- one guest thread running on another's. */
++    { static int on = -1; static volatile long n = 0;
++      if (on < 0) on = getenv("PPU_STACK_CHECK") ? 1 : 0;
++      if (on) {
++          char nm[64]; uint32_t sp = (uint32_t)ctx->gpr[1];
++          int own = ppu_thread_stack_owner(sp, nm, sizeof nm);
++          /* And each new low of the thread's sp, in 2 KB steps, with lr:
++           * deep recursion sinks once, a leaked frame sinks a little at a
++           * time at the same call site. */
++          { static uint32_t lowest[512];
++            unsigned t = (unsigned)ctx->thread_id & 511u;
++            if (!lowest[t] || sp + 0x800 < lowest[t]) {
++                lowest[t] = sp;
++                char fr[1200]; int fl = 0; uint32_t s2 = sp;
++                for (int k = 0; k < 48 && fl < (int)sizeof fr - 24; k++) {
++                    uint32_t back = vm_read32(s2 + 4);
++                    if (back <= s2 || back - s2 > 0x10000u) break;
++                    fl += snprintf(fr + fl, sizeof fr - fl, " %X/%X", back - s2, vm_read32(back + 20));
++                    s2 = back;
++                }
++                fr[fl] = 0;
++                fprintf(stderr, "[stack-low] tid=%u sp=0x%08X lr=0x%08X syscall %llu frames(size/ret):%s\n",
++                        (unsigned)ctx->thread_id, sp, (uint32_t)ctx->lr,
++                        (unsigned long long)ctx->gpr[11], fr);
++            } }
++          if (own && (unsigned)own != (unsigned)ctx->thread_id && InterlockedIncrement(&n) <= 16) {
++              fprintf(stderr, "[stack-check] tid=%u syscall %llu with sp=0x%08X on tid %d \"%s\" lr=0x%08X host=%lu ctx=%p\n",
++                      (unsigned)ctx->thread_id, (unsigned long long)ctx->gpr[11], sp, own, nm,
++                      (uint32_t)ctx->lr, (unsigned long)GetCurrentThreadId(), (void*)ctx);
++              ppu_dump_guest_stack(ctx, "stack-check");
++          }
++      } }
      /* One-shot: PPU_GUARD_EA=<hex> arms the page guard on that address without
-@@ -2962,6 +3263,12 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+      * waiting for a store watch to fire. Armed here because lv2_syscall runs
+      * early and unconditionally; used to measure how far a guest block clear
+@@ -2962,6 +3347,12 @@ extern "C" void lv2_syscall(ppu_context* ctx)
        if (!_ge) { _ge = 1;
            const char* e = getenv("PPU_GUARD_EA");
            if (e && *e) ppu_guard_page((uint32_t)strtoul(e, 0, 16)); } }
@@ -16708,7 +16817,7 @@ index e73a151..f3f056c 100644
      uint64_t num = ctx->gpr[11];
      /* Milestone: which lv2 calls this title makes, in first-occurrence order.
       * Formatting the key each time is noise next to the profiler stamp below,
-@@ -2973,16 +3280,18 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -2973,16 +3364,18 @@ extern "C" void lv2_syscall(ppu_context* ctx)
       * through ps3_hle_call) and a stale CTR, so without this a wedged thread is
       * just "somewhere in ntdll". Cleared on every exit path by the guard. */
      struct _ScGuard {
@@ -16731,7 +16840,7 @@ index e73a151..f3f056c 100644
      /* PS3_SCTRACE_TID: trace every lv2 syscall made by the loader/worker thread
       * (tid=1) so we can see what it does AFTER receiving its q=1 event and why
       * it never registers handlers / loads assets. */
-@@ -3202,8 +3511,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3202,8 +3595,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                      (unsigned long long)ctx->gpr[3], (unsigned long long)ctx->gpr[4],
                      (unsigned)ctx->lr);
              fflush(stderr); } }
@@ -16742,7 +16851,7 @@ index e73a151..f3f056c 100644
              static ULONGLONG s_acc[1024]={0}; static uint32_t s_cnt[1024]={0}; static ULONGLONG s_win=0;
              uint32_t _a3=(uint32_t)ctx->gpr[3], _a4=(uint32_t)ctx->gpr[4], _a5=(uint32_t)ctx->gpr[5];
              ULONGLONG _t0 = GetTickCount64();
-@@ -3545,6 +3854,15 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
+@@ -3545,6 +3938,48 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
          s_opd_fixups[s_opd_fixup_n].code = code; s_opd_fixups[s_opd_fixup_n].toc = toc; s_opd_fixup_n++; }
  }
  
@@ -16755,21 +16864,61 @@ index e73a151..f3f056c 100644
 +    s_guest_cb_sp = sp_top & ~0xFu;
 +}
 +
++/* The stack a guest callback starts on.
++ *
++ * It used to be one fixed address, 0xCFFE0000, for every caller. Two threads
++ * inside callbacks at once then ran on the same stack and overwrote each
++ * other's frames: GT5 Prologue's race load called through a camera object on
++ * the stack whose vtable another thread's callback frames had replaced, and
++ * stopped in a run of "bctr to NULL" calls. On the console a callback runs on
++ * the calling thread's own stack, so do that:
++ *   - a host thread that set one (codec threads) keeps it;
++ *   - a guest thread continues below its current stack pointer, past the
++ *     ABI's 288-byte protected area;
++ *   - a host-only thread gets a 64 KB stack of its own, once.
++ * PPU_CB_SHARED_STACK=1 restores the shared address. */
++extern "C" uint32_t ppu_alloc_scratch_stack(uint32_t size);
++static uint32_t ppu_guest_call_sp(void)
++{
++    if (s_guest_cb_sp) return s_guest_cb_sp;
++    static int shared = -1;
++    if (shared < 0) shared = getenv("PPU_CB_SHARED_STACK") ? 1 : 0;
++    if (shared) return 0xCFFE0000u;
++    ppu_context* a = g_active_ctx;
++    if (a) {
++        uint32_t sp = (uint32_t)a->gpr[1];
++        if (sp >= 0x10000u + 0x400u) return (sp - 0x400u) & ~0xFu;
++    }
++    static PPU_THREAD_LOCAL uint32_t own = 0;
++    if (!own) {
++        uint32_t base = ppu_alloc_scratch_stack(0x10000u);
++        own = base ? base + 0x10000u - 0x200u : 0xCFFE0000u;
++    }
++    return own;
++}
++
  extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
                                     uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                                     uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
-@@ -3570,9 +3888,11 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
+@@ -3569,10 +4004,7 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
+                 vm_read32(opd_addr + 8), vm_read32(opd_addr + 12));
          return 0; }
  
-     /* Private scratch stack high in the guest stack region, distinct from the
+-    /* Private scratch stack high in the guest stack region, distinct from the
 -     * main + ppu_thread stacks. One callback at a time per caller thread. */
 -    static PPU_THREAD_LOCAL uint32_t s_cb_sp = 0;
 -    if (!s_cb_sp) s_cb_sp = 0xCFFE0000u;
-+     * main + ppu_thread stacks. One callback at a time per caller thread.
-+     * Every thread starts on the SAME address, so a host thread that delivers
-+     * callbacks while another one does (a codec's decoder thread) must give
-+     * itself a stack of its own with ppu_guest_call_set_stack first. */
-+    uint32_t s_cb_sp = s_guest_cb_sp ? s_guest_cb_sp : 0xCFFE0000u;
++    uint32_t s_cb_sp = ppu_guest_call_sp();
+ 
+     ppu_context ctx;
+     memset(&ctx, 0, sizeof(ctx));
+@@ -3616,8 +4048,7 @@ extern "C" uint64_t ppu_guest_call_ct(uint32_t code, uint32_t toc,
+     ppu_fn fn = ppu_lookup(code);
+     if (!fn) { fprintf(stderr, "[ppu] guest_call_ct: code 0x%08X not registered\n", code); return 0; }
+ 
+-    static PPU_THREAD_LOCAL uint32_t s_cb_sp = 0;
+-    if (!s_cb_sp) s_cb_sp = 0xCFFE0000u;
++    uint32_t s_cb_sp = ppu_guest_call_sp();
  
      ppu_context ctx;
      memset(&ctx, 0, sizeof(ctx));
@@ -19280,10 +19429,33 @@ index 2e760ea..7788f6f 100644
  
  #ifdef _WIN32
 diff --git a/runtime/syscalls/sys_ppu_thread.c b/runtime/syscalls/sys_ppu_thread.c
-index fb3906a..ee4e901 100644
+index fb3906a..2a84c8c 100644
 --- a/runtime/syscalls/sys_ppu_thread.c
 +++ b/runtime/syscalls/sys_ppu_thread.c
-@@ -275,19 +275,28 @@ unsigned long long ppu_thread_cpu_us(unsigned tid)
+@@ -45,6 +45,22 @@ ppu_thread_info       g_ppu_threads[PPU_THREAD_MAX];
+ vm_stack_alloc        g_vm_stack_alloc;
+ ppu_thread_entry_fn   g_ppu_thread_entry_trampoline = NULL;
+ 
++/* Diagnostics: the live thread whose guest stack holds ea (its id, and its
++ * name copied to name), or 0. Unlocked: a report helper, not for logic. */
++int ppu_thread_stack_owner(uint32_t ea, char* name, size_t n)
++{
++    for (int i = 0; i < PPU_THREAD_MAX; i++) {
++        const ppu_thread_info* t = &g_ppu_threads[i];
++        if (t->state == PPU_THREAD_STATE_FREE || !t->stack_size) continue;
++        if (ea >= t->stack_addr && ea < t->stack_addr + t->stack_size) {
++            if (name && n) { strncpy(name, t->name, n - 1); name[n - 1] = 0; }
++            return i + 1;
++        }
++    }
++    if (name && n) name[0] = 0;
++    return 0;
++}
++
+ /* Simple mutex for thread table access */
+ #ifdef _WIN32
+ static CRITICAL_SECTION s_table_lock;
+@@ -275,19 +291,28 @@ unsigned long long ppu_thread_cpu_us(unsigned tid)
      (void)tid; return 0;
  #endif
  }
@@ -19313,7 +19485,7 @@ index fb3906a..ee4e901 100644
  
  int ppu_prof_snapshot(int idx, unsigned* tid, unsigned* cia, const char** name)
  {
-@@ -296,12 +305,14 @@ int ppu_prof_snapshot(int idx, unsigned* tid, unsigned* cia, const char** name)
+@@ -296,12 +321,14 @@ int ppu_prof_snapshot(int idx, unsigned* tid, unsigned* cia, const char** name)
      if (idx == 0 && t->state == PPU_THREAD_STATE_FREE) {
          /* slot 0 stays FREE (the main thread never registers) -- serve its
           * dispatcher breadcrumb here so the profiler sees tid 1. */
@@ -19331,7 +19503,7 @@ index fb3906a..ee4e901 100644
      *name = t->name;
      return 1;
  }
-@@ -314,13 +325,204 @@ void ppu_prof_stamp(void* vctx, unsigned lr)
+@@ -314,13 +341,204 @@ void ppu_prof_stamp(void* vctx, unsigned lr)
      ppu_thread_info* t = (ppu_thread_info*)p;
      int in_range = (t >= g_ppu_threads && t < g_ppu_threads + PPU_THREAD_MAX);
      if (!in_range) { s_prof_main_pc = lr; return; }
@@ -19539,7 +19711,19 @@ index fb3906a..ee4e901 100644
  int64_t sys_ppu_thread_create(ppu_context* ctx)
  {
      uint32_t tid_out_addr = LV2_ARG_PTR(ctx, 0);
-@@ -441,6 +643,9 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+@@ -404,9 +622,9 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+         *out = be_id;
+     }
+ 
+-    fprintf(stderr, "[SYS] sys_ppu_thread_create tid=%llu name=\"%s\" entry=0x%08llX arg=0x%llX stack=0x%X prio=%d\n",
++    fprintf(stderr, "[SYS] sys_ppu_thread_create tid=%llu name=\"%s\" entry=0x%08llX arg=0x%llX stack=0x%X at 0x%08X prio=%d\n",
+             (unsigned long long)thread_id, t->name, (unsigned long long)entry, (unsigned long long)arg,
+-            stack_size, priority);
++            stack_size, stack_addr, priority);
+     /* YDKJ: dump the worker arg-object: func_000750A8 (thread body) does
+      * this=[arg+0x8], vtable=[arg+0xC], method=[vtable+0]. If this(+0x8) is null
+      * the worker dispatches its job on a null object -> construction never runs. */
+@@ -441,6 +659,9 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
      unsigned _initflag = STACK_SIZE_PARAM_IS_A_RESERVATION;
      int _gate_this = (g_gate_on > 0 && entry >= 0x10000 && entry < 0x10000000);
      if (_gate_this) _initflag |= CREATE_SUSPENDED;
@@ -19549,7 +19733,7 @@ index fb3906a..ee4e901 100644
      t->host_thread = (HANDLE)_beginthreadex(NULL, 256u * 1024 * 1024,
                                    (unsigned (__stdcall*)(void*))ppu_host_thread_proc, t,
                                    _initflag, (unsigned*)&t->host_tid);
-@@ -460,6 +665,8 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+@@ -460,6 +681,8 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
       * ponytail: two host levels only; map the full range if a title needs it. */
      if (priority < 256)
          SetThreadPriority(t->host_thread, THREAD_PRIORITY_ABOVE_NORMAL);
@@ -19558,7 +19742,7 @@ index fb3906a..ee4e901 100644
  #else
      /* Same reservation, for the same reason. This is the HOST stack the
       * recompiled C frames run on, not the guest stack (allocated above out of
-@@ -499,6 +706,12 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
+@@ -499,6 +722,12 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
  #endif
  
      table_unlock();
@@ -19571,7 +19755,7 @@ index fb3906a..ee4e901 100644
      return CELL_OK;
  }
  
-@@ -1155,6 +1368,9 @@ int64_t sys_ppu_thread_set_priority(ppu_context* ctx)
+@@ -1155,6 +1384,9 @@ int64_t sys_ppu_thread_set_priority(ppu_context* ctx)
      }
  
      t->priority = priority;
@@ -19581,6 +19765,21 @@ index fb3906a..ee4e901 100644
      table_unlock();
      return CELL_OK;
  }
+@@ -1303,3 +1535,14 @@ void sys_ppu_thread_init(lv2_syscall_table* tbl)
+     lv2_syscall_register(tbl, SYS_PPU_THREAD_GET_STACK_INFORMATION, sys_ppu_thread_get_stack_information);
+     lv2_syscall_register(tbl, SYS_PPU_THREAD_RENAME,              sys_ppu_thread_rename);
+ }
++
++/* A guest stack for a host thread that runs guest callbacks (ppu_guest_call
++ * with no guest thread of its own). Taken from the same region as thread
++ * stacks, under the table lock, and never freed: there are few such threads. */
++uint32_t ppu_alloc_scratch_stack(uint32_t size)
++{
++    table_lock();
++    uint32_t base = vm_stack_allocate(&g_vm_stack_alloc, size);
++    table_unlock();
++    return base;
++}
 diff --git a/runtime/syscalls/sys_ppu_thread.h b/runtime/syscalls/sys_ppu_thread.h
 index a297bf5..d0a5714 100644
 --- a/runtime/syscalls/sys_ppu_thread.h
@@ -19687,7 +19886,7 @@ index d8f4081..c781613 100644
      struct timespec ts;
      clock_gettime(CLOCK_REALTIME, &ts);
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index b19e240..11099eb 100644
+index b19e240..a47027c 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
 @@ -330,6 +330,7 @@ extern "C" uint8_t* vm_base;
@@ -19794,6 +19993,58 @@ index b19e240..11099eb 100644
          # vsumsws vD,vA,vB: sum the four signed words of vA plus word 3 of vB,
          # saturate to signed 32, place in word 3 of vD; words 0..2 are zero.
          if mn == "vsumsws":
+@@ -3633,6 +3705,27 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+             if all_insns[_k].mnemonic == 'blr':
+                 return _k + 1
+         return 0
++    def _scan_lo_entry(i, limit=0x4000):
++        """Like _scan_lo, but also walks back over starts that follow a `b` or
++        `bctr`: switch case targets are seeded as function starts and usually
++        follow an unconditional branch, so _scan_lo takes them for entries.
++        Stops at the nearest start that follows a `blr` (a real entry), within
++        `limit` bytes. Only used to retry a base the normal scan could not
++        resolve. (GT5P func_00757368: `lwz r30,-0x7614(r2)` in the prologue,
++        the dispatch at 0x757AAC behind case starts 0x757A38..0x757A68; the
++        switch lifted to an unresolved tail jump that dropped the function's
++        epilogue, so every call leaked its 0x150-byte frame and a render
++        thread sank through its stack into another thread's.)"""
++        if not func_starts:
++            return _scan_lo(i)
++        here = all_insns[i].addr
++        k = _bisect.bisect_right(func_starts, here) - 1
++        while k > 0 and here - func_starts[k] < limit:
++            j = _bisect.bisect_left(_addrs, func_starts[k])
++            if j == 0 or all_insns[j - 1].mnemonic == 'blr':
++                break
++            k -= 1
++        return _bisect.bisect_left(_addrs, func_starts[max(k, 0)])
+     def _live(lo, i):
+         """all_insns[lo:i] minus blocks that end in `blr` -- they return, so
+         they cannot flow into the dispatch at i. Scanning backward straight
+@@ -3820,7 +3913,7 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+                     # preceding blr, so the scan cannot drift into the previous
+                     # function and latch a stale base.
+                     _scan, _resolved = _live(max(0, i - 30), i), False
+-                    for _pass in (0, 1):
++                    for _pass in (0, 1, 2):
+                         for w2 in reversed(_scan):
+                             b = [x.strip() for x in w2.operands.split(',')]
+                             if not b or b[0] != _mid or w2.mnemonic.startswith(('st', 'lf')):
+@@ -3831,9 +3924,12 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+                                 disp2 = _d2; disp2_is_ld = _d2_is_ld
+                             _resolved = True    # nearest def wins, TOC load or not
+                             break
+-                        if _resolved or _pass:
++                        if _resolved or _pass == 2:
+                             break
+-                        _scan = _live(_scan_lo(i), i)
++                        # pass 1: the enclosing function as _scan_lo sees it;
++                        # pass 2: back past switch-case starts to the real
++                        # entry (only reached when pass 1 found no def at all).
++                        _scan = _live(_scan_lo(i) if _pass == 0 else _scan_lo_entry(i), i)
+                 break                           # first definition of cand wins/loses
+             if disp is not None:
+                 _bases.append((r_base, disp, base_is_ld, disp2, disp2_is_ld))
 diff --git a/tools/spu_disasm.py b/tools/spu_disasm.py
 index 2630352..d29c28a 100644
 --- a/tools/spu_disasm.py

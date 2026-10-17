@@ -547,8 +547,19 @@ Each corrects the one before.
   - The page guard takes `PPU_GUARD_LINE`, `PPU_GUARD_LATE`,
     `PPU_GUARD_SKIP_LR` and `PPU_GUARD_AFTER`. Never arm it from boot on a
     hot page: the menus drop to 11 fps.
-  - Open: no ground or track on the starting grid; the race load still stops
-    after `QuickArcadeRoot`.
+  - Open: no ground or track on the starting grid.
+- **Phase 69: the race loads and runs (30 fps).** A switch whose table base
+  is loaded through a prologue register, behind seeded case starts, lifted
+  as an unresolved tail jump. Its function's epilogue never ran, so a render
+  thread leaked 0x150 bytes per call and sank into the next thread's stack.
+  - The lifter now retries such bases from the real entry. **Re-lift after
+    updating ps3recomp.**
+  - `PPU_STACK_CHECK=1` and `scratch/spcheck_patch.py` find a leaking
+    callee. `[ppu] indirect tail to ...: no lifted entry` names a dropped
+    jump.
+  - Library callbacks run on the caller's stack (`PPU_CB_SHARED_STACK=1` for
+    the old shared one).
+  - Open: the ground and track are black in the race.
 - Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
   voices than the menu; the main thread's 93% of a core at 31 frames a
   second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the

@@ -9,6 +9,83 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 69 - The race load: a dropped jump table leaked a stack frame (2026-10-17)
+
+**Reported (Phase 66):** after the starting grid the race load stopped
+(`QuickArcadeRoot`, about 1 fps) with a run of `[ppu] bctr to NULL` calls
+from `0x0080EF74` and others, through descriptors such as 0, 1, `0x48028028`
+or `0x0171F4B0`.
+
+**Fixed.** The race now loads and runs at 30 fps: no `bctr to NULL`, no
+thread off its stack. The Ferrari dealer page is unchanged.
+
+**How it was found:**
+
+1. The first bad call is a virtual call on the scene camera
+   (`*(scene+0x230)`). The camera is a stack object in `0x005C80D0`'s frame
+   (`r1+0xB0`, vtable stored at `0x5C83DC`), passed down through `0xCEA1D8`
+   and installed by `0x706398`. Its vtable had been overwritten while it was
+   still live.
+2. `PPU_STACK_CHECK=1` (new) checks every syscall's r1 against the calling
+   thread's own stack. One render thread (`PDI:1:200c3b80`, stack
+   `0xD00AA000-0xD00BA000`) was making syscalls with r1 in the next thread's
+   stack (`0xD0099000-0xD00A9000`), through its guard page.
+3. Its lowest r1 dropped by the same 0x930 bytes on each pass of the main
+   loop `0x007AE990` (`[stack-low]`, new): a leak, not deep recursion.
+4. `scratch/spcheck_patch.py` (new) wraps every call in chosen lifted
+   functions and reports a callee that returns with a different r1. That
+   chain led down
+   `0x79F4D8 → 0x7A0250 → (vcall) 0x79F838 → 0x7BA580 → 0x5C7530 → 0x6ABB08
+   → 0x661660 → 0x7441C0 → 0x7405D8 → 0x00757368`. That function allocates
+   0x150 bytes and was split by the function finder into pieces chained
+   through the trampoline.
+5. The runtime's new message `[ppu] indirect tail to 0x00757EA8: no lifted
+   entry there` named the cause. The switch at `0x757AAC` (`lwz
+   r11,-0x7F28(r30)`, a 12-entry offset table right after the `bctr`)
+   lifted as an unresolved tail jump. The jump was dropped, the function's
+   epilogue never ran, and every call leaked its frame.
+
+**The lifter fix** (ps3recomp `tools/ppu_lifter.py`, `discover_jump_tables`).
+The base is two-level: r30 is loaded from the TOC in the prologue at
+`0x7573CC`. The scan for r30 began at the nearest "function start", which
+here is a switch case target (`0x757A68`) seeded as a start and following a
+`b`. So it never reached the prologue and found no base. A third pass now
+retries from the real entry, the nearest start after a `blr`, within 16 KB,
+and only when the normal scan finds no definition at all. Re-lifted: 274
+dispatchers (272 before), 2,907 case targets; the switch decodes 12 cases.
+A re-lift with the old lifter brings the freeze back.
+
+`scripts/jumptables.py` has a related weakness, not fixed: it trims a table
+to the nearest preceding `cmpwi` immediate whatever the register, and here
+took 2 of 12 entries. The lifter's own discovery is what matters for the
+switch.
+
+**Also fixed on the way.** `ppu_guest_call` and `ppu_guest_call_ct` (library
+callbacks into guest code) started every callback on one fixed stack,
+`0xCFFE0000`, whatever thread called. A guest thread's callback now continues
+below that thread's own stack pointer, past the 288-byte protected area, and
+a host-only thread gets a 64 KB stack of its own. `PPU_CB_SHARED_STACK=1`
+restores the old way. It was not the race cause.
+
+**Still open:**
+
+- In the race, the ground and track below the horizon are black, as on the
+  starting grid.
+- One shot taken mid-transition showed stale blocks.
+
+**New diagnostics:**
+
+- `PPU_STACK_CHECK=1`: `[stack-check]` when a syscall's r1 is off the
+  thread's stack, and `[stack-low]` with the back chain at each new 2 KB
+  low.
+- Guest stack dumps say whose stack r1 is on, and the host thread.
+- Thread creation logs each stack address.
+- `[null-call]` prints the frame chain.
+- `[ppu] indirect tail to ...: no lifted entry there`, once per target.
+- `PPU_WWATCH_FRAMES=<n>`: the back chain on watch lines.
+- `scratch/spcheck_patch.py <func>... | --restore`: temporary r1 checks
+  around calls in `generated/`.
+
 ## Phase 68 - The black track behind the race menus (2026-10-17)
 
 **Fixed: a vertex-data method decoded with the wrong stride.**
