@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 74)
+## Start here: state of play (2026-10-18, Phase 75)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 74 is the latest).
+has the evidence, newest phase first (Phase 75 is the latest).
 
 ### What works now
 
@@ -56,6 +56,8 @@ has the evidence, newest phase first (Phase 74 is the latest).
   Menu sound plays.
 - 1080p is multisampled, and shadows are softened (Phase 71).
 - The 1080p Kyoto menu's black tree rectangles are fixed (Phase 74).
+- MSAA depth reaches depth of field, fixing excess menu blur (Phase 75;
+  `RSX_MSAA_DEPTH_COPY=0` restores the wrong, empty depth source).
 
 ### Open work, in the order the user left it
 

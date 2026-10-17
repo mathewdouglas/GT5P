@@ -9,6 +9,39 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 75 - MSAA scene depth reaches depth of field (2026-10-18)
+
+**Reported:** the 1080p menu scene is blurry; keep smooth edges without
+blurring the scene. **Fixed the depth handoff.** Geometry uses the MSAA
+depth buffer, but `depth_copy_capture` copied the unused single-sample
+buffer. The depth-of-field shader therefore saw far depth everywhere.
+
+Measured in `slab_frame4278.rdc`: the scene's 1920x1080, 2-sample depth
+contains values from about 0.990 to 0.998 at nine probes. The 2048x2048
+sampled copy is 1.0 at all nine. With the fix,
+`depthfixed_frame1955.rdc` has scene depth in the sampled copy (about
+0.984 to 0.996 in the rendered region, 1.0 outside it).
+
+A depth-only fullscreen draw resolves the actual multisampled depth into
+the existing sampled copy, taking the nearest sample at edges. The MS
+depth resource is now typeless with typed DSV/SRV views, and the copy has
+its own DSV. The normal single-sample copy path is unchanged.
+`RSX_MSAA_DEPTH_COPY=0` restores the old source. MSAA stays enabled;
+the title's depth-of-field and bloom programs still run.
+
+Checks: 1080p/2x MSAA and 720p/2x MSAA menu boots with `D3D12_DBG=1`,
+no severity-0/1 validation messages. `depthfix1080.menu.png` is sharper;
+`depthold1080.menu.png` restores the blur using the same executable with
+the switch off. Logs and window shots are under `scratch/pv/`.
+`scripts/diag/rdoc_depthcheck.py` samples every depth resource in a capture
+(`RDOC_CAP`, `RDOC_OUT`), including the MS source and sampled copy.
+
+**Crowd/race work continues:** a 1024-slot capture still shows the grey
+crowd. Pixel history leads to the generated 512x128 crowd atlas, copied
+into a 512x255 surface, whose sampled image already contains dark,
+upside-down silhouettes. This narrows the next check to atlas generation
+and copying; the cause is not yet established.
+
 ## Phase 74 - The 1080p tree cards keep their cutouts (2026-10-18)
 
 **Fixed:** the black rectangle behind the Kyoto menu's trees at 1080p.
