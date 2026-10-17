@@ -9,6 +9,54 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 76 - Spectator colours and race texture capacity (2026-10-18)
+
+**The grey crowd is fixed.** Pixel history in
+`scratch/rdoc/race1024_frame3103.rdc` leads to the generated spectator
+atlas, not a failed clothing-texture upload. Its source textures contain
+coloured shirts and faces; the 512x128 atlas contains only dark silhouettes.
+The atlas shader reads `FOGC.y` as a blend factor against fog colour.
+The backend replicated the raw fog coordinate into every FOGC component,
+so a coordinate of zero replaced all clothing with fog colour.
+
+`SET_FOG_MODE` and both `SET_FOG_PARAMS` words are now decoded and kept
+per draw. Fragment input FOGC keeps the coordinate in x and evaluates the
+factor in y, including linear, exponential, squared exponential and their
+absolute-coordinate modes. The atlas uses exponential mode (`0x800`),
+parameters `(1.5, -0)`: factor 1, not raw coordinate 0. `RSX_FOG=0`
+restores the old replication; `RSX_FOGDBG=1` logs changing register state.
+The state lives in unused constant-buffer alignment padding, preserving
+all existing inline-constant offsets.
+
+The first live 1080p/2x MSAA check (`fograce1080`) shows coloured spectators
+with the race timer advancing, and no severity-0/1 D3D12 validation errors.
+Atlas-copy orientation was left unchanged: the upside-down intermediate
+noted in Phase 75 did not need an orientation workaround.
+
+**Race texture capacity:** the previous 512-slot limit dropped over 28,000
+binds in `cutfixrace1080` (Phase 74). A live driving race with
+`RSX_TEX_SLOTS=1024` (`race1024live`) has no slot-exhaustion messages.
+The table and descriptor region already reserve 1024 slots, so the default
+now uses that full capacity. `RSX_TEX_SLOTS=512` restores the former limit.
+
+**Final checks:** `crowddefault1080` (default slot count, 1080p/2x MSAA)
+shows the timer past 22 s and coloured spectators. Its captured 512x128
+atlas (`cap_crowddefault1080/frame_00/rt_0B5C3380.bmp`) now contains the
+shirts, faces and caps, versus the dark atlas in the earlier 1024-slot
+capture. `crowdfix720` likewise shows coloured spectators and a running
+race. Neither run reports slot exhaustion, a stuck-get resync, recursion
+cap or stall. `fogdealer1080` reaches the Acura page at 30 fps; its menu
+shot retains the sharp scene and tree cutouts. The debug-layer menu,
+race and dealer checks have no severity-0/1/2 messages. These runs include
+shader/pipeline compilation bursts and are not clean performance samples.
+
+**Tools:** `scripts/diag/rdoc_target.py` inspects draws into one target,
+saves their input textures and target, and reports shader disassembly and
+constants (`RDOC_CAP`, `RDOC_OUT`, `RDOC_TARGET`, `RDOC_N`). Outputs must
+remain in ignored working directories. Fog register meanings and equations
+were checked against [RPCS3's fragment-input reference](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/Program/GLSLSnippets/RSXProg/RSXFragmentPrologue.glsl);
+the implementation here is original, not copied source.
+
 ## Phase 75 - MSAA scene depth reaches depth of field (2026-10-18)
 
 **Reported:** the 1080p menu scene is blurry; keep smooth edges without

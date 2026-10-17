@@ -60,11 +60,13 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-18, Phase 74): playable from the menus into a
+**Disc build status (2026-10-18, Phase 76): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives, all at about 22 to 30 fps. The race-start freeze and the 1080p
-menu's black tree rectangles are fixed. The rest of this section and
+menu's black tree rectangles are fixed. MSAA depth now reaches depth of
+field, the crowd has coloured spectators, and race textures have more cache
+capacity. The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 
 | Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
@@ -153,7 +155,7 @@ Tools added for this work:
 | `python scripts/find_setjmp.py` | Locate the guest `setjmp`/`longjmp` in a build where they are unknown |
 | `python scripts/rpcs3log.py RPCS3.log` | Summarise an RPCS3 log for comparison against a port run |
 
-The investigation is Phases 17 to 74 of [docs/progress.md](docs/progress.md)
+The investigation is Phases 17 to 76 of [docs/progress.md](docs/progress.md)
 (newest first), and [AGENTS.md](AGENTS.md) is the working brief for the disc
 build. Its "Start here" section is the current state.
 

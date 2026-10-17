@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 75)
+## Start here: state of play (2026-10-18, Phase 76)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 75 is the latest).
+has the evidence, newest phase first (Phase 76 is the latest).
 
 ### What works now
 
@@ -58,10 +58,13 @@ has the evidence, newest phase first (Phase 75 is the latest).
 - The 1080p Kyoto menu's black tree rectangles are fixed (Phase 74).
 - MSAA depth reaches depth of field, fixing excess menu blur (Phase 75;
   `RSX_MSAA_DEPTH_COPY=0` restores the wrong, empty depth source).
+- The race crowd has coloured spectators (Phase 76, `RSX_FOG=0` restores
+  raw-coordinate replication). The texture cache now uses 1024 slots by
+  default; 512 dropped race texture binds (`RSX_TEX_SLOTS=512` to compare).
 
 ### Open work, in the order the user left it
 
-0. **Phases 74 and 73 (2026-10-18), read them first.** The race start froze every
+0. **Phases 76 to 73 (2026-10-18), read them first.** The race start froze every
    time; fixed in the walker (11 of 12 races clean at 1080p). The user's
    four reports, by state:
    - **1080p menu black slab**: fixed in Phase 74. The title sets A2C
@@ -70,9 +73,9 @@ has the evidence, newest phase first (Phase 75 is the latest).
      contrary trace never reached the menu scene; do not use it as evidence.
    - **Dealer floor reflects the menu's trees**: not visible on one direct
      menu-to-Acura visit after Phase 74's fix; pit round trip still unverified.
-   - **Race crowd smeared**: still visible after Phase 74's cutout fix
-     (bad at 720p too). `cutfixrace1080.err` also reports 512 texture slots
-     full and heavy pipeline turnover; their relation to the crowd is untested.
+   - **Race crowd smeared**: fixed in Phase 76. Missing fixed-function
+     `FOGC.y` turned the generated spectator atlas into fog-colour silhouettes.
+     A separate 512-slot texture limit dropped race binds; default is now 1024.
    - **Race freeze and noise**: fixed, except for a rarer second shape
      (Phase 73, "Open").
    Test at the user's settings: `GT5P_RESOLUTION=1080p RSX_MSAA=2`. Drive
@@ -91,9 +94,9 @@ has the evidence, newest phase first (Phase 75 is the latest).
    Circle to close the menu popup (`@PitSceneRoot+23000`) comes too early,
    so move it later. On the last runs, an Arcade round trip alone showed
    nothing.
-3. **Reported before Phase 69 and not re-checked since:** black slabs in the
-   Kyoto menu scene, and loading-screen text with letters dropped or swapped
-   ("Car Na e"). Phase 69's stack-leak fix may have cured them.
+3. **Reported before Phase 69 and not re-checked since:** loading-screen
+   text with letters dropped or swapped ("Car Na e"). Phase 69's stack-leak
+   fix may have cured it. The 1080p Kyoto tree slabs were fixed in Phase 74.
 4. **Speed and long-standing items:** the "Next" bullet at the end of the
    list below, and [docs/plan-30fps.md](docs/plan-30fps.md).
 
