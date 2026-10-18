@@ -9,6 +9,77 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 83 - Coherent dark-area flicker from dither coordinates (2026-10-19)
+
+**Reported:** flickering in the menu car and dealer pages, initially described
+as fine-edge/shadow shimmer, then narrowed to the dark lower-left dealership
+floor. Consecutive 1080p/2x-MSAA backbuffers reproduce a broad patch switching
+between black, faint green and grey. Increasing MSAA or disabling shadows
+leaves it. GPU inspection also confirms that the scene really is multisampled.
+
+**The missing rule is on texture units 4-15.** `dr_unnorm` and the coordinate
+rewrite previously handled only units 0-3. GT5P samples changing 16x16 noise
+textures using WPOS (pixel coordinates), on unit 15 in the floor/menu material
+and unit 11 in other car programs. They carry the unnormalised-address flag.
+Treating those coordinates as normalised UVs makes adjacent pixel centres
+wrap to the same noise value across a surface. As the title changes the noise,
+the whole dark surface moves up/down together instead of being spatially
+dithered. The observed near-black changes are small in 8-bit code values but
+coherent over a large area.
+
+The D3D12 backend now converts texel coordinates on every non-cube upper unit
+that requests it. `RSX_UNNORM_HI=0` restores the old upper-unit handling;
+`RSX_NO_UNNORM=1` still disables coordinate conversion globally. The per-draw
+reciprocal dimensions are packed into the last 96 bytes of the existing
+4352-byte b1 slot. Low-unit scales, inline constants, fog and expansion masks
+keep their offsets. Only programs using upper unnormalised units acquire the
+extra HLSL declaration/rewrite; dimensions remain dynamic, and the unit mask
+is part of the pipeline key. Existing shader caches stay in place. The normal
+build remains `GT5P_VM_INLINE=OFF`; no re-lift is needed.
+
+**Measured control and fix, ten consecutive dealership captures each:**
+`scratch/pv/cap_flickerunhicontrol` uses `RSX_UNNORM_HI=0`, while
+`cap_flickerunhi` uses the fix. The static floor patch is x=100, y=800,
+width=400, height=150. Its spatial mean's frame-to-frame RGB range falls from
+(0.9974, 1.0000, 0.9971) to (0.0934, 0.0911, 0.0935) in 8-bit code values,
+about a 91% reduction. Temporal standard deviation falls from
+(0.3983, 0.3918, 0.3983) to (0.0254, 0.0251, 0.0254). Spatial grain remains;
+the broad brightness pulses do not. These are patch-brightness measurements,
+not frame-rate measurements or proof of all geometric aliasing being gone.
+
+Reproduce the sequence with `pvshot.ps1 -Tag <tag> -Settle 30`,
+`GT5P_RESOLUTION=1080p RSX_MSAA=2 GT5P_PROFVIEW=0 RSX_CAP=200:10:1`,
+`RSX_CAP_DIR=scratch/pv/cap_<tag>` and quoted
+`"RSX_CAP_AFTER=DealerTopRoot,18000"`. Add `RSX_UNNORM_HI=0` for the control.
+`scripts/diag/temporal_luma.py <capture-dir> --roi 100,800,400,150` reports
+reproducible statistics (Pillow); moving geometry/UI in a patch invalidates
+that comparison. Amplified diagnostic crops stay ignored in scratch.
+
+**GPU confirmation on the final build:**
+`scratch/rdoc/flickerunhigpu_frame2037.rdc` records the dealership. Pixel
+history finds the dark floor at draw 1256 / event 14629. Its pixel shader has
+a 272-vector b1 and multiplies WPOS by `rsx_texscale_hi[5].zw` before sampling
+unit 15. At pixel (200,850), debugging verifies (200.5,850.5) becomes
+(12.53125,53.15625): exactly division by 16. The reports are
+`flickerunhigpu.floor-fixed.dis.txt` and `flickerunhigpu.floor.debug.txt`.
+Do not assume a capture's draw indices equal its companion RSX manifest:
+RenderDoc can record a neighbouring frame with different geometry counts.
+
+**Checks:** build passes. `scripts/test/unnorm_hi.ps1` compiles the actual
+backend's pure helpers extracted at test time, with no GPU/game data. It checks
+all twelve upper-unit coordinate slots, implicit/bias/explicit-level samples,
+low-unit behaviour, cube/normalised/invalid-binding exclusions, pipeline-key
+separation and both bypass switches. All three process configurations pass.
+The 1080p menu (`flickermenufix`) draws with D3D12 validation enabled; no
+D3D12 errors/device removal are reported (existing warning-level clear-value,
+empty-scissor and unused-MRT messages remain). The 720p showroom (`flicker720`)
+and 1080p opening logos/movie (`flickerlogos1080`) also draw. Normal warm
+showroom runs still report about 30 fps; there is no new race/60-fps claim.
+A trial edge filter was removed: the shipped fix corrects the dither source
+without blurring text, changing MSAA settings or adding temporal history.
+Ordinary subpixel outline/shadow aliasing remains subject to the selected
+sample count; this phase does not claim to remove every kind of shimmer.
+
 ## Phase 82 - Opening logos at 1080p (2026-10-19)
 
 **Reported and reproduced:** the copyright screen, Sony presentation and

@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 82)
+## Start here: state of play (2026-10-19, Phase 83)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 82 is the latest).
+has the evidence, newest phase first (Phase 83 is the latest).
 
 ### What works now
 
@@ -91,9 +91,22 @@ has the evidence, newest phase first (Phase 82 is the latest).
   1920x1080 uploads. `SCREEN_AS_TEX=1` restores the old heuristic; actual
   render-target/display sampling still resolves by address.
 
+- Dark areas no longer pulse together with the title's dither noise (Phase
+  83): texel-addressed 2D textures on units 4-15 now receive coordinate
+  conversion too. `RSX_UNNORM_HI=0` restores the dark dealership-floor flicker.
+  Verified at 1080p/2x MSAA, with menu, 720p and opening-logo checks.
+  `scripts/test/unnorm_hi.ps1` checks the actual backend helpers without a GPU.
+
 ### Open work, in the order the user left it
 
-The latest report is **High Speed Ring's remaining road-surface bands**,
+The latest report is **menu/dealership flicker**, most apparent in the dark
+lower-left dealership floor. Phase 83 corrects the spatial dither coordinates:
+a ten-frame control restores the broad near-black pulses; the fixed patch's
+brightness range is about 91% smaller. This fixes coherent brightness flicker;
+ordinary fine-edge aliasing at 2x MSAA is a separate quality limit. Read Phase
+83 for the GPU evidence and comparison commands.
+
+The previous report is **High Speed Ring's remaining road-surface bands**,
 compared with RPCS3 (ignore the reference screenshot's HDR brightness).
 Phase 81 fixes ignored TEX `_bx2` normal expansion (`RSX_TEX_EXPAND=0`
 restores it) and excess compressed mip levels (`RSX_BC_MIP_LIMIT=0`).
