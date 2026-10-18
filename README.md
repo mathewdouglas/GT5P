@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-19, Phase 83): playable from the menus into a
+**Disc build status (2026-10-19, Phase 84): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -246,6 +246,9 @@ closes the game when finished. It warms materials seen during the run; other
 cars, views or tracks can still need new shaders on their first appearance.
 Add `-IntroShots` to save the race-start transition once per second for
 graphics checks; these shots finish before fps sampling begins.
+`-GridIdleSeconds 180` or `-PitIdleSeconds 180` adds a three-minute wait on
+that page with periodic window shots. The helper rejects FPS sampling with
+no actual presents; inspect the shots and racing timer to confirm race entry.
 Both shader bytecode and driver-compiled pipelines are cached locally.
 Driver updates invalidate pipeline blobs safely; rejected entries are rebuilt.
 `RSX_PSO_DISK=0` disables the driver cache, and disabling the shader cache in

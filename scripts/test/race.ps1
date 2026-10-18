@@ -5,9 +5,14 @@
 # -IntroShots saves the first 25 s of the grid/race transition once per second,
 # before collecting fps samples (useful for checking car/track occlusion).
 # -LoadingShots also records the loading list at half-second intervals.
+# -PitIdleSeconds / -GridIdleSeconds delay the first Enter on those pages,
+# saving a window shot every ten seconds while waiting. Use -IntroShots to
+# inspect whether the subsequent race actually starts (a live title is not proof).
 [CmdletBinding(PositionalBinding = $false)]
 param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
       [string]$Tag = "race", [int]$Seconds = 60, [switch]$IntroShots, [switch]$LoadingShots,
+      [ValidateRange(0,3600)][int]$PitIdleSeconds = 0,
+      [ValidateRange(0,3600)][int]$GridIdleSeconds = 0,
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -34,15 +39,32 @@ function Save-RaceWindowShot($Proc, [string]$Path) {
     finally { $g.ReleaseHdc($dc); $g.Dispose() }
     try { $bmp.Save($Path) } finally { $bmp.Dispose() }
 }
+function Watch-RaceIdle($Proc, [string]$Stage, [int]$Duration) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $next = 0
+    while ($watch.Elapsed.TotalSeconds -lt $Duration) {
+        $Proc.Refresh()
+        if ($Proc.HasExited) { throw "Game exited while idling on $Stage" }
+        if ($watch.Elapsed.TotalSeconds -ge $next) {
+            Save-RaceWindowShot $Proc (Join-Path $dir ("$Tag.$Stage-idle{0:D4}.png" -f $next))
+            "$Stage idle $next s; $($Proc.MainWindowTitle)"
+            $next += 10
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    Save-RaceWindowShot $Proc (Join-Path $dir "$Tag.$Stage-idle-end.png")
+}
 $hold = Get-ToDaytona 10000
 if ($Track -eq "HighSpeedRing") { $hold = $hold.Replace("@CourseSelectRoot+3000-3100:RIGHT,", "") }
 foreach ($at in @(20000, 40000, 60000, 80000)) {
+    $at += 1000 * $PitIdleSeconds
     $hold += ",@PitSceneRoot+$at-$($at+300)!DrivingOptionRoot:CROSS"
 }
 foreach ($at in @(5000, 15000, 25000)) {
     $hold += ",@DrivingOptionRoot+$at-$($at+300)!LoadingRoot:CROSS"
 }
 foreach ($at in @(5000, 10000, 20000, 40000, 60000)) {
+    $at += 1000 * $GridIdleSeconds
     $hold += ",@QuickArcadeRoot+$at-$($at+300):CROSS"
 }
 $set = @{ GT5P_NO_SETTINGS = "1"; FS_HIDE = "grim/file/contents"; PS3_VERBOSE = "0";
@@ -56,6 +78,10 @@ try {
         -RedirectStandardOutput "$dir/$Tag.out" -RedirectStandardError "$dir/$Tag.err"
     foreach ($k in $set.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
     $tail = New-LogTail "$dir/$Tag.out"
+    if ($PitIdleSeconds -gt 0) {
+        if ((Wait-Milestone $p $tail "PitSceneRoot" 180) -lt 0) { throw "Pit page not reached" }
+        Watch-RaceIdle $p "pit" ($PitIdleSeconds + 19)
+    }
     if ($LoadingShots) {
         if ((Wait-Milestone $p $tail "LoadingRoot" 240) -lt 0) { throw "Race loading not reached" }
         for ($s = 0; $s -lt 16; $s++) {
@@ -66,6 +92,7 @@ try {
         }
     }
     if ((Wait-Milestone $p $tail "QuickArcadeRoot" 240) -lt 0) { throw "Starting grid not reached" }
+    if ($GridIdleSeconds -gt 0) { Watch-RaceIdle $p "grid" ($GridIdleSeconds + 4) }
     # Allow the first Start press and camera transition before sampling.
     if ($IntroShots) {
         for ($s = 0; $s -lt 25; $s++) {
@@ -75,10 +102,15 @@ try {
             Start-Sleep -Seconds 1
         }
     } else { Start-Sleep -Seconds 25 }
+    # Ignore navigation/idle presents: only progress during sampling counts.
+    $profTail = New-LogTail "$dir/$Tag.err"
+    Read-LogTail $profTail | Out-Null
+    $sampleLog = ""
     $rows = @()
     for ($s = 0; $s -lt $Seconds; $s++) {
         $p.Refresh()
         if ($p.HasExited) { throw "Game exited during the race" }
+        $sampleLog += Read-LogTail $profTail
         if ($p.MainWindowTitle -match 'FPS: ([\d.]+).*draws: (\d+)') {
             $rows += [pscustomobject]@{ Second = $s; Fps = [double]$Matches[1]; Draws = [int]$Matches[2] }
         }
@@ -86,6 +118,11 @@ try {
     }
     $rows | Export-Csv "$dir/$Tag.fps.csv" -NoTypeInformation
     Save-RaceWindowShot $p (Join-Path $dir "$Tag.win.png")
+    $presentSamples = [regex]::Matches($sampleLog, '\[present-prof\][^\r\n]*presents=(\d+)')
+    if ($presentSamples.Count -gt 0 -and
+        @($presentSamples | Where-Object { [int]$_.Groups[1].Value -gt 0 }).Count -eq 0) {
+        throw "No frames were presented during sampling; title FPS is stale. Inspect scratch/pv/$Tag.*"
+    }
     $ordered = @($rows.Fps | Sort-Object)
     if ($ordered.Count) { "$Track`: median $($ordered[[int]($ordered.Count/2)]) fps over $Seconds s" }
     "Cache warming finished for the materials seen in this run; logs and shot: scratch/pv/$Tag.*"

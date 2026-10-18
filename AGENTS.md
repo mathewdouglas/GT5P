@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 83)
+## Start here: state of play (2026-10-19, Phase 84)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 83 is the latest).
+has the evidence, newest phase first (Phase 84 is the latest).
 
 ### What works now
 
@@ -99,7 +99,15 @@ has the evidence, newest phase first (Phase 83 is the latest).
 
 ### Open work, in the order the user left it
 
-The latest report is **menu/dealership flicker**, most apparent in the dark
+The latest report is **High Speed Ring water: stretched ripples / dark bands**,
+under investigation. The preceding Daytona idle-grid blackout stopped
+reproducing for the user once heavy shader compilation ended. A warm three-minute
+grid idle followed by a moving Daytona race passed (Phase 84); cold-cache
+reliability is unverified. High Speed Ring still reproduced the older race-start
+stall. `race.ps1 -GridIdleSeconds 180 -IntroShots` records the idle/entry sequence
+and now rejects an FPS sample interval with no actual presents.
+
+The previous report is **menu/dealership flicker**, most apparent in the dark
 lower-left dealership floor. Phase 83 corrects the spatial dither coordinates:
 a ten-frame control restores the broad near-black pulses; the fixed patch's
 brightness range is about 91% smaller. This fixes coherent brightness flicker;

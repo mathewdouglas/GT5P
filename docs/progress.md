@@ -9,6 +9,44 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 84 - Idle starting-grid investigation and race-test progress (2026-10-19)
+
+**Reported:** leaving the starting-grid preview for a few minutes makes it
+black, followed by broken race graphics. The user clarified this was Daytona,
+then reported it was working again after heavy shader compilation had ended.
+Compilation is a possible trigger, not an established cause.
+
+**Warm Daytona check:** `idledaytona180`, at 1080p/2x MSAA with D3D12 validation,
+waited three minutes on the grid before starting. The preview kept changing
+cameras; the subsequent race advanced to 0'25.200, fourth gear / 92 mph in the
+final PrintWindow shot. No D3D12 error or device removal was reported. One
+unmapped-JUMP resync occurred during initial race loading, before the idle
+interval; it did not stop this run. This check does not establish cold-cache
+reliability or fix the reported intermittent fault.
+
+**High Speed Ring still has the older start stall.** `idlegrid180` completed
+the same three-minute preview, then stopped presenting when Start was pressed.
+The FIFO waited at unfilled IO `0x09521330`; workload 0 lanes 1, 2 and 4 waited
+for ring space with their labels at ring start. No FIFO resync was logged in
+that run. This is evidence for the remaining Phase 73/81 start problem, not a
+confirmed cause of the user's Daytona blackout. A preliminary pit-only run
+(`idlepit1080`) caught a near-black camera transition around 120 seconds and
+recovered at the next ten-second sample; the user then clarified the screen.
+
+`scripts/test/race.ps1` now accepts `-PitIdleSeconds` and `-GridIdleSeconds`
+(additional time before the normal first Enter). It saves PrintWindow shots
+every ten seconds and just before that Enter; `-IntroShots` records what
+follows. Example: `-Track Daytona -GridIdleSeconds 180 -IntroShots -Seconds 30`
+with `GT5P_RESOLUTION=1080p RSX_MSAA=2`. It also checks actual `[present-prof]`
+samples on stderr and rejects a sampling interval with no presents instead
+of reporting a frozen window title as a successful FPS measurement. Applying
+that check to the saved tails rejects `idlegrid180` and accepts
+`idledaytona180`. PowerShell syntax validation passes.
+
+**Next report:** High Speed Ring water has stretched ripples / dark bands.
+Investigation continues separately; the saved road-reference captures do not
+contain a matching water draw. Do not treat the idle check as a water fix.
+
 ## Phase 83 - Coherent dark-area flicker from dither coordinates (2026-10-19)
 
 **Reported:** flickering in the menu car and dealer pages, initially described
