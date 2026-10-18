@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 78)
+## Start here: state of play (2026-10-18, Phase 79)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 78 is the latest).
+has the evidence, newest phase first (Phase 79 is the latest).
 
 ### What works now
 
@@ -70,16 +70,24 @@ has the evidence, newest phase first (Phase 78 is the latest).
   ignore unused texture bindings and share identical fragment code across
   addresses; native driver pipelines now persist beside DXBC in `shadercache/`.
   `scripts/test/race.ps1 -Track HighSpeedRing` warms a local race cache.
+- Cars no longer draw over the High Speed Ring bridge (Phase 79): scene
+  depth survives shadow/colour-only passes, with real guest depth clears
+  kept in order. `RSX_DEPTH_KEEP=0` restores the fault. Verified at 1080p/2x
+  MSAA; `race.ps1 -IntroShots` captures the introduction. Shared shader
+  bytecode also stays in a bounded memory cache (`RSX_DXBC_MEM=0` bypasses).
 
 ### Open work, in the order the user left it
 
 The latest request is **High Speed Ring: loading/compilation, 60 fps, and race
-graphics** (Phase 78). The road corruption and redundant pipeline builds have
+graphics** (Phases 78-79), including cars drawn over the bridge. The bridge
+occlusion, road corruption and redundant pipeline builds have
 fixes; a verified 720p/2x-MSAA race measured a median 41 fps over 25 s, not 60.
 Other black materials/geometry in the race remain to investigate. Beware
 benchmarking the starting-grid preview: Start at `QuickArcadeRoot+5000`, with
 retries, and inspect the final shot for the racing HUD. Dropping all draws
 also removes the HUD, so that alone cannot confirm the race actually started.
+The PPU-inline experiment was not adopted; the normal exe is rebuilt with
+`GT5P_VM_INLINE=OFF`. Phase 79 records its observations and limitations.
 
 0. **Phases 76 to 73 (2026-10-18), read them first.** The race start froze every
    time; fixed in the walker (11 of 12 races clean at 1080p). The user's

@@ -9,6 +9,68 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 79 - Track depth between passes and repeated shader reads (2026-10-18)
+
+**Reproduced cars in front of the bridge.** The user's follow-up screenshots
+are an occlusion fault, separate from Phase 78's texture noise. In
+`scratch/rdoc/hsrdepth_frame3138.rdc`, pixel `(675,245)` has bridge depth
+`0.9956752` after draw 540. Car draw 1263 has depth `0.9986088`, farther away,
+but sees `preZ=1.0` and passes. Pixel `(738,213)` has the same pattern.
+`scripts/diag/rdoc_ground.py` now prints pre/post depth as well as shader depth.
+
+**Cause and change.** Replay cleared its shared depth buffer on every colour
+attachment switch. The title draws the track, runs a colour-only intermediate
+and a separate car-shadow pass, then returns to the scene for cars. Those
+passes do not discard the track's guest depth surface. Replay now remembers
+which scene colour target and guest depth address each physical single/MSAA
+DSV contains, preserving that depth when the scene returns. A different owner
+still initializes the shared buffer. Actual guest depth/stencil clears are
+recorded in command order with their values and scissor, rather than replaced
+by attachment-change clears; mask stencils retain their colour substitute.
+`RSX_DEPTH_KEEP=0` restores the old path. Capture manifests label the new
+operations `ZCLEAR`.
+
+In `hsrbridgefix_frame3052.rdc`, pixel `(800,476)` writes track depth
+`0.9969375` at draw 384 and still has that depth before car draw 1523
+(`0.9963508`, correctly nearer). D3D12 validation in both `hsrdepthfix` and
+`hsrbridgefix` reports no errors. Their camera is at the first corner, so
+these histories prove depth retention, not a matching bridge-camera image.
+`race.ps1 -IntroShots` now saves the first 25 seconds once per second before
+sampling fps, to inspect that transition without relying on one final shot.
+
+**1080p visual check passed.** `depth1080.intro12.png` and
+`depth1080.intro16.png` show the reported bridge camera with cars correctly
+hidden by its deck; the final shot has the driving HUD at `0'26.233`.
+This uses the normal build (`GT5P_VM_INLINE=OFF`), 1080p/2x MSAA and D3D12
+validation, with no validation errors. Its median 38 fps over 25 seconds is
+a validation run, not a normal-settings performance comparison.
+`depth720single` also reaches the driving HUD with validation enabled;
+`intro12` and `intro16` show correct bridge occlusion at 720p with MSAA off.
+It exercises the separate single-sample DSV path, with no validation errors.
+`roundtrip.ps1 -NoArcade -Tag depthmenus GT5P_RESOLUTION=1080p RSX_MSAA=2
+D3D12_DBG=1` also completes the Kyoto menu and Acura page, with normal text,
+cutouts and floor reflections, no validation errors, and 29.56 fps at the
+dealer shot. This is a direct menu/dealer check, not the parked pit round trip.
+
+**Loading work.** Pipeline variants can share identical DXBC. A bounded
+4,096-slot, 64 MiB memory cache retains reference-counted bytecode blobs and
+avoids reopening their files for those variants (`RSX_DXBC_MEM=0` bypasses
+it). It supports eviction and releases retained references at backend shutdown.
+`RSX_PSO_TIMING=1` reports hits, misses and live bytes. `hsrdepthfix` records
+148 hits and 1,044 misses with 15,477 KiB retained. Native-pipeline disk hits
+also no longer increment the compilation badge/counter: only a real build
+does. The fully cached `hsrinlineoff` run has no badge reports.
+
+**PPU experiment, not adopted.** A full `GT5P_VM_INLINE=ON` build completed
+two verified 720p/2x races at median 46.56 and 43 fps over 30 seconds. These
+are not a controlled improvement over Phase 78's 41.07 fps observation.
+The runtime-disabled comparison also wrote diagnostic shader files, and
+the larger executable still contains inline guard code. The normal build
+was restored with `GT5P_VM_INLINE=OFF`. None of the 586 fragment-program
+dumps in `scratch/hsr_fp/` contains an unhandled-opcode TODO; that lead did
+not explain the bridge fault. Steady 60 fps and other black race materials
+remain open.
+
 ## Phase 78 - High Speed Ring road, redundant pipelines and local prewarming (2026-10-18)
 
 **Reproduced the user's speckled road at 720p, 2x MSAA.**

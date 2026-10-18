@@ -47,7 +47,7 @@ try:
             sh = m.shaderOut.col.floatValue; post = m.postMod.col.floatValue
             p(f"  draw#{ev2idx.get(m.eventId,'?')} eid={m.eventId} passed={m.Passed()} {' '.join(why)}"
               f" shader=({sh[0]:.3f},{sh[1]:.3f},{sh[2]:.3f},{sh[3]:.3f}) post=({post[0]:.3f},{post[1]:.3f},{post[2]:.3f},{post[3]:.3f})"
-              f" depth={m.shaderOut.depth:.5f}")
+              f" depth={m.shaderOut.depth:.7f} preZ={m.preMod.depth:.7f} postZ={m.postMod.depth:.7f}")
     ctrl.Shutdown(); cf.Shutdown()
 except Exception:
     p(traceback.format_exc())

@@ -60,13 +60,16 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-18, Phase 76): playable from the menus into a
+**Disc build status (2026-10-18, Phase 79): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
-drives, all at about 22 to 30 fps. The race-start freeze and the 1080p
+drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
+open. The race-start freeze and the 1080p
 menu's black tree rectangles are fixed. MSAA depth now reaches depth of
 field, the crowd has coloured spectators, and race textures have more cache
-capacity. The rest of this section and
+capacity. High Speed Ring's road filtering and cars appearing over the bridge
+are fixed, and native pipeline compilation is cached between sessions.
+The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 
 | Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
@@ -232,11 +235,16 @@ the local caches before playing. `-Track Daytona` selects Daytona instead;
 append `GT5P_RESOLUTION=1080p RSX_MSAA=2` for that configuration. The helper
 closes the game when finished. It warms materials seen during the run; other
 cars, views or tracks can still need new shaders on their first appearance.
+Add `-IntroShots` to save the race-start transition once per second for
+graphics checks; these shots finish before fps sampling begins.
 Both shader bytecode and driver-compiled pipelines are cached locally.
 Driver updates invalidate pipeline blobs safely; rejected entries are rebuilt.
 `RSX_PSO_DISK=0` disables the driver cache, and disabling the shader cache in
 settings disables both. Keep `shadercache/`; do not download another machine's
 pipeline blobs.
+Repeated bytecode used by pipeline variants is also retained in memory, up to
+64 MiB (`RSX_DXBC_MEM=0` disables that layer). Loading a saved native pipeline
+does not count as compiling work on the badge.
 
 **Movies.** The opening movie is decoded with FFmpeg, loaded at run time. Run
 `scripts\get_ffmpeg.ps1` once (it fetches a pinned LGPL build into
