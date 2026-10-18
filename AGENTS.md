@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 81)
+## Start here: state of play (2026-10-19, Phase 82)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 81 is the latest).
+has the evidence, newest phase first (Phase 82 is the latest).
 
 ### What works now
 
@@ -85,6 +85,11 @@ has the evidence, newest phase first (Phase 81 is the latest).
 - Road normal maps now honour TEX `_bx2`, with typed per-channel expansion,
   and compressed road textures stop at their valid mip count on the shorter
   axis (Phase 81). Switches: `RSX_TEX_EXPAND=0`, `RSX_BC_MIP_LIMIT=0`.
+
+- Opening copyright, Sony and Polyphony screens now appear at 1080p (Phase
+  82). Size alone no longer substitutes the black frame copy for their
+  1920x1080 uploads. `SCREEN_AS_TEX=1` restores the old heuristic; actual
+  render-target/display sampling still resolves by address.
 
 ### Open work, in the order the user left it
 

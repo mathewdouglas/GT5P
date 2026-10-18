@@ -9,6 +9,41 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 82 - Opening logos at 1080p (2026-10-19)
+
+**Reported and reproduced:** the copyright screen, Sony presentation and
+Polyphony logo appear at 720p but remain black at 1080p before the opening
+movie. Window shots from `scripts/test/movshot.ps1` cover 2-17 s after
+launch (`logos720`, `logos1080`), with TV content visible and 2x MSAA.
+Both resolutions reach the GT transition and animated movie.
+
+The old `SCREEN_AS_TEX` fallback substitutes a backbuffer snapshot for any
+texture whose dimensions equal the window. The startup images use
+1920x1080 BC1 uploads, so at 1080p their size alone selects the black frame
+copy. The 1080p capture `scratch/rdoc/logos1080_frame181.rdc` binds an
+RGBA8 screen copy; the corresponding 720p startup capture
+`sony720_frame241.rdc` binds the BC1 guest texture. Guest texture unit 0
+uses raw offset `0x003BE500`, not a registered display-buffer address.
+Setting `SCREEN_AS_TEX=0` restores the missing screens at 1080p.
+
+The size-only fallback is now **off by default**. `SCREEN_AS_TEX=1`
+restores it for comparison. Address-based colour/depth/render-target and
+registered-display sampling still run before that fallback. No shader
+cache removal, new logo assets, guest-code patch or re-lift is needed.
+
+Validation: the normal BCUS98158 build passes (`GT5P_VM_INLINE=OFF`).
+`movshot.ps1 -Tag logosfix1080 -At 4,5,6,7,8,9,10,12,15
+GT5P_RESOLUTION=1080p RSX_MSAA=2 D3D12_DBG=1 D3D12_IQ=1` shows readable
+copyright and Sony screens, the Polyphony logo, the GT transition and the
+animated movie, with no D3D12 validation messages or device removal.
+`logoslegacy1080` with `SCREEN_AS_TEX=1` restores completely black
+4/6/9 s shots while the movie still appears at 15 s, using the same rebuilt
+exe. `logosfix720` checks the same sequence at 720p. A 1080p menu-to-Acura
+run (`roundtrip.ps1 -Tag logofixmenu1080 -NoArcade`) still shows the Kyoto
+scene, showroom cars, floor reflection and UI. Screenshots and captures
+stay ignored under scratch. The cumulative runtime patch still covers
+62 files and passes its reverse-apply check.
+
 ## Phase 81 - Road normal expansion and compressed mip limits (2026-10-18)
 
 **High Speed Ring's road shading differs after Phase 80.** The RPCS3
