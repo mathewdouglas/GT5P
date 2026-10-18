@@ -193,6 +193,7 @@ bool known_key(std::string_view section, std::string_view key)
         {"performance", "fifth_spu_lane"},
         {"performance", "lane_cores"},   /* the old key (off by default then): read no more */
         {"debug", "verbose_log"},
+        {"debug", "export_enabled"},
     };
     for (const auto& k : kKnown)
         if (section == k.section && key == k.key) return true;
@@ -232,6 +233,7 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
     read_lane_cores(tbl["performance"]["lane_pinning"], s.lane_cores);
     read_bool(tbl["performance"]["fifth_spu_lane"], "performance.fifth_spu_lane", s.fifth_spu_lane);
     read_tristate(tbl["debug"]["verbose_log"], "debug.verbose_log", s.verbose_log);
+    read_bool(tbl["debug"]["export_enabled"], "debug.export_enabled", s.debug_export);
 }
 
 /* Hand the settings the runtime reads from the environment over to it. */
@@ -289,6 +291,7 @@ bool gt5p_settings_enabled() { return g_enabled; }
 
 bool gt5p_settings_overridden(const char* env_name)
 {
+    if (!env_name || !*env_name) return false;
     for (size_t i = 0; i < sizeof kEnvNames / sizeof kEnvNames[0]; i++)
         if (!strcmp(kEnvNames[i], env_name)) return g_env_set[i];
     return false;
@@ -365,7 +368,10 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "[debug]\n"
          "# Full runtime log: \"auto\" (off when started by hand, on when output goes\n"
          "# to a file), true or false. On makes the game stutter. [PS3_VERBOSE]\n"
-         "verbose_log = " << verbose << "\n";
+         "verbose_log = " << verbose << "\n"
+         "# Keep up to 2 MiB of recent output per stream and enable F3 debug ZIP exports.\n"
+         "# Applies immediately in F1. Off by default; GT5P_DEBUG_EXPORT=0 disables it.\n"
+         "export_enabled = " << (s.debug_export ? "true" : "false") << "\n";
     return (bool)f.flush();
 }
 

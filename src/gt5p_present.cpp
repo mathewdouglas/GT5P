@@ -31,6 +31,7 @@
 #include "vm.h"
 #include "ps3emu/thread_name.h"
 #include "gt5p_settings.h"
+#include "gt5p_debug_export.h"
 #include "ps3emu/timeline.h"
 
 /* GT5P_THREADS=1: every 2 s, print each PPU thread's state and the guest
@@ -511,6 +512,47 @@ extern "C" void gt5p_start_sampler(void)
 extern "C" void cellSpurs_debug_dump(void);
 extern "C" void cellGcm_debug_dump(void);
 extern "C" void spurs_pm_debug_dump(void);
+extern "C" void cellSpurs_debug_dump_to(FILE*);
+extern "C" void cellGcm_debug_dump_to(FILE*);
+extern "C" void spurs_pm_debug_dump_to(FILE*);
+extern "C" void rsx_d3d12_debug_dump_to(FILE*);
+extern "C" void pad_debug_milestones_to(FILE*);
+extern "C" void gt5p_debug_main(FILE*);
+extern "C" volatile LONG g_rsx_shader_busy, g_rsx_shaders_pending, g_rsx_shaders_compiled, g_rsx_pipelines_built;
+
+/* Each live section gets its own guard so a damaged pointer does not discard
+ * the remaining report. No guest/renderer lock or thread suspension here. */
+extern "C" void gt5p_debug_snapshot(FILE* out)
+{
+    fprintf(out, "Shaders: busy=%ld pending=%ld compiled=%ld pipelines=%ld\n",
+        g_rsx_shader_busy, g_rsx_shaders_pending, g_rsx_shaders_compiled, g_rsx_pipelines_built);
+    __try { pad_debug_milestones_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Milestones unavailable\n"); }
+    __try { gt5p_debug_main(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Main context unavailable\n"); }
+    for (int i = 0; i < PPU_THREAD_MAX; i++) {
+        __try {
+            const ppu_thread_info* t = &g_ppu_threads[i];
+            if (t->state == PPU_THREAD_STATE_FREE) continue;
+            fprintf(out, "PPU tid=%d host=%lu state=%d name=%.63s entry=%08llX pc=%08X hle=%s\n",
+                i + 1, t->host_tid, t->state, t->name, (unsigned long long)t->entry_addr,
+                ppu_thread_prof_pc(i + 1), i + 1 < 64 && g_hle_inflight[i + 1] ? g_hle_inflight[i + 1] : "-");
+            if (i == 0) { fprintf(out, "Main registers are listed above (not stored in the thread table)\n"); continue; }
+            fprintf(out, "lr=%08llX ctr=%08llX stack=%08X+%X\n",
+                (unsigned long long)t->ctx.lr, (unsigned long long)t->ctx.ctr, t->stack_addr, t->stack_size);
+            for (int r = 0; r < 32; r++) fprintf(out, "r%d=%016llX%s", r,
+                (unsigned long long)t->ctx.gpr[r], r % 4 == 3 ? "\n" : " ");
+        } __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "PPU slot %d unavailable\n", i); }
+    }
+    __try { cellGcm_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "FIFO snapshot unavailable\n"); }
+    __try { cellSpurs_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "SPURS workload snapshot incomplete\n"); }
+    __try { spurs_pm_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "SPU lane snapshot incomplete\n"); }
+    __try { rsx_d3d12_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Renderer snapshot unavailable\n"); }
+}
 static void stall_dump_check(unsigned presents_total)
 {
     static int on = -1;
@@ -527,11 +569,9 @@ static void stall_dump_check(unsigned presents_total)
      * Unless stderr is already a file, the dump goes to
      * logs\stall-<date>-<time>.log under the working directory (the project
      * root) as well: stderr's descriptor points there for its length. */
-    static int to_file = -1;
-    if (to_file < 0) {
-        const char* e = getenv("GT5P_STALL_LOG");
-        to_file = !(e && *e == '0') && GetFileType(GetStdHandle(STD_ERROR_HANDLE)) != FILE_TYPE_DISK;
-    }
+    const char* log_env = getenv("GT5P_STALL_LOG");
+    const bool to_file = !(log_env && *log_env == '0') && !gt5p_debug_logs_active() &&
+        GetFileType(GetStdHandle(STD_ERROR_HANDLE)) != FILE_TYPE_DISK;
     static char path[MAX_PATH] = "";
     int saved = -1, fd = -1;
     if (to_file) {

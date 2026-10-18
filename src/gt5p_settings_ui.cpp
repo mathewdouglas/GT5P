@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "gt5p_settings.h"
+#include "gt5p_debug_export.h"
 
 extern "C" {
 extern volatile int g_pad_input_blocked;        /* cellPad.c */
@@ -144,6 +145,13 @@ const std::vector<Item>& items()
           "PS3_VERBOSE", { {-1, L"Auto"}, {0, L"Off"}, {1, L"On"} },
           [](const Gt5pSettings& s) { return s.verbose_log; },
           [](Gt5pSettings& s, int v) { s.verbose_log = v; }, nullptr },
+        { L"DEBUG", L"Debug export",
+          L"Keep recent logs and enable Export debug report in F3 (or F8 while F3 is open). "
+          L"Saves a ZIP to logs/debug to attach to bug reports. Capture starts when enabled.",
+          nullptr, kOnOff,
+          [](const Gt5pSettings& s) { return s.debug_export ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.debug_export = v != 0; },
+          [](int v) { gt5p_debug_enable(v); } },
     };
     return v;
 }

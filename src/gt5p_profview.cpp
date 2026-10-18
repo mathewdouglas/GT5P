@@ -22,6 +22,8 @@
 #include <string.h>
 #include <windows.h>
 #include <tlhelp32.h>
+#include <windowsx.h>
+#include "gt5p_debug_export.h"
 
 #include "ppu_context.h"
 #include "sys_ppu_thread.h"
@@ -134,7 +136,8 @@ void sample_threads()
 
 HWND s_wnd, s_game;
 int s_shown;
-const int kW = 460, kH = 430;
+const int kW = 460, kH = 510;
+const RECT kExport = {8, 432, 258, 460}, kFolder = {266, 432, 452, 460};
 
 BOOL CALLBACK find_game(HWND h, LPARAM)
 {
@@ -250,7 +253,18 @@ void paint(HDC dc)
         text(dc, 8, y, RGB(220, 220, 220), "%-24.24s %4.0f%%", s_rows[i].name, pct);
     }
     LeaveCriticalSection(&s_rows_cs);
-    text(dc, 8, kH - 17, RGB(110, 110, 120), "F3 hides  |  GT5P_PROFVIEW=0 disables");
+    char message[256]; int state = gt5p_debug_status(message, sizeof message);
+    if (state) {
+        fill(dc, kExport.left, kExport.top, kExport.right, kExport.bottom,
+            state == 2 ? RGB(55, 55, 65) : RGB(40, 75, 110));
+        text(dc, 16, 439, RGB(240, 240, 250), "Export debug report [F8]");
+        fill(dc, kFolder.left, kFolder.top, kFolder.right, kFolder.bottom, RGB(45, 50, 60));
+        text(dc, 274, 439, RGB(220, 220, 230), "Open reports folder");
+    }
+    RECT status_rect = {8, 465, kW - 8, 494};
+    SetTextColor(dc, state == -1 ? RGB(255, 140, 120) : RGB(170, 190, 180));
+    DrawTextA(dc, message, -1, &status_rect, DT_WORDBREAK | DT_NOPREFIX);
+    text(dc, 8, kH - 15, RGB(110, 110, 120), "F3 hides  |  GT5P_PROFVIEW=0 disables");
     SelectObject(dc, of); DeleteObject(f);
 }
 
@@ -267,7 +281,17 @@ LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
         EndPaint(h, &ps);
         return 0;
     }
-    if (m == WM_NCHITTEST) return HTTRANSPARENT;
+    if (m == WM_NCHITTEST) {
+        POINT p = {GET_X_LPARAM(l), GET_Y_LPARAM(l)}; ScreenToClient(h, &p);
+        return gt5p_debug_enabled() && (PtInRect(&kExport, p) || PtInRect(&kFolder, p)) ? HTCLIENT : HTTRANSPARENT;
+    }
+    if (m == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (m == WM_LBUTTONUP && gt5p_debug_enabled()) {
+        POINT p = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
+        if (PtInRect(&kExport, p)) gt5p_debug_request(s_game);
+        else if (PtInRect(&kFolder, p)) gt5p_debug_open_folder();
+        return 0;
+    }
     if (m == WM_ERASEBKGND) return 1;
     return DefWindowProcA(h, m, w, l);
 }
@@ -280,13 +304,13 @@ DWORD WINAPI view_thread(LPVOID)
     RegisterClassA(&wc);
     /* Wait for the game window, then own the view by it so it stays above it. */
     while (!s_game) { Sleep(500); EnumWindows(find_game, 0); }
-    s_wnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+    s_wnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
                             wc.lpszClassName, "GT5P profiler", WS_POPUP, 0, 0, kW, kH,
                             s_game, NULL, wc.hInstance, NULL);
     SetLayeredWindowAttributes(s_wnd, 0, 225, LWA_ALPHA);
     if (s_shown) ShowWindow(s_wnd, SW_SHOWNOACTIVATE);
     ULONGLONG last_sample = 0;
-    int f3_was = 0;
+    int f3_was = 0, f8_was = 0;
     for (;;) {
         MSG msg;
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
@@ -298,11 +322,16 @@ DWORD WINAPI view_thread(LPVOID)
             ShowWindow(s_wnd, s_shown ? SW_SHOWNOACTIVATE : SW_HIDE);
         }
         f3_was = f3;
+        SHORT f8_key = GetAsyncKeyState(VK_F8);
+        int f8 = (f8_key & 0x8000) != 0;
+        if (((f8_key & 1) || (f8 && !f8_was)) && s_shown && GetForegroundWindow() == s_game)
+            gt5p_debug_request(s_game);
+        f8_was = f8;
         ULONGLONG t = GetTickCount64();
         if (t - last_sample >= 1000) { sample_threads(); last_sample = t; }
         if (s_shown) {
             POINT p = { 8, 8 }; ClientToScreen(s_game, &p);
-            SetWindowPos(s_wnd, NULL, p.x, p.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(s_wnd, NULL, p.x, p.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
             InvalidateRect(s_wnd, NULL, FALSE);
         }
         Sleep(100);
@@ -337,4 +366,23 @@ extern "C" void gt5p_start_profview(void)
     s_pv_on = 1;
     HANDLE h = CreateThread(NULL, 256 * 1024, view_thread, NULL, 0, NULL);
     if (h) CloseHandle(h);
+}
+
+extern "C" void gt5p_pv_export(FILE* out)
+{
+    if (s_pv_on <= 0) { fprintf(out, "Profiler disabled\n"); return; }
+    LONG n = s_fr_n; int have = n < kFrames ? (int)n : kFrames;
+    double now = now_s();
+    fprintf(out, "Total presents: %ld; last present age: %.3f s; last GPU time (may be stale): %.3f ms\n",
+        n, have ? now - s_fr[(n - 1) % kFrames].t : -1.0, (double)g_rsx_gpu_ms_last);
+    fprintf(out, "age_s,fifo_ms,present_ms,pump_ms\n");
+    for (int i = have; i > 0; i--) {
+        Frame f = s_fr[(n - i) % kFrames];
+        fprintf(out, "%.6f,%.6f,%.6f,%.6f\n", now - f.t, f.fifo * 1000, f.pres * 1000, f.pump * 1000);
+    }
+    if (TryEnterCriticalSection(&s_rows_cs)) {
+        fprintf(out, "CPU percent of one core: process=%.2f exited=%.2f\n", s_proc_pct, s_exited_pct);
+        for (int i = 0; i < s_nrows; i++) fprintf(out, "hosttid=%lu %.2f%% %.63s\n", s_rows[i].tid, s_rows[i].pct, s_rows[i].name);
+        LeaveCriticalSection(&s_rows_cs);
+    } else fprintf(out, "CPU sample busy\n");
 }

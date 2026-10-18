@@ -9,6 +9,66 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 86 - Opt-in F3 debug export for grid-preview failures (2026-10-19)
+
+**New reproduction, not fixed here:** the user loaded High Speed Ring at
+1080p, saw a correct grid preview, then reported a freeze and broken graphics.
+Their screenshots show large pale planes and corrupt grid text/materials.
+The changing title-bar draw counts and displayed 30 fps are not sufficient to
+diagnose a live stall or its cause. Do not infer that shader compilation caused
+this corruption, or merge it with the closed water-appearance report.
+
+**Usage:** F1 settings, DEBUG, Debug export On; reproduce; F3, Export debug
+report, or F8 with F3 visible. The timestamped ZIP goes to `logs/debug/` under
+the game root. F3 shows saving/saved/error status and an Open reports folder
+button. The settings key is `[debug].export_enabled`, false by default. It
+applies live. `GT5P_DEBUG_EXPORT=0` is an additional kill switch, not an opt-in;
+setting it to 1 cannot bypass the settings option. `GT5P_NO_SETTINGS` leaves
+export disabled. No log collector is started before the first opt-in. Turning
+Off blocks new exports, cancels a pending export before publication, clears
+the retained logs and stops retaining output. After first use, the forwarding
+threads remain until shutdown; normal stdout/stderr destinations are preserved.
+
+The report contains up to 2 MiB of recent stdout and stderr each; source/build
+identity, executable size/time, loaded settings and an explicit allowlist of
+runtime overrides; shader counters; PPU registers/HLE call sites, SPURS work
+groups and lane/ring state; FIFO position; recent renderer summaries; first-load
+milestone ages; and up to 512 presents of profiler history with last-present
+age and CPU samples. Settings and overrides are listed separately because some
+changes require restart. A running title bar is not used as an FPS measurement.
+This is a sampled diagnostic report, not an atomic save state or GPU replay.
+It excludes game files, shader source/bytecode, full memory and save data.
+Reports and screenshots remain gitignored under `logs/` or scratch.
+
+Export runs on its own worker and does not require a fresh present, GPU readback
+or guest-thread suspension. Existing stall-dump helpers now also accept a
+caller-owned FILE so the report does not temporarily redirect global stderr.
+Guest-memory reads in FIFO/work-group snapshots use bounded ReadProcessMemory
+on Windows, and sections have exception guards. No row-log lock is acquired for
+the manual report. A separate PrintWindow worker captures only the game client
+window as BMP, with a two-second wait and at most one outstanding screenshot
+thread. If it stalls, the archive omits the screenshot. A blocked-window test
+caught a synchronous GetWindowText call before that timeout; it was removed.
+The exporter cannot survive termination of the process or a complete OS hang.
+
+**Validation:** the normal BCUS98158 build passes with `GT5P_VM_INLINE=OFF`.
+`scripts/test/debug_export.ps1` compiles the real exporter/settings parser
+against small snapshot fixtures, without the game. Cases cover missing/Off
+settings, a rejected environment-only opt-in, the kill switch, NO_SETTINGS,
+bounded log wrapping and forwarding, repeated exports, live Off/On and log
+clearing, guarded snapshot failure, a blocked window, and an unwritable report
+directory. ZIP entries/CRCs and forwarded shutdown tails are checked.
+
+The 1080p live UI check (`debugexport-ui`, scratch settings) shows the option
+Off and F3 export controls absent, then On and controls immediately available.
+Clicking Export saved a valid 8.5 MB ZIP containing a 1920x1080 game-only image,
+logs, frame history and lane/ring/FIFO state. The image was inspected and the
+ZIP CRCs passed. A final rebuilt-game check also saves through F8 and verifies
+GPU details, milestones and last-present age; closing the game forwards the
+log tail. The pure upper-unit texture checks still pass in all three modes,
+and the refreshed runtime patch passes reverse-apply validation. These checks
+do not reproduce or fix the race corruption.
+
 ## Phase 85 - Water appearance matches the user's RPCS3 reference (2026-10-19)
 
 **Closed by reference comparison:** the user reported stretched ripples / dark

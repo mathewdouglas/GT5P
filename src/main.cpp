@@ -35,6 +35,7 @@
 
 #include "elf_loader.h"
 #include "gt5p_settings.h"
+#include "gt5p_debug_export.h"
 
 /* The lifter's function table, defined in the generated sources. Declared here
  * rather than including generated/ppu_recomp.h: that header defines its own
@@ -100,6 +101,16 @@ void gt5p_start_present_thread(void);     /* src/gt5p_present.cpp */
 #define GT5P_MAIN_STACK_SIZE 0x00100000u
 
 static ppu_context g_main_ctx;
+
+extern "C" void gt5p_debug_main(FILE* out)
+{
+    unsigned tid = (unsigned)g_main_ctx.thread_id;
+    fprintf(out, "Main PPU context: tid=%u hle=%s lr=%08llX ctr=%08llX\n",
+        tid, tid < 64 && g_hle_inflight[tid] ? g_hle_inflight[tid] : "-",
+        (unsigned long long)g_main_ctx.lr, (unsigned long long)g_main_ctx.ctr);
+    for (int r = 0; r < 32; r++) fprintf(out, "r%d=%016llX%s", r,
+        (unsigned long long)g_main_ctx.gpr[r], r % 4 == 3 ? "\n" : " ");
+}
 
 /* How the HLE libraries call back into lifted code (ps3emu/guest_call.h). The
  * runtime leaves the hook NULL and a library that finds it NULL skips its
@@ -640,6 +651,7 @@ static void window_closed(void)
 {
     printf("[GT5P] window closed; exiting\n");
     fflush(stdout); fflush(stderr);
+    gt5p_debug_shutdown();
     ExitProcess(0);
 }
 
@@ -716,6 +728,7 @@ int main(int argc, char* argv[])
     }
 
     rsx_d3d12_on_close = window_closed;
+    gt5p_debug_init();
 
     /* Schedule guest threads by their PS3 priority on two host cores, as the
      * console's two hardware threads would. Left to the host scheduler, about

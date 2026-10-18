@@ -132,6 +132,7 @@ add_executable(gt5p
     src/gt5p_present.cpp
     src/gt5p_settings.cpp
     src/gt5p_profview.cpp
+    src/gt5p_debug_export.cpp
     src/gt5p_settings_ui.cpp
     src/gt5p_shaderbusy.cpp
     src/gt5p_allocwatch.cpp
@@ -152,6 +153,14 @@ target_include_directories(gt5p PRIVATE
     ${PS3RECOMP_DIR}/runtime/memory
     ${PS3RECOMP_DIR}/runtime/syscalls
 )
+
+# Report identity only belongs to the export TU; never invalidate lifted code.
+execute_process(COMMAND git describe --always --dirty --abbrev=12
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE GT5P_REPORT_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE)
+configure_file(src/gt5p_build_info.h.in gt5p_build_info.h @ONLY)
+set_source_files_properties(src/gt5p_debug_export.cpp PROPERTIES
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}")
 
 # Scoped to main.cpp, the only file that reads them. On the whole target, any
 # change to one of these recompiles every lifted chunk -- ten files of ~35 MB
@@ -179,7 +188,7 @@ target_link_libraries(gt5p PRIVATE ps3recomp_runtime)
 
 if(WIN32)
     target_link_libraries(gt5p PRIVATE
-        ws2_32 xinput ole32 bcrypt
+        ws2_32 xinput ole32 bcrypt shell32
         d3d12 dxgi dxguid d3dcompiler)
     # SDL2.dll is loaded at run time, if present, to read controllers XInput
     # does not know. scripts/get_sdl2.ps1 fetches it into third_party/.

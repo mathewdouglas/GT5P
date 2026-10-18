@@ -4790,7 +4790,7 @@ index 5166a47..c627e66 100644
      if (!path || !sb)
          return CELL_EFAULT;
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c11..5288a1a 100644
+index f2b4c11..1749ba7 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -52,6 +52,7 @@
@@ -4814,7 +4814,7 @@ index f2b4c11..5288a1a 100644
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,13 +147,178 @@ static int pad_host_window_focused(void)
+@@ -140,13 +147,190 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
@@ -4884,6 +4884,18 @@ index f2b4c11..5288a1a 100644
 +{
 +    ULONGLONG at = pad_milestone_at(name);
 +    return at ? (long long)(GetTickCount64() - at) : -1;
++}
++
++/* Published milestones are immutable after s_ms_n advances. No wait on the
++ * loader's lock: a diagnostic request must also work while loading is stuck. */
++void pad_debug_milestones_to(FILE* out)
++{
++    LONG n = s_ms_n;
++    if (n > PAD_MS_MAX) n = PAD_MS_MAX;
++    const ULONGLONG now = GetTickCount64();
++    fprintf(out, "Milestones (first load, not proof of the currently active page):\n");
++    for (LONG i = 0; i < n; i++)
++        fprintf(out, "  %.47s age_ms=%llu\n", s_ms[i].name, (unsigned long long)(now - s_ms[i].at));
 +}
 +
 +/* PAD_HOLD entries may also be "@<milestone>+<from_ms>-<to_ms>:<KEY>": the
@@ -4996,7 +5008,7 @@ index f2b4c11..5288a1a 100644
      if (!pad_host_window_focused()) {
          /* Release everything on focus loss, or a key held while alt-tabbing
           * would stay down forever. */
-@@ -390,6 +562,256 @@ static void pad_shutdown_backend(void)
+@@ -390,6 +574,256 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -5253,7 +5265,7 @@ index f2b4c11..5288a1a 100644
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -407,7 +829,6 @@ static void pad_shutdown_backend(void)
+@@ -407,7 +841,6 @@ static void pad_shutdown_backend(void)
   * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
   * a real DualShock 3's own report rate), so no game can tell the difference,
   * including one sampling for button-press edges. */
@@ -5261,7 +5273,7 @@ index f2b4c11..5288a1a 100644
  
  static unsigned long long pad_now_ms(void)
  {
-@@ -421,13 +842,44 @@ static unsigned long long pad_now_ms(void)
+@@ -421,13 +854,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -5309,7 +5321,7 @@ index f2b4c11..5288a1a 100644
      s_last_ms = now;
      /* A real pad streams reports at roughly this rate whether or not anything
       * changed, and libpad buffers them; a fresh sweep is a fresh report for
-@@ -435,12 +887,42 @@ static void pad_poll_backend(void)
+@@ -435,12 +899,42 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT
@@ -5744,7 +5756,7 @@ index a0d6dce..1f36e9b 100644
  /* Base64 encode/decode (used for HTTP Basic auth) */
  s32 cellHttpUtilBase64Encode(char* out, u32 outSize,
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 688ff04..3623654 100644
+index 688ff04..ce0194b 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -10,6 +10,8 @@
@@ -6113,7 +6125,7 @@ index 688ff04..3623654 100644
      vm_write32((u32)attr_ea + WKATTR_NAME_CLASS, 0);
      vm_write32((u32)attr_ea + WKATTR_NAME_INST,  0);
      vm_write32((u32)attr_ea + WKATTR_HOOK,     0);
-@@ -1511,28 +1773,598 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1511,28 +1773,618 @@ static WklPm* spurs_resolve_pm(u32 wid)
   * then busy-waits at the cross-SPU barrier for lane 1, which the sequential
   * loop can never advance (SPU 1 hasn't run). Concurrency is required, not an
   * optimization: SPU 0's barrier poll observes SPU 1's atomic lane update live. */
@@ -6628,35 +6640,55 @@ index 688ff04..3623654 100644
 +}
 +/* For a stall report (gt5p_present.cpp): every workload's host-side group
 + * state and the guest's contention and ready bytes, and the kernel event log. */
-+void cellSpurs_debug_dump(void)
++void cellSpurs_debug_dump_to(FILE* out)
 +{
 +    for (u32 w = 0; w < CELL_SPURS_MAX_WORKLOAD; w++) {
 +        if (!s_workloads[w].in_use) continue;
 +        const struct spurs_wkl_group* g = &s_wkl_group[w];
 +        const u32 ea = g->a.ea;
-+        fprintf(stderr, "[stall]   wid=%u busy=%ld lanes=%u remaining=%ld working=%ld dispatches=%u",
++        fprintf(out, "[stall]   wid=%u busy=%ld lanes=%u remaining=%ld working=%ld dispatches=%u",
 +                w, (long)g->busy, g->lanes, (long)g->remaining, (long)g->working, g->dispatch_n);
-+        if (ea)
-+            fprintf(stderr, " guest cont=%u ready=%u", *(vm_base + ea + SPURS_WKL_CURCONT + w),
-+                    *(vm_base + ea + SPURS_WKL_READY1 + w));
-+        fprintf(stderr, " lane_in=");
-+        for (int i = 0; i < 8; i++) fprintf(stderr, "%u", g->lane_in[i]);
-+        fprintf(stderr, " idle=");
-+        for (int i = 0; i < 8; i++) fprintf(stderr, "%u.", g->idle_streak[i]);
-+        fprintf(stderr, " arg=%llX%c", (unsigned long long)g->a.arg, 10);
++        if (ea) {
++            u8 cont = 0, ready = 0;
++#ifdef _WIN32
++            ReadProcessMemory(GetCurrentProcess(), vm_base + ea + SPURS_WKL_CURCONT + w, &cont, 1, NULL);
++            ReadProcessMemory(GetCurrentProcess(), vm_base + ea + SPURS_WKL_READY1 + w, &ready, 1, NULL);
++#else
++            cont = *(vm_base + ea + SPURS_WKL_CURCONT + w); ready = *(vm_base + ea + SPURS_WKL_READY1 + w);
++#endif
++            fprintf(out, " guest cont=%u ready=%u", cont, ready);
++        }
++        fprintf(out, " lane_in=");
++        for (int i = 0; i < 8; i++) fprintf(out, "%u", g->lane_in[i]);
++        fprintf(out, " idle=");
++        for (int i = 0; i < 8; i++) fprintf(out, "%u.", g->idle_streak[i]);
++        fprintf(out, " arg=%llX%c", (unsigned long long)g->a.arg, 10);
 +        /* A WWS job list's header: list pointers at +0x30, then a row per
 +         * queue from +0x40 (published head, then per-SPU progress). */
 +        const u32 hd = (u32)g->a.arg;
 +        if (hd >= 0x10000 && hd < 0x40000000 && !(hd & 0xF))
 +            for (u32 o = 0x20; o < 0x90; o += 16) {
-+                const u8* q = vm_base + hd + o;
-+                fprintf(stderr, "[stall]     %08X:", hd + o);
-+                for (int k = 0; k < 16; k++) fprintf(stderr, "%s%02X", (k & 1) ? "" : " ", q[k]);
-+                fprintf(stderr, "%c", 10);
++                u8 q[16];
++#ifdef _WIN32
++                SIZE_T got = 0;
++                if (!ReadProcessMemory(GetCurrentProcess(), vm_base + hd + o, q, sizeof q, &got) || got != sizeof q) {
++                    fprintf(out, "[stall]     %08X: unavailable\n", hd + o); continue;
++                }
++#else
++                memcpy(q, vm_base + hd + o, sizeof q);
++#endif
++                fprintf(out, "[stall]     %08X:", hd + o);
++                for (int k = 0; k < 16; k++) fprintf(out, "%s%02X", (k & 1) ? "" : " ", q[k]);
++                fprintf(out, "%c", 10);
 +            }
 +    }
++    fflush(out);
++}
++
++void cellSpurs_debug_dump(void)
++{
++    cellSpurs_debug_dump_to(stderr);
 +    { extern void spu_rowlog_dump(void); spu_rowlog_dump(); }
-+    fflush(stderr);
 +}
 +
 +/* SPURS_KERN_STAT=1: every two seconds, which workload the kernel thread is
@@ -6715,7 +6747,7 @@ index 688ff04..3623654 100644
      static volatile long s_pm_off = -1;
      if (s_pm_off < 0) s_pm_off = getenv("PS3_NO_SPURS_PM") ? 1 : 0;
  
-@@ -1554,7 +2386,9 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1554,7 +2406,9 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
      int changes_logged = 0;
  
      for (;;) {
@@ -6726,7 +6758,7 @@ index 688ff04..3623654 100644
          u32 ea = si->ea;
          if (!ea || s_pm_off) continue;
  
-@@ -1605,6 +2439,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1605,6 +2459,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
              if (!(enabled & (0x80000000u >> wid))) continue;
              if (*(vm_base + ea + SPURS_WKL_STATE1 + wid) != 2) continue;
              if (!s_workloads[wid].in_use || s_workloads[wid].spurs_ea != ea) continue;
@@ -6734,7 +6766,7 @@ index 688ff04..3623654 100644
  
              /* A SPURS policy module is a PERSISTENT SPU program. The real kernel
               * schedules an ENABLED, runnable workload onto an SPU and the module
-@@ -1626,7 +2461,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1626,7 +2481,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
              volatile u8* rdy = vm_base + ea + SPURS_WKL_READY1 + wid;
              u32 sig = vm_read32(ea + SPURS_WKL_SIGNAL1) >> 16;    /* be u16 @0x70 */
              int kicked = (*rdy != 0) || ((sig & (0x8000u >> wid)) != 0);
@@ -6753,7 +6785,7 @@ index 688ff04..3623654 100644
              if (sig & (0x8000u >> wid))
                  vm_write32(ea + SPURS_WKL_SIGNAL1,
                             (vm_read32(ea + SPURS_WKL_SIGNAL1) & ~((0x8000u >> wid) << 16)));
-@@ -1694,12 +2539,52 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1694,12 +2559,52 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                if (s_fs == -2) { const char* e = getenv("SPURS_FORCE_SPUS");
                  s_fs = e ? atoi(e) : -1; }
                if (s_fs > 0) maxcont = (u8)(s_fs > 6 ? 6 : s_fs); }
@@ -6808,7 +6840,7 @@ index 688ff04..3623654 100644
                  } else {
                      /* Run the workload's virtual SPUs CONCURRENTLY (see
                       * spurs_pm_worker): each lane advances in parallel so the
-@@ -1712,6 +2597,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1712,6 +2617,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                          wa[nth].pm = pm; wa[nth].pm_size = sz;
                          wa[nth].arg = arg; wa[nth].wid = wid; wa[nth].ea = ea;
                          wa[nth].spu_num = sn;
@@ -6816,7 +6848,7 @@ index 688ff04..3623654 100644
                          th[nth] = CreateThread(NULL, 1u << 20, spurs_pm_worker, &wa[nth], 0, NULL);
                      }
                      spu_run_policy_module(r->fn, r->image_id, pm, sz, arg, wid, ea, 0);
-@@ -1721,7 +2607,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1721,7 +2627,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                      }
                  }
              }
@@ -6825,7 +6857,7 @@ index 688ff04..3623654 100644
              /* "Found work" heuristic: a module that did something polls the
               * kernel for MORE work before exiting (selectWorkload calls >0);
               * an idle module exits immediately with polls==0. Grow the idle
-@@ -1741,8 +2627,15 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1741,8 +2647,15 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      s_workloads[wid].readyCount = value;
@@ -6843,7 +6875,7 @@ index 688ff04..3623654 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -2159,6 +3052,7 @@ static struct {
+@@ -2159,6 +3072,7 @@ static struct {
      u16 max_grab;
      int run_count;
      volatile long running;   /* 1 while a host thread walks this chain */
@@ -6851,7 +6883,7 @@ index 688ff04..3623654 100644
  } s_jobchains[MAX_JOBCHAINS];
  
  static void jc_dump_commands(const char* tag, u32 ea, int max_words)
-@@ -2386,11 +3280,22 @@ static struct {
+@@ -2386,11 +3300,22 @@ static struct {
      u32 ea;          /* guest CellSpursJobGuard address (128-byte aligned) */
      u32 count;       /* notifications still outstanding                    */
      u32 reset;       /* value to restore when autoReset is set             */
@@ -6875,7 +6907,7 @@ index 688ff04..3623654 100644
  static int jg_find(u32 ea)
  {
      for (int i = 0; i < MAX_JOBGUARDS; i++)
-@@ -2447,9 +3352,26 @@ s32 cellSpursJobGuardNotify(u64 guard_ea)
+@@ -2447,9 +3372,26 @@ s32 cellSpursJobGuardNotify(u64 guard_ea)
       * OBSERVED zero, which threw away any notify that arrived while the job
       * was still running -- the title notified 6 times and the chain completed
       * 2 laps, so the thread waiting on the other 4 completions never woke. */
@@ -6905,7 +6937,7 @@ index 688ff04..3623654 100644
        s_jobguards[i].count = remaining;
        vm_write32(ea, remaining); }
      { static int _n = 0;
-@@ -2474,22 +3396,49 @@ s32 cellSpursJobGuardReset(u64 guard_ea)
+@@ -2474,22 +3416,49 @@ s32 cellSpursJobGuardReset(u64 guard_ea)
   * chain then gives up this pass rather than spinning the walker thread
   * forever). An unknown guard opens immediately -- a chain guarded by something
   * we never saw initialised must not deadlock the walker. */
@@ -6960,7 +6992,7 @@ index 688ff04..3623654 100644
  #else
          usleep(1000);
  #endif
-@@ -2527,6 +3476,16 @@ static u64 spurs_event_data3_probe(void)
+@@ -2527,6 +3496,16 @@ static u64 spurs_event_data3_probe(void)
      return (u64)(unsigned)v;
  }
  
@@ -6977,7 +7009,7 @@ index 688ff04..3623654 100644
  static void jc_signal_done(u32 jc_ea, int job_index)
  {
      /* Carry the job's mailbox answer in the completion event. On hardware the
-@@ -2541,6 +3500,9 @@ static void jc_signal_done(u32 jc_ea, int job_index)
+@@ -2541,6 +3520,9 @@ static void jc_signal_done(u32 jc_ea, int job_index)
       * so a data2 pinned at 0 never ends that loop -- with the chain's lwmutex
       * held, which blocks the main thread's teardown behind it. A chain-level
       * signal (job_index < 0) sends 0. */
@@ -6987,7 +7019,7 @@ index 688ff04..3623654 100644
      u64 d2 = (u64)(unsigned)(job_index < 0 ? 0 : job_index);
      u64 mbox = 0, d3 = 0;
      (void)spurs_event_data3_probe();   /* prime d3_probe_valid */
-@@ -2582,10 +3544,83 @@ static void jc_signal_done(u32 jc_ea, int job_index)
+@@ -2582,10 +3564,83 @@ static void jc_signal_done(u32 jc_ea, int job_index)
      }
  }
  
@@ -6998,7 +7030,7 @@ index 688ff04..3623654 100644
 + * the executable's base, to look up in a linker map. */
 +static volatile long s_jc_sampler_on = 0;
 +static DWORD WINAPI jc_sampler(LPVOID p)
- {
++{
 +    HANDLE th = (HANDLE)p;
 +    static struct { unsigned long long rva; unsigned n; } b[4096];
 +    unsigned nb = 0, total = 0;
@@ -7043,7 +7075,7 @@ index 688ff04..3623654 100644
 +#endif
 +
 +static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc, volatile long* stop)
-+{
+ {
 +#ifdef _WIN32
 +    /* On the console a chain's jobs run on SPUs nothing else can take.
 +     * Here they share cores with the title's own threads, and a walker
@@ -7072,7 +7104,7 @@ index 688ff04..3623654 100644
      /* Bound IDLE steps, not total steps. A SPURS job chain is frequently a
       * SERVICE LOOP -- guard, job, sync, next, repeat -- and is meant to run for
       * the lifetime of the subsystem. A flat cap on total commands therefore
-@@ -2596,14 +3631,48 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2596,14 +3651,48 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
      int idle = 0;
      for (;; idle++) {
          if (idle > 4096) break;
@@ -7122,7 +7154,7 @@ index 688ff04..3623654 100644
              idle = 0;                    /* real work: the chain is healthy */
              /* Signal per JOB, not per lap. The application waits once for each
               * unit of work it queued -- this title notified the guard 7 times
-@@ -2619,7 +3688,7 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2619,7 +3708,7 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
          if (op == 7) {
              if (ext == (7 | (15 << 3))) {                     /* END */
                  printf("[cellSpurs] chain 0x%08X: END after %d job(s)\n", jc_ea, jobs);
@@ -7131,7 +7163,7 @@ index 688ff04..3623654 100644
                  return;
              }
              if (ext == (7 | (14 << 3))) {                     /* RET */
-@@ -2633,7 +3702,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2633,7 +3722,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
          }
          if (op == 7 && ext == (7 | (1 << 3))) {           /* GUARD */
              u32 g_ea = (u32)(cmd & ~127ull);
@@ -7141,7 +7173,7 @@ index 688ff04..3623654 100644
              pc += 8; continue;
          }
          /* NOP(0) / SYNC+LWSYNC(2, one virtual SPU: nothing to wait for) /
-@@ -2647,6 +3717,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2647,6 +3737,8 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
  
  static DWORD WINAPI jc_thread(LPVOID p)
  {
@@ -7150,7 +7182,7 @@ index 688ff04..3623654 100644
      int slot = (int)(intptr_t)p;
      /* TIMING PROBE (SPURS_JC_DELAY=ms): the real jm2 chain walker is async and
       * picks up jobs as the PPU appends them + fills their descriptors. Our walk
-@@ -2656,7 +3728,8 @@ static DWORD WINAPI jc_thread(LPVOID p)
+@@ -2656,7 +3748,8 @@ static DWORD WINAPI jc_thread(LPVOID p)
      { const char* d = getenv("SPURS_JC_DELAY");
        if (d && *d) Sleep((unsigned)atoi(d)); }
      jc_execute(s_jobchains[slot].entry_ea, s_jobchains[slot].jc_ea,
@@ -7160,7 +7192,7 @@ index 688ff04..3623654 100644
      s_jobchains[slot].running = 0;
      /* Tell the application the chain is done. Without this the walk finishes
       * in silence and a thread waiting on the attached queue never runs again. */
-@@ -2691,8 +3764,13 @@ static s32 jc_start(u64 jc_ea, const char* who)
+@@ -2691,8 +3784,13 @@ static s32 jc_start(u64 jc_ea, const char* who)
              jc_dump_commands(who, s_jobchains[i].entry_ea, 16);
          }
          if (s_off || !s_jobchains[i].entry_ea) return CELL_OK;
@@ -7174,7 +7206,7 @@ index 688ff04..3623654 100644
              HANDLE th = CreateThread(NULL, 1u << 20, jc_thread, (LPVOID)(intptr_t)i, 0, NULL);
              if (th) CloseHandle(th);
              else s_jobchains[i].running = 0;
-@@ -2727,7 +3805,14 @@ s32 cellSpursShutdownJobChain(u64 jc_ea)
+@@ -2727,7 +3825,14 @@ s32 cellSpursShutdownJobChain(u64 jc_ea)
      if (_n++ < 8) printf("[cellSpurs] ShutdownJobChain(jc=0x%08X)\n", (u32)jc_ea);
      for (int i = 0; i < MAX_JOBCHAINS; i++) {
          if (s_jobchains[i].jc_ea == (u32)jc_ea) {
@@ -7190,7 +7222,7 @@ index 688ff04..3623654 100644
              return CELL_OK;
          }
      }
-@@ -3009,12 +4094,63 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3009,12 +4114,63 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      u32 se = (u32)spurs_ea;
      *(vm_base + base + 0x20) = *(vm_base + se + SPURS_WKL_CURCONT + wid);  /* contention   */
@@ -7293,7 +7325,7 @@ index 071b9ec..74fc692 100644
  }
  
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb0464..e0e97fc 100644
+index cdb0464..384e032 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,6 +14,7 @@
@@ -7477,24 +7509,42 @@ index cdb0464..e0e97fc 100644
  static void gcm_rsx_process_fifo_unlocked(void);
  
  /* Kick event: a game thread whose fence wait finds the queue DRY signals the
-@@ -1459,6 +1561,16 @@ void cellGcm_ref_on_poll(void)
+@@ -1459,6 +1561,34 @@ void cellGcm_ref_on_poll(void)
          SetEvent(s_gcm_kick_ev);       /* dry: ask the present thread to walk */
  }
  
 +/* For a stall report (gt5p_present.cpp): where the walker is. */
-+void cellGcm_debug_dump(void)
++static int gcm_debug_read32(u32 ea, u32* out)
 +{
-+    const u32 put = vm_read32(GCM_CONTROL_GUEST_ADDR + 0);
-+    const u32 gea = gcm_io2ea(s_fifo_getoff);
-+    fprintf(stderr, "[stall]   fifo get io=%08X (ea %08X) put=%08X call=%08X park_ea=%08X word=%08X\n",
-+            s_fifo_getoff, gea, put, s_fifo_calloff, s_walk_park_ea, gea ? vm_read32(gea) : 0);
-+    fflush(stderr);
++    u8 bytes[4];
++#ifdef _WIN32
++    SIZE_T got = 0;
++    if (!vm_base || !ReadProcessMemory(GetCurrentProcess(), vm_base + ea, bytes, sizeof bytes, &got) || got != sizeof bytes)
++        return 0;
++#else
++    memcpy(bytes, vm_base + ea, sizeof bytes);
++#endif
++    *out = (u32)bytes[0] << 24 | (u32)bytes[1] << 16 | (u32)bytes[2] << 8 | bytes[3];
++    return 1;
 +}
++
++void cellGcm_debug_dump_to(FILE* out)
++{
++    u32 put = 0, word = 0;
++    const u32 gea = gcm_io2ea(s_fifo_getoff);
++    const int have_put = gcm_debug_read32(GCM_CONTROL_GUEST_ADDR, &put);
++    const int have_word = gea && gcm_debug_read32(gea, &word);
++    fprintf(out, "[stall]   fifo get io=%08X (ea %08X) put=%08X call=%08X park_ea=%08X word=%08X mapped=%d/%d\n",
++            s_fifo_getoff, gea, put, s_fifo_calloff, s_walk_park_ea, word, have_put, have_word);
++    fflush(out);
++}
++
++void cellGcm_debug_dump(void) { cellGcm_debug_dump_to(stderr); }
 +
  void cellGcm_rsx_process_fifo(void)
  {
      AcquireSRWLockExclusive(&s_gcm_fifo_lock);
-@@ -1468,6 +1580,17 @@ void cellGcm_rsx_process_fifo(void)
+@@ -1468,6 +1598,17 @@ void cellGcm_rsx_process_fifo(void)
  
  static void gcm_rsx_process_fifo_unlocked(void)
  {
@@ -7512,7 +7562,7 @@ index cdb0464..e0e97fc 100644
      { static unsigned _n = 0; static unsigned long long _t0 = 0;
        extern unsigned long long ps3_ms_now(void);
        _n++;
-@@ -1531,9 +1654,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1531,9 +1672,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
      if (getenv("GCM_DRAINDBG")) {
          static int n = 0;
          if (n++ % 60 == 0)
@@ -7525,7 +7575,7 @@ index cdb0464..e0e97fc 100644
      }
  
      /* GCM_SCANREF=1 (one-shot): list every NV406E_SET_REFERENCE actually
-@@ -1614,6 +1738,19 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1614,6 +1756,19 @@ static void gcm_rsx_process_fifo_unlocked(void)
          s_tr_w[s_tr_i % GCM_TRACE_N] = w;
          s_tr_i++;
          u32 type = w >> 29;
@@ -7545,7 +7595,7 @@ index cdb0464..e0e97fc 100644
  
          if ((w & 0xFFFF0000u) == 0xFEAD0000u) {
              /* lv1 driver flip: statically-linked libgcm cellGcmSetFlip writes
-@@ -1653,12 +1790,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1653,12 +1808,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
               * "Command Buffer Overflow" forever. Past the threshold keep
               * draining -- the intermediate presents are frames we are too far
               * behind to show anyway. No-op for a title that is keeping up. */
@@ -7603,7 +7653,7 @@ index cdb0464..e0e97fc 100644
          if (type == 1) {                       /* JUMP: 0x20000000 | offset */
              { static int _rd = -1; if (_rd < 0) _rd = getenv("GCM_RECDBG") ? 1 : 0;
                if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
-@@ -1672,14 +1851,66 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1672,14 +1869,66 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * times in one Twisted Metal run, which is the drain burning the
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
@@ -7672,7 +7722,7 @@ index cdb0464..e0e97fc 100644
                    break;
                }
                s_fifo_getoff = tgt; }
-@@ -1688,6 +1919,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1688,6 +1937,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          if ((w & 3) == 2) {                    /* CALL: offset | 2 */
              { u32 tgt = w & 0x1FFFFFFCu;
                if (!gcm_io2ea(tgt)) { gcm_fifo_bad_branch("CALL", tgt, w); gcm_fifo_resync_why("unmapped-CALL", &s_fifo_getoff, put); break; }
@@ -7680,7 +7730,7 @@ index cdb0464..e0e97fc 100644
                s_fifo_calloff = s_fifo_getoff + 4;
                s_fifo_getoff  = tgt; }
              continue;
-@@ -1743,7 +1975,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1743,7 +1993,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      { static int sn = 0; if (getenv("GCM_RECDBG") && sn++ < 12)
                          fprintf(stderr, "[SEMA] m=0x%02X v=0x%08X off=0x%X\n", m, v, s_sema_offset); }
                      if (m == 0x64u)      s_sema_offset = v;
@@ -7711,7 +7761,7 @@ index cdb0464..e0e97fc 100644
                      else if (m == 0x68u && vm_read32(la) != v) {
              /* GCM_SEMA_ACQUIRE=1 makes ACQUIRE actually block, which is what
               * the hardware does. Off by default: a title whose label nothing
-@@ -1775,7 +2029,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1775,7 +2047,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
                                m, vm_read32(dea)); }
                  if (subch == 7 && m == 0x0B00u) {
                      extern void rsx_raise_user_cmd(u32 arg);
@@ -7731,7 +7781,7 @@ index cdb0464..e0e97fc 100644
                      continue;
                  }
                  /* GCM_SUBCH1_3D=1: treat subchannel 1 as the 3D object too.
-@@ -1878,6 +2143,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1878,6 +2161,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  } else if (mfull == 0xE920u || mfull == 0xE924u) {
                      cellGcmSetFlipCommand(vm_read32(dea) & 7u);
                  } else if (subch == 0 || (subch == 1 && !s1_2d)) {
@@ -7739,7 +7789,7 @@ index cdb0464..e0e97fc 100644
                      rsx_process_method(&s_state, m, vm_read32(dea));
                      /* NV406E_SET_REFERENCE: queue the fence value for PACED
                       * publication (gcm_ref_publish below) instead of letting a
-@@ -1887,17 +2153,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1887,17 +2171,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -7778,7 +7828,7 @@ index cdb0464..e0e97fc 100644
              }
              s_fifo_getoff += 4 + count * 4;
              continue;
-@@ -1948,8 +2233,37 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1948,8 +2251,37 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -7816,7 +7866,7 @@ index cdb0464..e0e97fc 100644
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
  
-@@ -1957,6 +2271,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1957,6 +2289,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
       * value stays observable to equality-waiters. The wrap recycle path polls
       * the drained EA. */
@@ -7828,7 +7878,7 @@ index cdb0464..e0e97fc 100644
      if (getenv("GCM_DRAINDBG")) {
          static int n2 = 0;
          if (n2++ % 60 == 0)
-@@ -2189,6 +2508,7 @@ u32 cellGcm_display_buffer_count(void)
+@@ -2189,6 +2526,7 @@ u32 cellGcm_display_buffer_count(void)
  
  static s32 gcm_flip_request(u32 bufferId, int in_fifo)
  {
@@ -7836,7 +7886,7 @@ index cdb0464..e0e97fc 100644
      /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
       * which answers "did it ever flip?" and not "is it still flipping, and how
       * fast?" -- the question that matters when a title stops appearing on
-@@ -2331,6 +2651,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
+@@ -2331,6 +2669,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
  s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
  {
      (void)ctx;  /* command buffer context -- not used in HLE */
@@ -7844,7 +7894,7 @@ index cdb0464..e0e97fc 100644
  
      if (bufferId >= CELL_GCM_MAX_DISPLAY_BUFFER_NUM)
          return CELL_GCM_ERROR_INVALID_VALUE;
-@@ -2339,6 +2660,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2339,6 +2678,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
          return CELL_GCM_ERROR_INVALID_VALUE;
  
      printf("[cellGcmSys] SetPrepareFlip(bufferId=%u)\n", bufferId);
@@ -7852,7 +7902,7 @@ index cdb0464..e0e97fc 100644
  
      s_current_display_buffer_id = bufferId;
      s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
-@@ -2352,6 +2674,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2352,6 +2692,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
      if (s_flip_handler_opd && g_ps3_guest_caller && !gcm_flipcb_on_tick_only())
          g_ps3_guest_caller(s_flip_handler_opd, 0, 0, 0, 0, 0, 0, 0, 0);
  
@@ -8409,7 +8459,7 @@ index 4a791bb..f7ec038 100644
      /* Texture */
      void (*bind_texture)(void* userdata, u32 unit, const rsx_texture_state* tex);
 diff --git a/libs/video/rsx_d3d12_backend.c b/libs/video/rsx_d3d12_backend.c
-index 68929ed..36bf152 100644
+index 68929ed..0ef7644 100644
 --- a/libs/video/rsx_d3d12_backend.c
 +++ b/libs/video/rsx_d3d12_backend.c
 @@ -16,6 +16,7 @@
@@ -8730,10 +8780,12 @@ index 68929ed..36bf152 100644
  
      /* Stats */
      u64 frame_count;
-@@ -348,6 +470,33 @@ typedef struct {
+@@ -348,6 +470,35 @@ typedef struct {
  } D3D12State;
  
  static D3D12State s_d3d;
++static char s_debug_adapter[512] = "default adapter (name unavailable)";
++static u64 s_debug_vram;
 +/* One frame's records and what the replay needs of them (RSX_PRESENT_THREAD,
 + * Phase 58). The FIFO walker records frame N+1 into one set while the
 + * present thread replays frame N from the other. FR is the set the calling
@@ -8764,7 +8816,7 @@ index 68929ed..36bf152 100644
  char g_rsx_title_base[128] = "ps3recomp";
  static u32 s_dbg_last_draws = 0;
  static u64 s_req_verts = 0, s_req_draws = 0, s_drop_draws = 0;
-@@ -363,6 +512,8 @@ static u64 s_req_verts = 0, s_req_draws = 0, s_drop_draws = 0;
+@@ -363,6 +514,8 @@ static u64 s_req_verts = 0, s_req_draws = 0, s_drop_draws = 0;
   * Feeding it the previous frame costs one frame of latency, which for a water
   * reflection is not visible. */
  static ID3D12Resource* s_screen_copy = NULL;
@@ -8773,7 +8825,7 @@ index 68929ed..36bf152 100644
  /* Sub-viewport render-to-texture. This title renders its reflection/refraction
   * pre-pass into a REGION of the same surface (vp 0,208 512x512 and 0,208
   * 1024x512, cmask=F) and then samples a texture of exactly that size. On
-@@ -458,10 +609,13 @@ static u32 s_duck_off = 0;   /* as RESOLVED (what the uploader sees)   */
+@@ -458,10 +611,13 @@ static u32 s_duck_off = 0;   /* as RESOLVED (what the uploader sees)   */
   * spend an afternoon optimising the wrong loop. */
  static double s_perf_tex = 0.0, s_perf_frame = 0.0, s_perf_vtx = 0.0, s_perf_rf = 0.0;
  static double s_perf_gpu = 0.0, s_perf_pre = 0.0, s_perf_srv = 0.0, s_perf_pso = 0.0;
@@ -8787,7 +8839,7 @@ index 68929ed..36bf152 100644
  static double perf_now(void)
  {
      LARGE_INTEGER f, c;
-@@ -474,6 +628,261 @@ static int perf_on(void)
+@@ -474,6 +630,261 @@ static int perf_on(void)
      if (v < 0) { const char* e = getenv("PERF"); v = e ? atoi(e) : 0; }
      return v;
  }
@@ -9049,7 +9101,7 @@ index 68929ed..36bf152 100644
  /* DBG_LOCK: running clip-space centroid of the tracked mesh (RSX_DBG_VTX's
   * texture), so the debug camera can follow it. The ducks are driven by the
   * physics sim and drift every frame, so a fixed DBG_CENTER loses them as soon
-@@ -490,15 +899,51 @@ static u32    s_lock_n  = 0;
+@@ -490,15 +901,51 @@ static u32    s_lock_n  = 0;
   * Win32 window
   * -----------------------------------------------------------------------*/
  
@@ -9101,7 +9153,7 @@ index 68929ed..36bf152 100644
          return 0;
      case WM_KEYDOWN:
          if (wp == VK_ESCAPE) {
-@@ -510,7 +955,7 @@ static LRESULT CALLBACK d3d12_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+@@ -510,7 +957,7 @@ static LRESULT CALLBACK d3d12_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
      return DefWindowProcA(hwnd, msg, wp, lp);
  }
  
@@ -9110,7 +9162,7 @@ index 68929ed..36bf152 100644
  {
      WNDCLASSEXA wc = {0};
      wc.cbSize = sizeof(wc);
-@@ -535,6 +980,45 @@ static HWND create_window(u32 width, u32 height, const char* title)
+@@ -535,6 +982,45 @@ static HWND create_window(u32 width, u32 height, const char* title)
          NULL, NULL, GetModuleHandle(NULL), NULL);
  }
  
@@ -9156,7 +9208,16 @@ index 68929ed..36bf152 100644
  /* ---------------------------------------------------------------------------
   * D3D12 initialization
   * -----------------------------------------------------------------------*/
-@@ -695,7 +1179,7 @@ static int init_d3d12(u32 width, u32 height)
+@@ -594,6 +1080,8 @@ static int init_d3d12(u32 width, u32 height)
+                     SUCCEEDED(D3D12CreateDevice((IUnknown*)adapter,
+                         D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device,
+                         (void**)&s_d3d.device))) {
++                    WideCharToMultiByte(CP_UTF8, 0, ad.Description, -1, s_debug_adapter, sizeof s_debug_adapter, NULL, NULL);
++                    s_debug_vram = ad.DedicatedVideoMemory;
+                     printf("[D3D12] adapter: %ls (VRAM %llu MB)\n", ad.Description,
+                            (unsigned long long)(ad.DedicatedVideoMemory >> 20));
+                     adapter->lpVtbl->Release(adapter);
+@@ -695,7 +1183,7 @@ static int init_d3d12(u32 width, u32 height)
       * ---------------------------------------------------------------*/
      {
          D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc = {0};
@@ -9165,7 +9226,7 @@ index 68929ed..36bf152 100644
          dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
          hr = s_d3d.device->lpVtbl->CreateDescriptorHeap(
              s_d3d.device, &dsv_heap_desc, &IID_ID3D12DescriptorHeap,
-@@ -1040,7 +1524,7 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1040,7 +1528,7 @@ static int init_d3d12(u32 width, u32 height)
          {
              D3D12_DESCRIPTOR_HEAP_DESC hd = {0};
              hd.Type  = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -9174,7 +9235,7 @@ index 68929ed..36bf152 100644
              hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
              hr = s_d3d.device->lpVtbl->CreateDescriptorHeap(
                  s_d3d.device, &hd, &IID_ID3D12DescriptorHeap, (void**)&s_d3d.srv_heap);
-@@ -1055,7 +1539,7 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1055,7 +1543,7 @@ static int init_d3d12(u32 width, u32 height)
                  nv.Texture2D.MipLevels = 1;
                  D3D12_CPU_DESCRIPTOR_HANDLE hh;
                  s_d3d.srv_heap->lpVtbl->GetCPUDescriptorHandleForHeapStart(s_d3d.srv_heap, &hh);
@@ -9183,7 +9244,7 @@ index 68929ed..36bf152 100644
                      s_d3d.device->lpVtbl->CreateShaderResourceView(s_d3d.device, NULL, &nv, hh);
                      hh.ptr += s_d3d.srv_inc;
                  }
-@@ -1066,7 +1550,7 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1066,7 +1554,7 @@ static int init_d3d12(u32 width, u32 height)
          {
              D3D12_DESCRIPTOR_HEAP_DESC hd = {0};
              hd.Type  = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -9192,7 +9253,7 @@ index 68929ed..36bf152 100644
              hr = s_d3d.device->lpVtbl->CreateDescriptorHeap(
                  s_d3d.device, &hd, &IID_ID3D12DescriptorHeap, (void**)&s_d3d.rt_rtv_heap);
              if (FAILED(hr)) printf("[D3D12] offscreen RTV heap creation failed (0x%08lX)\n", hr);
-@@ -1118,11 +1602,19 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1118,11 +1606,19 @@ static int init_d3d12(u32 width, u32 height)
           * t0 and are unaffected. Matching 4 static samplers s0-s3. */
          D3D12_DESCRIPTOR_RANGE srv_range = {0};
          srv_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -9214,7 +9275,7 @@ index 68929ed..36bf152 100644
          rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;   /* b0 = vp_c bank */
          rp[0].Descriptor.ShaderRegister = 0;
          rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
-@@ -1134,8 +1626,8 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1134,8 +1630,8 @@ static int init_d3d12(u32 width, u32 height)
          rp[2].Descriptor.ShaderRegister = 1;
          rp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
  
@@ -9225,7 +9286,7 @@ index 68929ed..36bf152 100644
              samp[_s].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
              samp[_s].AddressU = samp[_s].AddressV = samp[_s].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
              samp[_s].ShaderRegister = (UINT)_s;
-@@ -1146,10 +1638,23 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1146,10 +1642,23 @@ static int init_d3d12(u32 width, u32 height)
           * linear filtering bleeds neighbouring glyphs. */
          samp[0].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
          samp[0].AddressU = samp[0].AddressV = samp[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -9251,7 +9312,7 @@ index 68929ed..36bf152 100644
          rd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
  
          ID3DBlob* sig = NULL; ID3DBlob* err = NULL;
-@@ -1159,6 +1664,7 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1159,6 +1668,7 @@ static int init_d3d12(u32 width, u32 height)
                  sig->lpVtbl->GetBufferPointer(sig), sig->lpVtbl->GetBufferSize(sig),
                  &IID_ID3D12RootSignature, (void**)&s_d3d.vp_root_sig);
              sig->lpVtbl->Release(sig);
@@ -9259,7 +9320,7 @@ index 68929ed..36bf152 100644
          } else if (err) { printf("[D3D12] VP root sig: %s\n", (const char*)err->lpVtbl->GetBufferPointer(err)); err->lpVtbl->Release(err); }
  
          /* raw float4 vertex buffer + constant bank (both UPLOAD, persistently mapped) */
-@@ -1187,6 +1693,19 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1187,6 +1697,19 @@ static int init_d3d12(u32 width, u32 height)
              s_d3d.vp_vb->lpVtbl->Map(s_d3d.vp_vb, 0, &nr, &s_d3d.vp_vb_mapped);
          else
              fprintf(stderr, "[VPVB] ALLOCATION FAILED -- no VP geometry will render%c", 10);
@@ -9279,7 +9340,7 @@ index 68929ed..36bf152 100644
  
          bd.Width = (u64)VP_CB_STRIDE * MAX_DRAWS * 2;   /* per-draw constant slots, x2 parity */
          /* A failure here is silent and catastrophic: vp_record_cb returns early,
-@@ -1205,6 +1724,41 @@ static int init_d3d12(u32 width, u32 height)
+@@ -1205,6 +1728,41 @@ static int init_d3d12(u32 width, u32 height)
                  &IID_ID3D12Resource, (void**)&s_d3d.vp_fpcb)))
              s_d3d.vp_fpcb->lpVtbl->Map(s_d3d.vp_fpcb, 0, &nr, &s_d3d.vp_fpcb_mapped);
  
@@ -9321,7 +9382,7 @@ index 68929ed..36bf152 100644
          printf("[D3D12] VP path resources: rootsig=%p vb=%p cb=%p\n",
                 (void*)s_d3d.vp_root_sig, (void*)s_d3d.vp_vb, (void*)s_d3d.vp_cb);
      }
-@@ -1479,6 +2033,7 @@ static void rsx_capture_frame(u32 fi, u32 ndraws, u32 capidx)
+@@ -1479,6 +2037,7 @@ static void rsx_capture_frame(u32 fi, u32 ndraws, u32 capidx)
      snprintf(dir, sizeof dir, "%s/frame_%02u", base, capidx);
      CreateDirectoryA(dir, NULL);
      char path[512];
@@ -9329,7 +9390,7 @@ index 68929ed..36bf152 100644
  
      /* Manifest: every op in submission order with full state. */
      snprintf(path, sizeof path, "%s/manifest.txt", dir);
-@@ -1492,25 +2047,39 @@ static void rsx_capture_frame(u32 fi, u32 ndraws, u32 capidx)
+@@ -1492,25 +2051,39 @@ static void rsx_capture_frame(u32 fi, u32 ndraws, u32 capidx)
                          s_d3d.off_rt[i].w, s_d3d.off_rt[i].h, s_d3d.off_rt[i].dxgi);
          fprintf(mf, "--- ops ---\n");
          for (u32 d = 0; d < ndraws && d < MAX_DRAWS; d++) {
@@ -9375,7 +9436,7 @@ index 68929ed..36bf152 100644
              }
          }
          /* Per-draw VP constant banks for the first few offscreen-RT geometry
-@@ -1519,14 +2088,19 @@ static void rsx_capture_frame(u32 fi, u32 ndraws, u32 capidx)
+@@ -1519,14 +2092,19 @@ static void rsx_capture_frame(u32 fi, u32 ndraws, u32 capidx)
           * live at slot==draw-index; parity is post-^1 here (capture is after the
           * frame's vp_parity flip), so read the other half. */
          if (s_d3d.vp_cb_mapped) {
@@ -9400,7 +9461,7 @@ index 68929ed..36bf152 100644
                  int last_nz = -1; float maxabs = 0.0f;
                  for (int i = 0; i < RSX_MAX_VERTEX_CONSTANTS * 4; i++) {
                      float a = c[i] < 0 ? -c[i] : c[i];
-@@ -1726,9 +2300,44 @@ static u32 vp_hash_ucode(const u8* p, u32 n)
+@@ -1726,9 +2304,44 @@ static u32 vp_hash_ucode(const u8* p, u32 n)
      return h ? h : 1u;
  }
  
@@ -9446,7 +9507,7 @@ index 68929ed..36bf152 100644
      if (!st || st->vp_ucode_bytes < 16) return -1;
      /* Start at the instruction SET_TRANSFORM_PROGRAM_START selects, not at 0.
       * The microcode store holds every resident program -- this title keeps its
-@@ -1743,13 +2352,57 @@ static int vp_get_vs(const rsx_state* st)
+@@ -1743,13 +2356,57 @@ static int vp_get_vs(const rsx_state* st)
      if (vstart >= st->vp_ucode_bytes) vstart = 0;
      const u8* vuc = st->vp_ucode + vstart;
      u32 vlen = st->vp_ucode_bytes - vstart;
@@ -9507,7 +9568,7 @@ index 68929ed..36bf152 100644
      if (getenv("VP_DUMP")) { static int _d=0; if (_d++ < 4) {
          FILE* f = fopen("vp2_dump.hlsl", _d==1 ? "w" : "a");
          if (f) { fprintf(f, "/* per-draw VS hash pending, %d instrs */%s%s", ni, hlsl, "\n"); fclose(f); } } }
-@@ -1803,22 +2456,46 @@ static int vp_get_vs(const rsx_state* st)
+@@ -1803,22 +2460,46 @@ static int vp_get_vs(const rsx_state* st)
          }
      }
      ID3DBlob* vb = NULL; ID3DBlob* e = NULL;
@@ -9562,7 +9623,7 @@ index 68929ed..36bf152 100644
      s_d3d.vp_vs[slot].uses_c03 =
          (strstr(hlsl, "vp_c[0]") || strstr(hlsl, "vp_c[1]") ||
           strstr(hlsl, "vp_c[2]") || strstr(hlsl, "vp_c[3]")) ? 1 : 0;
-@@ -1884,6 +2561,13 @@ static u8 gl_blend_op_d3d(u32 e)
+@@ -1884,6 +2565,13 @@ static u8 gl_blend_op_d3d(u32 e)
  static u32 rsx_cull_key(const rsx_state* st)
  {
      if (!st || !st->cull_face_enable) return 0;
@@ -9576,7 +9637,7 @@ index 68929ed..36bf152 100644
      u32 k = 1u;
      if (st->cull_face == 0x0404u || st->cull_face == 0x0408u) k |= 2u;  /* FRONT */
      if (st->front_face == 0x0901u) k |= 4u;                             /* CCW */
-@@ -1943,7 +2627,124 @@ static void hlsl_replace_all(char* buf, size_t cap, const char* find, const char
+@@ -1943,7 +2631,137 @@ static void hlsl_replace_all(char* buf, size_t cap, const char* find, const char
      }
  }
  
@@ -9601,6 +9662,19 @@ index 68929ed..36bf152 100644
 +
 +/* Set when the device reports removal (render_frame checks after each submit). */
 +static int s_device_lost;
++
++/* Read-only diagnostic snapshot, safe to request without a renderer round trip.
++ * The caller guards live-state reads; no GPU wait or resource readback here. */
++void rsx_d3d12_debug_dump_to(FILE* out)
++{
++    fprintf(out, "D3D12: ready=%d device_lost=%d window=%ux%u frames=%llu draws=%u\n",
++            s_d3d.pipeline_ready, s_device_lost, s_d3d.width, s_d3d.height,
++            (unsigned long long)s_d3d.frame_count, s_dbg_last_draws);
++    fprintf(out, "GPU: %s; dedicated VRAM: %llu MB\n", s_debug_adapter, (unsigned long long)(s_debug_vram >> 20));
++    for (unsigned i = 0; i < 4; i++)
++        fprintf(out, "%.*s", (int)sizeof(s_frame_sum[0]), s_frame_sum[(s_frame_sum_n + i) % 4]);
++}
++
 +
 +/* Filter and wrap mode of all 16 texture units as the title set them. A
 + * four-bit sampler-register selection per unit maps into the shared bank:
@@ -9702,7 +9776,7 @@ index 68929ed..36bf152 100644
  static u32 dr_cube_mask(const D3D12DrawRecord* dr)
  {
      /* ON by default (RSX_CUBE_TEX=0 to disable). This was off while the cube path
-@@ -1954,21 +2755,732 @@ static u32 dr_cube_mask(const D3D12DrawRecord* dr)
+@@ -1954,21 +2772,732 @@ static u32 dr_cube_mask(const D3D12DrawRecord* dr)
       * image) all six faces decode as clean environment art. */
      static int en = -1;
      if (en < 0) { const char* e = getenv("RSX_CUBE_TEX"); en = e ? atoi(e) : 1; }
@@ -10438,7 +10512,7 @@ index 68929ed..36bf152 100644
      { static int _off=-1; if(_off<0)_off=getenv("FP_OFF")?1:0; if(_off) return NULL; }
      /* Resolve the VS: the draw's cached per-VP blob, else the primary. */
      ID3DBlob* vsb = NULL; u32 vs_hash = 0;
-@@ -1990,31 +3502,132 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -1990,31 +3519,132 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
       * constant buffer the compiled shader is invariant under constant changes,
       * so hashing them made the pipeline key move every draw. */
      u32 uhash;
@@ -10580,7 +10654,7 @@ index 68929ed..36bf152 100644
      /* PSOMISSDBG=1: on a miss, name the key field that differs from an existing
       * entry for the same program. "the cache misses" is not actionable; "it
       * misses on ucode_hash" is. */
-@@ -2033,19 +3646,65 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2033,19 +3663,65 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
                      fp_addr, cnt[idx], 10); } } }
      { static int md = -1;
        if (md < 0) { const char* e = getenv("PSOMISSDBG"); md = e ? atoi(e) : 0; }
@@ -10649,7 +10723,7 @@ index 68929ed..36bf152 100644
                      q->cube_mask != cube_mask  ? " cube_mask"  : "", 10);
              break;
          } } }
-@@ -2060,13 +3719,87 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2060,13 +3736,87 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
          if (!known && ns < 64) { seen[ns][0] = fp_addr; seen[ns][1] = cube_mask; ns++;
              fprintf(stderr, "[CUBEKEY] fp=0x%X cube_mask=0x%X (distinct pairs=%d)%c",
                      fp_addr, cube_mask, ns, 10); } } }
@@ -10741,7 +10815,7 @@ index 68929ed..36bf152 100644
      /* FP_LIST=1: every program the title actually compiles, with its size. A
       * fragment program that hangs the GPU shows up here as an implausible
       * instruction count long before it shows up as a TDR. */
-@@ -2082,6 +3815,17 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2082,6 +3832,17 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
              fprintf(f, " */\n%s\n", hlsl); fclose(f);
          } } }
  
@@ -10759,19 +10833,12 @@ index 68929ed..36bf152 100644
      /* FP_PICK=<hex fp_addr>: write just that program, whatever order it compiles
       * in. fp_dump.hlsl keeps only the first four, same trap as vp2_dump.hlsl. */
      { static const char* fpk = (const char*)1; static u32 wantf = 0; static int done = 0;
-@@ -2095,23 +3839,390 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2095,23 +3856,390 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
                    fp_addr, n, 10);
        } }
  
 -    /* Debug FP_ONE=<hex fp_addr>: force that program's colour output to
 -     * all-ones (e.g. wave's colour-detect -> full mask -> island borders
--     * everywhere -> the water sim must visibly radiate if it works). */
--    { const char* f1 = getenv("FP_ONE");
--      if (f1 && (u32)strtoul(f1, NULL, 16) == fp_addr) {
--          /* Match the assignment, not one exact spelling of it: the final
--           * register is r[N] for some programs and h[N] for others, and the old
--           * fixed "= r[0];" anchor silently did nothing for every h[] shader --
--           * so this switch appeared to have no effect and was useless for
 +    /* Expanded texture instructions need a mask of the sampled unsigned
 +     * components. Keep it dynamic: formats/remaps may change under one FP. */
 +    if (fp_b1 && strstr(hlsl, "rsx_expand_tex"))
@@ -11135,15 +11202,16 @@ index 68929ed..36bf152 100644
 +    }
 +    /* Debug FP_ONE=<hex fp_addr>: force that program's colour output to
 +     * all-ones (e.g. wave's colour-detect -> full mask -> island borders
-+     * everywhere -> the water sim must visibly radiate if it works). */
-+    { const char* f1 = getenv("FP_ONE");
+      * everywhere -> the water sim must visibly radiate if it works). */
+     { const char* f1 = getenv("FP_ONE");
+-      if (f1 && (u32)strtoul(f1, NULL, 16) == fp_addr) {
 +      /* A redirected stencil-mask pass needs the same thing: its blend below
 +       * computes the stencil op from a source of exactly 1. */
 +      if ((f1 && (u32)strtoul(f1, NULL, 16) == fp_addr) || (stencil & (1u << 26))) {
-+          /* Match the assignment, not one exact spelling of it: the final
-+           * register is r[N] for some programs and h[N] for others, and the old
-+           * fixed "= r[0];" anchor silently did nothing for every h[] shader --
-+           * so this switch appeared to have no effect and was useless for
+           /* Match the assignment, not one exact spelling of it: the final
+            * register is r[N] for some programs and h[N] for others, and the old
+            * fixed "= r[0];" anchor silently did nothing for every h[] shader --
+            * so this switch appeared to have no effect and was useless for
             * identifying which program draws what. Rewrite the expression with a
             * proper length-changing splice. */
 +          /* The decompiler in this tree ends with "float4 _o = h[0];" (or
@@ -11161,7 +11229,7 @@ index 68929ed..36bf152 100644
                    size_t tail = strlen(semi) + 1;
                    if ((rp - hlsl) + newlen + tail < sizeof(hlsl)) {
                        memmove(rp + newlen, semi, tail);
-@@ -2147,12 +4258,29 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2147,12 +4275,29 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
        } }
      { const char* sh = getenv("FP_SHOW");
        const char* only = getenv("FP_TEX_FP");
@@ -11194,7 +11262,7 @@ index 68929ed..36bf152 100644
                  size_t newlen = strlen(rep), tail = strlen(semi) + 1;
                  if ((size_t)(rp - hlsl) + newlen + tail < sizeof(hlsl)) {
                      memmove(rp + newlen, semi, tail);
-@@ -2166,9 +4294,9 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2166,9 +4311,9 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
       * always emits 2D samplers; a cube is sampled with a 3-component direction
       * and no texel-scale, and the emitted coordinate always ends in the fixed
       * tail ".xy * rsx_texscale[N].xy", so both edits are exact replacements. */
@@ -11206,7 +11274,7 @@ index 68929ed..36bf152 100644
              char f1[64], r1[64], f2[64], r2[64];
              snprintf(f1, sizeof f1, "Texture2D    rsx_tex%d", _u);
              snprintf(r1, sizeof r1, "TextureCube  rsx_tex%d", _u);
-@@ -2182,13 +4310,25 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2182,13 +4327,25 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
          }
          { static int _n = 0; if (_n++ < 4)
              fprintf(stderr, "[CUBE] fp=0x%X compiled with cube units mask 0x%X%c",
@@ -11235,7 +11303,7 @@ index 68929ed..36bf152 100644
          if (rp) {
              char* semi = strchr(rp, ';');
              if (semi) {
-@@ -2206,7 +4346,10 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2206,7 +4363,10 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
                  float cg = (float)(((hsh >>  8) & 0x7F) | 0x80) / 255.0f;
                  float cb = (float)(((hsh      ) & 0x7F) | 0x80) / 255.0f;
                  char rep[128];
@@ -11247,7 +11315,7 @@ index 68929ed..36bf152 100644
                  size_t newlen = strlen(rep), tail = strlen(semi) + 1;
                  if ((size_t)(rp - hlsl) + newlen + tail < sizeof(hlsl)) {
                      memmove(rp + newlen, semi, tail);
-@@ -2260,8 +4403,49 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2260,8 +4420,49 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
          if (rp) memcpy(rp, "return float4(1,0,1,1)", 23);
      }
      ID3DBlob* pb = NULL; ID3DBlob* e = NULL;
@@ -11299,7 +11367,7 @@ index 68929ed..36bf152 100644
      if (FAILED(hr) || !pb) {
          static int _e2=0; if (_e2++<16)
              printf("[FP] PS compile FAIL (fp=0x%08X): %s\n", fp_addr,
-@@ -2275,7 +4459,9 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2275,7 +4476,9 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
      for (int _i = 0; _i < 16; _i++) {
          il[_i].SemanticName = "ATTR"; il[_i].SemanticIndex = _i;
          il[_i].Format = DXGI_FORMAT_R32G32B32A32_FLOAT; il[_i].InputSlot = 0;
@@ -11310,7 +11378,7 @@ index 68929ed..36bf152 100644
          il[_i].InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
          il[_i].InstanceDataStepRate = 0;
      }
-@@ -2286,6 +4472,8 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2286,6 +4489,8 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
      pd.PS.pShaderBytecode = pb->lpVtbl->GetBufferPointer(pb);
      pd.PS.BytecodeLength  = pb->lpVtbl->GetBufferSize(pb);
      pd.InputLayout.pInputElementDescs = il; pd.InputLayout.NumElements = 16;
@@ -11319,7 +11387,7 @@ index 68929ed..36bf152 100644
      pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
      /* Guest face culling. CULL_OFF=1 forces double-sided, the old
       * unconditional behaviour -- geometry that vanishes under culling is a
-@@ -2337,32 +4525,125 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2337,32 +4542,125 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
      pd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
      pd.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
      pd.DepthStencilState.StencilEnable = FALSE;
@@ -11457,7 +11525,7 @@ index 68929ed..36bf152 100644
      }
      s_d3d.vp_fp[s_d3d.vp_fp_n].fp_addr = fp_addr;
      s_d3d.vp_fp[s_d3d.vp_fp_n].vs_idx  = vs_idx;
-@@ -2372,14 +4653,34 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
+@@ -2372,14 +4670,34 @@ static ID3D12PipelineState* vp_get_fp_pso(int vs_idx, u32 fp_addr, u32 blend, in
      s_d3d.vp_fp[s_d3d.vp_fp_n].nrt     = nrt;
      s_d3d.vp_fp[s_d3d.vp_fp_n].rtfmt   = (u32)rtfmt;
      s_d3d.vp_fp[s_d3d.vp_fp_n].exp32   = exp32;
@@ -11493,7 +11561,7 @@ index 68929ed..36bf152 100644
  
  /* Upload the guest texture for a VP draw into a per-frame texture slot
   * (re-uploaded every frame: gcm/cube's plasma animates in guest memory).
-@@ -2440,6 +4741,115 @@ static u32 tex_csum(const u8* base, u32 nbytes)
+@@ -2440,6 +4758,115 @@ static u32 tex_csum(const u8* base, u32 nbytes)
      return h;
  }
  
@@ -11609,7 +11677,7 @@ index 68929ed..36bf152 100644
  static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips)
  {
      /* TEX_BUDGET=<n>: cap texture uploads per frame. Off by default -- it was
-@@ -2490,17 +4900,47 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2490,17 +4917,47 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
       * never Morton-swizzled on RSX). Row of blocks = (w/4)*blocksize. */
      u32 blkrow  = dxt ? tl.row_bytes : 0;
      u32 blkrows = dxt ? tl.rows      : 0;
@@ -11660,7 +11728,7 @@ index 68929ed..36bf152 100644
              if (c->used) return i;                /* already bound this frame */
              { static int nocache = -1;            /* TEX_NOCACHE=1: always re-upload */
                if (nocache < 0) { const char* e = getenv("TEX_NOCACHE");
-@@ -2509,13 +4949,17 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2509,13 +4966,17 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
              /* Held from an earlier frame: re-upload only if the guest bytes
               * changed. Most of this scene's textures are static, and converting
               * every one of them every frame was ~70% of the frame's CPU time. */
@@ -11680,7 +11748,7 @@ index 68929ed..36bf152 100644
      /* TEX_OFF_BIAS=1: sample the image one whole level-0 BELOW the bound offset.
       * Measured on the Rubber Ducky demo: at the bind offset every texture reads
       * as all-zero, while [off - w*h*bpp, off) holds the image (3800-4160 of 4298
-@@ -2569,7 +5013,12 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2569,7 +5030,12 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
      /* A stale cache entry (slot >= 0) re-uses its own slot; otherwise take a
       * free one. Without this the stale path fell through to freeslot and either
       * duplicated the texture into a second slot or bailed when none was free. */
@@ -11694,7 +11762,7 @@ index 68929ed..36bf152 100644
      /* TEX_SRCDBG=<N>: is the guest memory this slot uploads FROM actually
       * populated? An empty source and a broken sampler both render flat. */
      { static int cap = -1, n = 0;
-@@ -2615,18 +5064,29 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2615,18 +5081,29 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
            fprintf(stderr, "[TEXSRC]    data starts at off%+ld (level0=%u bytes)%c",
                    start_delta, w * h * bpp, 10); } } }
      if (slot < 0) slot = freeslot;
@@ -11725,7 +11793,7 @@ index 68929ed..36bf152 100644
          t->res->lpVtbl->Release(t->res); t->res = NULL;
          if (t->up) { t->up->lpVtbl->Release(t->up); t->up = NULL; }
      }
-@@ -2636,7 +5096,7 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2636,7 +5113,7 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
          td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
          td.Width = w; td.Height = h;
          td.DepthOrArraySize = cube ? 6 : 1;   /* cube = 6 array slices */
@@ -11734,7 +11802,7 @@ index 68929ed..36bf152 100644
          td.Format = dxfmt; td.SampleDesc.Count = 1;
          td.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
          if (FAILED(s_d3d.device->lpVtbl->CreateCommittedResource(
-@@ -2647,7 +5107,7 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2647,7 +5124,7 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
          D3D12_HEAP_PROPERTIES hu = {0}; hu.Type = D3D12_HEAP_TYPE_UPLOAD;
          D3D12_RESOURCE_DESC bd = {0};
          bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -11743,7 +11811,7 @@ index 68929ed..36bf152 100644
          bd.Height = 1; bd.DepthOrArraySize = 1;
          bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
          if (FAILED(s_d3d.device->lpVtbl->CreateCommittedResource(
-@@ -2708,7 +5168,7 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2708,7 +5185,7 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
      /* Pixel conversion -- deswizzle, channel order, block copy -- is RSX
       * semantics and lives in rsx_texture_layout.c, so a second backend gets
       * it by calling this rather than porting the loops again. */
@@ -11752,7 +11820,7 @@ index 68929ed..36bf152 100644
                         rsx_texture_argb_is_rgba());
  
      /* The diagnostics below only apply to the linear 8-bit case (Bink video
-@@ -2836,7 +5296,9 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2836,7 +5313,9 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
      /* TEX_SAVE=1: dump the first few converted ARGB uploads as BMPs (rgb +
       * alpha channel separately) -- ground-truth for "is the guest texture
       * wrong or is the sampling wrong" questions (wave's hue palette). */
@@ -11763,7 +11831,7 @@ index 68929ed..36bf152 100644
          /* For a cube, write every face: the point of the dump is to check the
           * assumed 6-face layout against the game's cubemap art. */
          for (u32 _face = 0; _face < _nfaces; _face++)
-@@ -2971,6 +5433,19 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2971,6 +5450,19 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
        } }
      }   /* end per-face conversion */
      off = _off0; mapped = _map0;
@@ -11783,7 +11851,7 @@ index 68929ed..36bf152 100644
      t->up->lpVtbl->Unmap(t->up, 0, NULL);
  
      if (!fresh) {   /* reused resource: PSR -> COPY_DEST first */
-@@ -2990,9 +5465,10 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -2990,9 +5482,10 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
      src.PlacedFootprint.Footprint.Height   = h;
      src.PlacedFootprint.Footprint.Depth    = 1;
      src.PlacedFootprint.Footprint.RowPitch = pitch;
@@ -11795,7 +11863,7 @@ index 68929ed..36bf152 100644
          s_d3d.cmd_list->lpVtbl->CopyTextureRegion(s_d3d.cmd_list, &dst, 0, 0, 0, &src, NULL);
      }
      {
-@@ -3013,10 +5489,13 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -3013,10 +5506,13 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
       * = encoded 0x1000 (component 0 in all lanes + always-set bit). ARGB8
       * keeps the identity mapping. */
      sv.Shader4ComponentMapping = (basef == 0x81) ? 0x1000 : D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -11811,7 +11879,7 @@ index 68929ed..36bf152 100644
      if (cube) {
          sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
          sv.TextureCube.MipLevels = 1;
-@@ -3026,9 +5505,9 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -3026,9 +5522,9 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
      s_d3d.device->lpVtbl->CreateShaderResourceView(s_d3d.device, t->res, &sv, sh);
  
      t->off = off; t->key = key_off; t->w = w; t->h = h; t->fmt = fmt;
@@ -11824,7 +11892,7 @@ index 68929ed..36bf152 100644
      #undef TEX_CSUM
      return slot;
  }
-@@ -3047,15 +5526,74 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
+@@ -3047,15 +5543,74 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
  /* Snapshot the VP constant bank + viewport epilogue for one draw into its
   * vp_cb slot. Runs at record time so every draw keeps the constants that
   * were live when the guest issued it. */
@@ -11902,7 +11970,7 @@ index 68929ed..36bf152 100644
          for (int _u = 0; _u < 4; _u++) {
              float sx = 1.0f, sy = 1.0f;
              if (dr && dr->tex[_u].set && (dr->tex[_u].fmt & 0x40) &&
-@@ -3087,13 +5625,46 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
+@@ -3087,13 +5642,46 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
           * of baking these in as literals, so the compiled shader no longer
           * changes when the title re-patches them -- which is what forced the
           * pipeline cache to key on a hash of the ucode bytes. */
@@ -11950,7 +12018,7 @@ index 68929ed..36bf152 100644
              /* FPK_DBG=1: the fragment constants as the shader will see them.
               * A program whose only output is fp_k[0].xxxx renders black if
               * those constants never arrive, which looks identical from the
-@@ -3120,9 +5691,18 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
+@@ -3120,9 +5708,18 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
                        fprintf(stderr, "[FPK] distinct fp #%d = 0x%08X%c", ns, dr->fp_addr, 10); } } }
          }
      }
@@ -11970,7 +12038,7 @@ index 68929ed..36bf152 100644
      /* VP_MVP=<N>: the constant bank as the shader will see it, for the first N
       * draws. A snapshot taken from a stale rsx_state looks exactly like a broken
       * vertex program from the outside -- both give zero fragments. */
-@@ -3153,6 +5733,13 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
+@@ -3153,6 +5750,13 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
            for (int r = 256; r <= 259; r++)
                fprintf(stderr, "[DUCKCB]   c%d=(%g %g %g %g)%c", r,
                        c[r*4+0], c[r*4+1], c[r*4+2], c[r*4+3], 10);
@@ -11984,7 +12052,7 @@ index 68929ed..36bf152 100644
        } }
  
      /* Viewport epilogue (see the render_frame notes this logic came from):
-@@ -3164,6 +5751,17 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
+@@ -3164,6 +5768,17 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
      vpx[4] = vpx[5] = vpx[7] = 0.0f;
      if (vs_[2] != 0.0f) { vpx[2] = vs_[2]; vpx[6] = vo_[2]; }
      else                { vpx[2] = 1.0f;   vpx[6] = 0.0f;   }
@@ -12002,7 +12070,7 @@ index 68929ed..36bf152 100644
      /* DBG_ZOOM=<k> with DBG_CENTER="cx,cy": a debug camera applied in CLIP space,
       * not a framebuffer crop -- the geometry is re-rasterized at full resolution.
       * The shader epilogue already computes
-@@ -3192,7 +5790,20 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
+@@ -3192,7 +5807,20 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
                         ? s_d3d.vp_vs[vs_idx].uses_c03 : s_d3d.vp_uses_c03;
      float* c = (float*)dst;
      float c00 = c[0];
@@ -12024,7 +12092,7 @@ index 68929ed..36bf152 100644
      if (getenv("VP_NOFIXPROJ")) garbage = 0;
      if ((garbage && uses_c03) || getenv("VP_FIXPROJ")) {
          { static int _fb = 0; if (_fb++ < 6)
-@@ -3203,6 +5814,7 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
+@@ -3203,6 +5831,7 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
          c[10]=1.0f/99.0f; c[14]=-1.0f/99.0f;
          vpx[2] = 1.0f; vpx[6] = 0.0f;
      }
@@ -12032,7 +12100,7 @@ index 68929ed..36bf152 100644
  }
  
  /* Which offscreen surface (if any) does the current RSX state render to?
-@@ -3211,6 +5823,11 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
+@@ -3211,6 +5840,11 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
   * offset is the same buffer (surface and texture registers share the offset
   * space; location bits differ but one title doesn't alias local vs main at
   * one offset), which sidesteps guessing the surface's context DMA location. */
@@ -12044,7 +12112,7 @@ index 68929ed..36bf152 100644
  static u32 current_rt_off(u32* out_w, u32* out_h, u32 out_mrt[3])
  {
      extern int cellGcmOffsetIsDisplay(u32 offset);
-@@ -3221,6 +5838,14 @@ static u32 current_rt_off(u32* out_w, u32* out_h, u32 out_mrt[3])
+@@ -3221,6 +5855,14 @@ static u32 current_rt_off(u32* out_w, u32* out_h, u32 out_mrt[3])
      if (!st) return 0;
      /* SET_SURFACE_COLOR_TARGET: 1 = A, 2 = B, 0x13 = MRT1 (A+B),
       * 0x17 = MRT2 (A+B+C), 0x1F = MRT3 (A+B+C+D). */
@@ -12059,7 +12127,7 @@ index 68929ed..36bf152 100644
      int sel = (st->color_target == 2) ? 1 : 0;
      u32 raw = st->surface_color_offset[sel];
      if (out_mrt) {
-@@ -3279,6 +5904,48 @@ static DXGI_FORMAT rsx_surface_dxgi(u32 fmt)
+@@ -3279,6 +5921,48 @@ static DXGI_FORMAT rsx_surface_dxgi(u32 fmt)
      }
  }
  
@@ -12108,7 +12176,7 @@ index 68929ed..36bf152 100644
  static int off_rt_find(u32 off)
  {
      if (!off) return -1;
-@@ -3287,9 +5954,193 @@ static int off_rt_find(u32 off)
+@@ -3287,9 +5971,193 @@ static int off_rt_find(u32 off)
      return -1;
  }
  
@@ -12303,7 +12371,7 @@ index 68929ed..36bf152 100644
  {
      if (!off || !s_d3d.rt_rtv_heap || !s_d3d.srv_heap) return -1;
      if (!w) w = s_d3d.width;
-@@ -3306,15 +6157,34 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
+@@ -3306,15 +6174,34 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
      int slot = off_rt_find(off);
      if (slot >= 0) {
          OffRT* r = &s_d3d.off_rt[slot];
@@ -12341,7 +12409,7 @@ index 68929ed..36bf152 100644
      } else {
          for (int i = 0; i < MAX_OFF_RTS; i++)
              if (!s_d3d.off_rt[i].res) { slot = i; break; }
-@@ -3322,13 +6192,19 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
+@@ -3322,13 +6209,19 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
              for (int i = 0; i < MAX_OFF_RTS; i++)
                  if (!s_d3d.off_rt[i].used) { slot = i; break; }
              if (slot < 0) return -1;
@@ -12366,7 +12434,7 @@ index 68929ed..36bf152 100644
          }
      }
      OffRT* r = &s_d3d.off_rt[slot];
-@@ -3347,7 +6223,11 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
+@@ -3347,7 +6240,11 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
              &IID_ID3D12Resource, (void**)&r->res)))
          return -1;
      r->off = off; r->w = w; r->h = h; r->dxgi = (u32)want_fmt;
@@ -12378,7 +12446,7 @@ index 68929ed..36bf152 100644
      r->used = 1;
  
      /* Populate the new RT from guest memory: titles CPU-initialise their
-@@ -3444,8 +6324,11 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
+@@ -3444,8 +6341,11 @@ static int off_rt_get(u32 off, u32 w, u32 h, u32 rsx_fmt)
      D3D12_CPU_DESCRIPTOR_HANDLE sh;
      s_d3d.srv_heap->lpVtbl->GetCPUDescriptorHandleForHeapStart(s_d3d.srv_heap, &sh);
      sh.ptr += (u64)(RT_SRV_BASE + slot) * s_d3d.srv_inc;
@@ -12390,7 +12458,7 @@ index 68929ed..36bf152 100644
      static int _log = 0;
      if (_log++ < 8)
          printf("[D3D12] offscreen RT %d: off=0x%X %ux%u (render-to-texture)\n",
-@@ -3457,6 +6340,9 @@ static D3D12_CPU_DESCRIPTOR_HANDLE off_rt_rtv(int slot)
+@@ -3457,6 +6357,9 @@ static D3D12_CPU_DESCRIPTOR_HANDLE off_rt_rtv(int slot)
  {
      D3D12_CPU_DESCRIPTOR_HANDLE rh;
      s_d3d.rt_rtv_heap->lpVtbl->GetCPUDescriptorHandleForHeapStart(s_d3d.rt_rtv_heap, &rh);
@@ -12400,7 +12468,7 @@ index 68929ed..36bf152 100644
      rh.ptr += (u64)slot * s_d3d.device->lpVtbl->GetDescriptorHandleIncrementSize(
          s_d3d.device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
      return rh;
-@@ -3464,24 +6350,78 @@ static D3D12_CPU_DESCRIPTOR_HANDLE off_rt_rtv(int slot)
+@@ -3464,24 +6367,78 @@ static D3D12_CPU_DESCRIPTOR_HANDLE off_rt_rtv(int slot)
  
  /* Write a texture SRV (or a null SRV when res == NULL) at an absolute SRV
   * heap slot. Used to fill per-draw t0-t3 descriptor windows. */
@@ -12481,7 +12549,7 @@ index 68929ed..36bf152 100644
  }
  
  static void srv_write(u32 heap_slot, ID3D12Resource* res, DXGI_FORMAT fmt, UINT mapping)
-@@ -3492,6 +6432,35 @@ static void srv_write(u32 heap_slot, ID3D12Resource* res, DXGI_FORMAT fmt, UINT
+@@ -3492,6 +6449,35 @@ static void srv_write(u32 heap_slot, ID3D12Resource* res, DXGI_FORMAT fmt, UINT
  static void off_rt_transition(int slot, D3D12_RESOURCE_STATES to)
  {
      OffRT* r = &s_d3d.off_rt[slot];
@@ -12517,7 +12585,7 @@ index 68929ed..36bf152 100644
      if (r->st == to) return;
      D3D12_RESOURCE_BARRIER b = {0};
      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-@@ -3507,7 +6476,6 @@ static void off_rt_transition(int slot, D3D12_RESOURCE_STATES to)
+@@ -3507,7 +6493,6 @@ static void off_rt_transition(int slot, D3D12_RESOURCE_STATES to)
   * Present, 0 = execute the recorded draws only. An OFFSCREEN-only batch (a
   * render-to-texture pass) must still run -- it is what fills the texture a
   * later batch samples -- but presenting it would show a half-built frame. */
@@ -12525,7 +12593,7 @@ index 68929ed..36bf152 100644
  
  /* Resolve a DRAW_*_TEX value: a hex raw offset, or the literal "duck" for the
   * content-identified duck texture. */
-@@ -3600,6 +6568,623 @@ static void screen_copy_capture(u32 fi)
+@@ -3600,6 +6585,623 @@ static void screen_copy_capture(u32 fi)
  
  }
  
@@ -13149,7 +13217,7 @@ index 68929ed..36bf152 100644
  /* rsx_topology -> D3D_PRIMITIVE_TOPOLOGY. Spelled out rather than relying on
   * the two enums happening to agree: the draw record carries the neutral value
   * so a second backend can read it, and this is the one place it becomes a D3D
-@@ -3767,7 +7352,216 @@ static void guest_fb_present(u32 fi)
+@@ -3767,7 +7369,216 @@ static void guest_fb_present(u32 fi)
  }
  
  
@@ -13366,7 +13434,7 @@ index 68929ed..36bf152 100644
  {
      double _rf0 = perf_on() ? perf_now() : 0.0;
      u32 fi = s_d3d.frame_index;
-@@ -3778,7 +7572,12 @@ static void render_frame(void)
+@@ -3778,7 +7589,12 @@ static void render_frame(void)
       * (gcm/cube: triangles mixing stale and new vertices -> missing/sliver
       * polygons). These workloads are a few draws/frame, so full serialisation
       * costs little. */
@@ -13380,7 +13448,7 @@ index 68929ed..36bf152 100644
  
      /* Compile the real vertex program once its microcode is captured, and keep
       * the constant bank uploaded for the VS. */
-@@ -3815,6 +7614,7 @@ static void render_frame(void)
+@@ -3815,6 +7631,7 @@ static void render_frame(void)
      /* Reset command allocator and list */
      s_d3d.cmd_allocators[fi]->lpVtbl->Reset(s_d3d.cmd_allocators[fi]);
      s_d3d.cmd_list->lpVtbl->Reset(s_d3d.cmd_list, s_d3d.cmd_allocators[fi], NULL);
@@ -13388,7 +13456,7 @@ index 68929ed..36bf152 100644
  
      /* Upload the bound font atlas into an R8_UNORM texture and create its SRV.
       * The atlas is a linear 8-bit coverage map, so a straight row copy (no
-@@ -3905,12 +7705,14 @@ static void render_frame(void)
+@@ -3905,12 +7722,14 @@ static void render_frame(void)
      /* Frames with no ops (init/boot presents) don't count against the cap --
       * PNG-decode-heavy titles burn hundreds of empty presents before the first
       * real draw. */
@@ -13409,7 +13477,7 @@ index 68929ed..36bf152 100644
                  r->rt_mrt[0], r->rt_mrt[1], r->rt_mrt[2],
                  r->tex[0].raw, r->fp_addr, r->vertex_count,
                  r->cmask, r->vp_x, r->vp_y, r->vp_w, r->vp_h, r->blend);
-@@ -3919,12 +7721,48 @@ static void render_frame(void)
+@@ -3919,12 +7738,48 @@ static void render_frame(void)
  
      /* Debug: RTT_PASS=N shows pass N's output directly on screen (drops later
       * ops, retargets pass N to the backbuffer). */
@@ -13461,7 +13529,7 @@ index 68929ed..36bf152 100644
              if (r->is_clear || !r->is_vp) continue;
              if (seen == keep) {
                  /* Alone: retarget op N to the backbuffer. With RTT_VIEWRT:
-@@ -3937,15 +7775,15 @@ static void render_frame(void)
+@@ -3937,15 +7792,15 @@ static void render_frame(void)
              seen++;
          }
          if (viewrt) {
@@ -13481,7 +13549,7 @@ index 68929ed..36bf152 100644
        } }
  
      /* DRAW_LIMIT=<N>: keep only the first N recorded ops this frame. The duck's
-@@ -3954,7 +7792,7 @@ static void render_frame(void)
+@@ -3954,7 +7809,7 @@ static void render_frame(void)
       * painted over them". Diagnostic only. */
      { static int lim = -1;
        if (lim < 0) { const char* e = getenv("DRAW_LIMIT"); lim = e ? atoi(e) : 0; }
@@ -13490,7 +13558,7 @@ index 68929ed..36bf152 100644
  
      /* DRAW_SKIP_TEX=<hex raw offset>: drop every op binding that texture on
       * unit 0. The ducks sit behind the water's slab geometry, so removing the
-@@ -3964,12 +7802,12 @@ static void render_frame(void)
+@@ -3964,12 +7819,12 @@ static void render_frame(void)
        want = draw_filter_tex(sk);
        if (want) {
          u32 keep = 0;
@@ -13507,7 +13575,7 @@ index 68929ed..36bf152 100644
        } }
  
      /* DRAW_KEEP_TEX=<hex raw offset>: the inverse -- keep only the ops binding
-@@ -4001,15 +7839,15 @@ static void render_frame(void)
+@@ -4001,15 +7856,15 @@ static void render_frame(void)
          static D3D12DrawRecord kept[MAX_DRAWS];
          u32 nk = 0;
          if (!noclr)
@@ -13531,7 +13599,7 @@ index 68929ed..36bf152 100644
        } }
  
      /* DRAW_LAST_TEX=<hex raw offset>: move the ops binding that texture to the
-@@ -4020,33 +7858,111 @@ static void render_frame(void)
+@@ -4020,33 +7875,111 @@ static void render_frame(void)
      { static const char* lt = (const char*)1; static u32 want = 0;
        if (lt == (const char*)1) lt = getenv("DRAW_LAST_TEX");
        want = draw_filter_tex(lt);
@@ -13655,7 +13723,7 @@ index 68929ed..36bf152 100644
      }
  
      /* Per-frame VP textures + guest-FP pipelines: for each VP draw, upload the
-@@ -4056,8 +7972,8 @@ static void render_frame(void)
+@@ -4056,8 +7989,8 @@ static void render_frame(void)
       * (tex_slot 1000+idx) -- no guest-memory upload. */
      double _pre0 = perf_on() ? perf_now() : 0.0;
      for (int _i = 0; _i < VP_TEX_SLOTS; _i++) s_d3d.vp_tex[_i].used = 0;
@@ -13666,7 +13734,7 @@ index 68929ed..36bf152 100644
          if (!dr->is_vp || dr->is_clear) continue;
          /* Debug: RTT_VIEWRT=<hex raw offset> makes display draws sample that
           * offscreen RT at t0 (the composite blit then shows it fullscreen). */
-@@ -4139,14 +8055,262 @@ static void render_frame(void)
+@@ -4139,14 +8072,262 @@ static void render_frame(void)
           * resolves to an offscreen RT (sampled directly), an uploaded guest
           * texture, or a null SRV. */
          double _sv0 = perf_on() ? perf_now() : 0.0;
@@ -13933,7 +14001,7 @@ index 68929ed..36bf152 100644
                  if (en) {
                      { static int _n = 0; if (_n++ < 3)
                          fprintf(stderr, "[SCREENTEX] bound frame copy at unit %d for"
-@@ -4181,6 +8345,16 @@ static void render_frame(void)
+@@ -4181,6 +8362,16 @@ static void render_frame(void)
              }
              if (dr->tex[_u].set) {
                  int rt = off_rt_find(dr->tex[_u].raw);
@@ -13950,7 +14018,7 @@ index 68929ed..36bf152 100644
                  if (rt >= 0) {
                      dr->tex_rt[_u] = rt;
                      srv_write(wslot, s_d3d.off_rt[rt].res, (DXGI_FORMAT)s_d3d.off_rt[rt].dxgi,
-@@ -4192,7 +8366,7 @@ static void render_frame(void)
+@@ -4192,7 +8383,7 @@ static void render_frame(void)
                      (_bf == 0x81 || _bf == 0x85 || _bf == 0x8B ||
                       (_bf >= 0x86 && _bf <= 0x88))) {
                      double _tt = perf_on() ? perf_now() : 0.0;
@@ -13959,7 +14027,7 @@ index 68929ed..36bf152 100644
                      int ts = vp_upload_tex_slot(dr->tex[_u].off, dr->tex[_u].w,
                                                  dr->tex[_u].h, dr->tex[_u].fmt,
                                                  _cube, dr->tex[_u].mips);
-@@ -4232,11 +8406,17 @@ static void render_frame(void)
+@@ -4232,11 +8423,17 @@ static void render_frame(void)
          }
          if (perf_on()) s_perf_srv += perf_now() - _sv0;
          double _ps0 = perf_on() ? perf_now() : 0.0;
@@ -13979,7 +14047,7 @@ index 68929ed..36bf152 100644
          if (perf_on()) s_perf_pso += perf_now() - _ps0;
      }
  
-@@ -4257,6 +8437,7 @@ static void render_frame(void)
+@@ -4257,6 +8454,7 @@ static void render_frame(void)
      /* Get DSV handle (single depth buffer shared across frames) */
      D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle;
      s_d3d.dsv_heap->lpVtbl->GetCPUDescriptorHandleForHeapStart(s_d3d.dsv_heap, &dsv_handle);
@@ -13987,7 +14055,7 @@ index 68929ed..36bf152 100644
  
      if (perf_on()) s_perf_pre += perf_now() - _pre0;
      /* Set render target + depth */
-@@ -4264,7 +8445,7 @@ static void render_frame(void)
+@@ -4264,7 +8462,7 @@ static void render_frame(void)
  
      /* Clear color and depth */
      s_d3d.cmd_list->lpVtbl->ClearRenderTargetView(
@@ -13996,7 +14064,7 @@ index 68929ed..36bf152 100644
      s_d3d.cmd_list->lpVtbl->ClearDepthStencilView(
          s_d3d.cmd_list, dsv_handle,
          D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
-@@ -4277,7 +8458,7 @@ static void render_frame(void)
+@@ -4277,7 +8475,7 @@ static void render_frame(void)
      s_d3d.cmd_list->lpVtbl->RSSetScissorRects(s_d3d.cmd_list, 1, &scissor);
  
      /* Bind pipeline state and push MVP if anything to draw */
@@ -14005,7 +14073,7 @@ index 68929ed..36bf152 100644
          s_d3d.cmd_list->lpVtbl->SetGraphicsRootSignature(s_d3d.cmd_list, s_d3d.root_signature);
          s_d3d.cmd_list->lpVtbl->IASetVertexBuffers(s_d3d.cmd_list, 0, 1, &s_d3d.vb_view);
  
-@@ -4323,7 +8504,7 @@ static void render_frame(void)
+@@ -4323,7 +8521,7 @@ static void render_frame(void)
            if (_vd && _n < 3) {
              _n++;
              fprintf(stderr, "[D3D12-DBG] have_mvp=%d draw_count=%u vb_offset=%u\n",
@@ -14014,7 +14082,7 @@ index 68929ed..36bf152 100644
              fprintf(stderr, "[D3D12-DBG] mvp rows: [%.2f %.2f %.2f %.2f][%.2f %.2f %.2f %.2f]"
                              "[%.2f %.2f %.2f %.2f][%.2f %.2f %.2f %.2f]\n",
                      mvp[0],mvp[1],mvp[2],mvp[3], mvp[4],mvp[5],mvp[6],mvp[7],
-@@ -4337,8 +8518,8 @@ static void render_frame(void)
+@@ -4337,8 +8535,8 @@ static void render_frame(void)
                              k, v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
                  }
              }
@@ -14025,7 +14093,7 @@ index 68929ed..36bf152 100644
                  fprintf(stderr, "[D3D12-DBG]  draw[%u] is_vp=%d is_clear=%d topo=%u cnt=%u vbofs=%u startv=%u rt=%u\n",
                          d, dr->is_vp, dr->is_clear, dr->topology, dr->vertex_count,
                          dr->vb_byte_offset, dr->vb_byte_offset / VERTEX_STRIDE, dr->rt_off);
-@@ -4351,10 +8532,10 @@ static void render_frame(void)
+@@ -4351,10 +8549,10 @@ static void render_frame(void)
           * must match the topology or D3D12 rejects the draw. */
          u32 last_topo = 0xFFFFFFFFu;
          ID3D12PipelineState* last_pso = NULL;
@@ -14038,7 +14106,7 @@ index 68929ed..36bf152 100644
              if (dr->is_vp) continue; /* drawn by the VP pass below */
  
              /* Select PSO: textured triangles (dbgfont) use the atlas PSO;
-@@ -4386,10 +8567,10 @@ static void render_frame(void)
+@@ -4386,10 +8584,10 @@ static void render_frame(void)
  
      /* VP pass: real decompiled vertex program + atlas alpha-test PS. Feeds raw
       * float4 attrib0 from vp_vb and the vp_c[] constant bank. */
@@ -14052,7 +14120,7 @@ index 68929ed..36bf152 100644
          /* Textured geometry (dbgfont atlas) uses the sampling PS; untextured 3D
           * (vkcube) uses the colour-only PS. Fall back to whichever exists. */
          ID3D12PipelineState* vpso =
-@@ -4400,12 +8581,12 @@ static void render_frame(void)
+@@ -4400,12 +8598,12 @@ static void render_frame(void)
            if (cap < 0) { const char* e = getenv("VP_SUBMIT"); cap = e ? atoi(e) : 0; }
            if (cap && n < cap) { n++;
              u32 nvp = 0, nclr = 0;
@@ -14069,7 +14137,7 @@ index 68929ed..36bf152 100644
                      (void*)vpso, (void*)s_d3d.vp_root_sig); } }
          if (any && vpso) {
              s_d3d.cmd_list->lpVtbl->SetGraphicsRootSignature(s_d3d.cmd_list, s_d3d.vp_root_sig);
-@@ -4420,26 +8601,44 @@ static void render_frame(void)
+@@ -4420,26 +8618,44 @@ static void render_frame(void)
              s_d3d.cmd_list->lpVtbl->SetGraphicsRootDescriptorTable(s_d3d.cmd_list, 1, gh);
              D3D12_VERTEX_BUFFER_VIEW vbv;
              vbv.BufferLocation = s_d3d.vp_vb->lpVtbl->GetGPUVirtualAddress(s_d3d.vp_vb)
@@ -14119,7 +14187,7 @@ index 68929ed..36bf152 100644
                          seen_small_vp = 1;
                          subvp_note(dr->vp_x, dr->vp_y, dr->vp_w, dr->vp_h);
                      }
-@@ -4449,11 +8648,10 @@ static void render_frame(void)
+@@ -4449,11 +8665,10 @@ static void render_frame(void)
                          screen_copy_capture(fi);
                          subvp_capture(fi);
                          s_d3d.cmd_list->lpVtbl->OMSetRenderTargets(
@@ -14133,7 +14201,7 @@ index 68929ed..36bf152 100644
                  int want  = dr->rt_off  ? off_rt_find(dr->rt_off)  : -1;
                  /* Remember where geometry actually went: off_rt_find() matches
                   * on offset alone and slots share offsets at different sizes,
-@@ -4462,11 +8660,46 @@ static void render_frame(void)
+@@ -4462,11 +8677,46 @@ static void render_frame(void)
                  int wantm[3];
                  for (int _m = 0; _m < 3; _m++)
                      wantm[_m] = dr->rt_mrt[_m] ? off_rt_find(dr->rt_mrt[_m]) : -1;
@@ -14181,7 +14249,7 @@ index 68929ed..36bf152 100644
                      D3D12_VIEWPORT vp = {0, 0, (float)s_d3d.width, (float)s_d3d.height, 0.0f, 1.0f};
                      if (want >= 0) {
                          off_rt_transition(want, D3D12_RESOURCE_STATE_RENDER_TARGET);
-@@ -4480,11 +8713,29 @@ static void render_frame(void)
+@@ -4480,11 +8730,29 @@ static void render_frame(void)
                      }
                      D3D12_RECT sc = {0, 0, (LONG)vp.Width, (LONG)vp.Height};
                      vp_last_w = vp.Width; vp_last_h = vp.Height;
@@ -14214,7 +14282,7 @@ index 68929ed..36bf152 100644
                      /* RT_CLEARDBG=2: magenta-clear the surface the DRAWS bind,
                       * at the moment they bind it. The guest's own clears may go
                       * to a different surface entirely (they do here: clears to
-@@ -4511,7 +8762,7 @@ static void render_frame(void)
+@@ -4511,7 +8779,7 @@ static void render_frame(void)
                        if (tt < 0) { const char* e = getenv("VP_TESTTRI"); tt = e ? atoi(e) : 0; }
                        if (tt && want >= 0 && s_d3d.vp_vb_mapped) {
                            float* vtx = (float*)((char*)s_d3d.vp_vb_mapped
@@ -14223,7 +14291,7 @@ index 68929ed..36bf152 100644
                                + (u64)1000 * 256u);
                            static const float tri[3][4] = {
                                {-2.0f, -2.0f, 0.0f, 1.0f},
-@@ -4529,8 +8780,21 @@ static void render_frame(void)
+@@ -4529,8 +8797,21 @@ static void render_frame(void)
                        } }
                      cur_rt = want;
                      for (int _m = 0; _m < 3; _m++) cur_m[_m] = wantm[_m];
@@ -14245,7 +14313,7 @@ index 68929ed..36bf152 100644
                      D3D12_CPU_DESCRIPTOR_HANDLE rh =
                          (cur_rt >= 0) ? off_rt_rtv(cur_rt) : rtv_handle;
                      /* RT_CLEARDBG=1: clear offscreen targets to magenta rather
-@@ -4554,24 +8818,72 @@ static void render_frame(void)
+@@ -4554,24 +8835,72 @@ static void render_frame(void)
                          }
                      continue;
                  }
@@ -14323,7 +14391,7 @@ index 68929ed..36bf152 100644
                          (float)(dr->vp_x + dr->vp_w) <= tw + 0.5f &&
                          (float)(dr->vp_y + dr->vp_h) <= th + 0.5f) {
                          dvp.TopLeftX = (float)dr->vp_x;
-@@ -4582,6 +8894,17 @@ static void render_frame(void)
+@@ -4582,6 +8911,17 @@ static void render_frame(void)
                      D3D12_RECT dsc = {(LONG)dvp.TopLeftX, (LONG)dvp.TopLeftY,
                                        (LONG)(dvp.TopLeftX + dvp.Width),
                                        (LONG)(dvp.TopLeftY + dvp.Height)};
@@ -14341,7 +14409,7 @@ index 68929ed..36bf152 100644
                      dvp_x = dvp.TopLeftX; dvp_y = dvp.TopLeftY;
                      dvp_w = dvp.Width;    dvp_h = dvp.Height;
                      s_d3d.cmd_list->lpVtbl->RSSetViewports(s_d3d.cmd_list, 1, &dvp);
-@@ -4590,23 +8913,40 @@ static void render_frame(void)
+@@ -4590,23 +8930,40 @@ static void render_frame(void)
                  /* Per-draw textures: bind this draw's t0-t3 SRV window.
                   * Any sampled offscreen RT transitions to PSR first (never
                   * one of the currently-bound colour targets). */
@@ -14386,7 +14454,7 @@ index 68929ed..36bf152 100644
                  /* DRAWARGS=<N>: the arguments actually handed to the GPU, plus
                   * the target they are aimed at. A zero vertex count, or a start
                   * vertex past the buffer, rasterises nothing while every other
-@@ -4640,10 +8980,40 @@ static void render_frame(void)
+@@ -4640,10 +8997,40 @@ static void render_frame(void)
                        for (int _m = 0; _m < 3; _m++)
                            if (cur_m[_m] >= 0) brh[bn++] = off_rt_rtv(cur_m[_m]);
                        s_d3d.cmd_list->lpVtbl->OMSetRenderTargets(
@@ -14430,7 +14498,7 @@ index 68929ed..36bf152 100644
                  /* VP_SUBMIT=<N>: prove the VP pass actually reaches the GPU.
                   * "records exist" and "draws were submitted" are different
                   * claims, and every blank-output investigation conflates them. */
-@@ -4658,10 +9028,16 @@ static void render_frame(void)
+@@ -4658,10 +9045,16 @@ static void render_frame(void)
                              dr->vs_idx, dr->cb_slot, dr->vb_byte_offset / 256,
                              dr->cull, dr->blend, 10); } }
              }
@@ -14448,7 +14516,7 @@ index 68929ed..36bf152 100644
                  D3D12_VIEWPORT vp = {0, 0, (float)s_d3d.width, (float)s_d3d.height, 0.0f, 1.0f};
                  D3D12_RECT sc = {0, 0, (LONG)s_d3d.width, (LONG)s_d3d.height};
                  s_d3d.cmd_list->lpVtbl->RSSetViewports(s_d3d.cmd_list, 1, &vp);
-@@ -4719,19 +9095,28 @@ static void render_frame(void)
+@@ -4719,19 +9112,28 @@ static void render_frame(void)
       * it silently produced nothing in exactly the configuration being used. */
      { static int fb = -1;
        if (fb < 0) { const char* e = getenv("FRAME_BUDGET"); fb = e ? atoi(e) : 0; }
@@ -14482,7 +14550,7 @@ index 68929ed..36bf152 100644
              fprintf(stderr, "[PERF] %.2f fps | tex %.2fs (%.0f%%, %d calls) | vtx %.2fs"
                              " (%.0f%%, %.0fk verts) | render_frame %.2fs (%.0f%%)"
                              " | prepass %.2fs (%.0f%%) [srv %.2fs %.0f%% | pso %.2fs %.0f%% %d calls %d MISS %dKB hashed] | guest %.2fs (%.0f%%)%c",
-@@ -4766,11 +9151,47 @@ static void render_frame(void)
+@@ -4766,11 +9168,47 @@ static void render_frame(void)
          s_lock_valid = 1;
          s_lock_sx = s_lock_sy = 0.0; s_lock_n = 0;
      }
@@ -14535,7 +14603,7 @@ index 68929ed..36bf152 100644
  
      /* Debug: RTT_SAVERT=<hex raw offset>[:frame] copies that offscreen RT
       * into a readback buffer this frame and writes rt_save.bmp (half-float
-@@ -4911,11 +9332,32 @@ skip_dump_consider: ;
+@@ -4911,11 +9349,32 @@ skip_dump_consider: ;
          s_d3d.cmd_list->lpVtbl->ResourceBarrier(s_d3d.cmd_list, 1, &barrier);
      }
  
@@ -14568,7 +14636,7 @@ index 68929ed..36bf152 100644
      /* D3D12_IQ=1: drain the debug layer's message queue after submitting the
       * frame. The legacy (is_vp=0) DrawInstanced path silently produced ZERO
       * pixels in flOw's render injection while ClearRenderTargetView worked, and
-@@ -4930,21 +9372,34 @@ skip_dump_consider: ;
+@@ -4930,21 +9389,34 @@ skip_dump_consider: ;
                  s_d3d.device, &IID_ID3D12InfoQueue, (void**)&iq)) && iq) {
              UINT64 n = iq->lpVtbl->GetNumStoredMessages(iq);
              static int _printed = 0;
@@ -14608,7 +14676,7 @@ index 68929ed..36bf152 100644
        } }
  
      if (s_sc_dump_pending) {
-@@ -5059,16 +9514,92 @@ skip_dump_consider: ;
+@@ -5059,16 +9531,92 @@ skip_dump_consider: ;
          }
          if (s_cap_done < s_cap_count) {
              u32 target = s_cap_start + s_cap_done * s_cap_stride;
@@ -14704,7 +14772,7 @@ index 68929ed..36bf152 100644
  
      move_to_next_frame();
  
-@@ -5089,7 +9620,10 @@ skip_dump_consider: ;
+@@ -5089,7 +9637,10 @@ skip_dump_consider: ;
                       g_rsx_title_base,
                       s_tframes * 1000.0 / (double)(tnow - s_tt0),
                       s_dbg_last_draws, s_d3d.width, s_d3d.height);
@@ -14716,7 +14784,7 @@ index 68929ed..36bf152 100644
              s_tframes = 0;
              s_tt0 = tnow;
          }
-@@ -5145,7 +9679,7 @@ static void d3d12_present(void* ud, u32 buffer_id)
+@@ -5145,7 +9696,7 @@ static void d3d12_present(void* ud, u32 buffer_id)
  
      if (blink_dbg())
          printf("[PRESENT] draws=%u clears_since_last=%u\n",
@@ -14725,7 +14793,7 @@ index 68929ed..36bf152 100644
      s_dbg_clears_since_present = 0;
  
      /* An accumulated batch with draws but NONE targeting a display buffer is
-@@ -5153,9 +9687,9 @@ static void d3d12_present(void* ud, u32 buffer_id)
+@@ -5153,9 +9704,9 @@ static void d3d12_present(void* ud, u32 buffer_id)
       * it would strobe the bare backbuffer clear. Keep accumulating -- the
       * composite draw that targets the display presents the whole chain, in
       * order, in one command list. Empty batches still present (boot/idle). */
@@ -14738,7 +14806,7 @@ index 68929ed..36bf152 100644
              flip_has_display = 1;
              break;
          }
-@@ -5175,9 +9709,65 @@ static void d3d12_present(void* ud, u32 buffer_id)
+@@ -5175,9 +9726,65 @@ static void d3d12_present(void* ud, u32 buffer_id)
  static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
  {
      (void)ud;
@@ -14807,7 +14875,7 @@ index 68929ed..36bf152 100644
  
      /* Convert RSX ARGB u32 to float[4] RGBA */
      float cc[4];
-@@ -5200,19 +9790,20 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+@@ -5200,19 +9807,20 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
       * chain (demosaic clears each effect pass's surface) -- record it, don't
       * touch the frame boundary. */
      if (rt != 0) {
@@ -14831,7 +14899,7 @@ index 68929ed..36bf152 100644
  
      /* A DISPLAY clear marks the start of a new visible frame. If a completed
       * frame is still accumulated (the drain gulped across a frame boundary --
-@@ -5222,8 +9813,8 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+@@ -5222,8 +9830,8 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
       * batch of offscreen pass work (render-to-texture) must keep accumulating
       * until its composite draw arrives, or the screen strobes intermediates. */
      int have_display_draws = 0;
@@ -14842,7 +14910,7 @@ index 68929ed..36bf152 100644
              have_display_draws = 1;
              break;
          }
-@@ -5240,7 +9831,7 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+@@ -5240,7 +9848,7 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
       * display clear still follows their single flip. Fall back to the old
       * clear-only heuristic for titles that never flip (fc stays 0). */
      static u32 s_frame_draws_max = 0;   /* running max frame size (typical full frame) */
@@ -14851,7 +14919,7 @@ index 68929ed..36bf152 100644
      {
          extern unsigned cellGcm_flip_request_count(void);
          static unsigned s_last_present_flip = 0;
-@@ -5257,7 +9848,7 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+@@ -5257,7 +9865,7 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
               * in one present. Gauged against the running MAX frame size (not
               * the last, which a leaked tiny batch would poison), so it
               * self-scales per title with no fixed threshold. */
@@ -14860,7 +14928,7 @@ index 68929ed..36bf152 100644
                  return;   /* intermediate: keep accumulating, flip stays pending */
              s_last_present_flip = fc;
          }
-@@ -5274,14 +9865,17 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
+@@ -5274,14 +9882,17 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
      if (s_d3d.initialized) {
          if (blink_dbg())
              printf("[CLEAR] presenting %u accumulated draws at frame boundary\n",
@@ -14880,7 +14948,7 @@ index 68929ed..36bf152 100644
  }
  
  static void d3d12_set_render_target(void* ud, const rsx_state* state)
-@@ -5430,9 +10024,251 @@ void rsx_vtx_pos_dbg(const rsx_state* state, const float* v, u32 n);
+@@ -5430,9 +10041,251 @@ void rsx_vtx_pos_dbg(const rsx_state* state, const float* v, u32 n);
  /* Fill all 16 attribute slots for one vertex. The per-attribute work lives in
   * rsx_vertex_fetch.c so the Metal and null backends read guest vertices the
   * same way this one does, rather than each porting the logic again. */
@@ -15132,7 +15200,7 @@ index 68929ed..36bf152 100644
          rsx_fetch_attrib(state, i, vi, out16[i].v);
          if (i == 0) {
              const rsx_vertex_attrib* a = &state->vertex_attribs[0];
-@@ -5442,6 +10278,774 @@ static void read_vp_vertex(const rsx_state* state, u32 vi, VPSlot* out16)
+@@ -5442,6 +10295,774 @@ static void read_vp_vertex(const rsx_state* state, u32 vi, VPSlot* out16)
      }
  }
  
@@ -15907,7 +15975,7 @@ index 68929ed..36bf152 100644
  /* VTX_POS=<N>: print the first fetched position of the first N draws. A guest
   * vertex array that resolves to the wrong memory reads as garbage/denormals, and
   * that is indistinguishable from "the shader is wrong" without seeing the input. */
-@@ -5484,6 +11088,21 @@ static void vp_attrs_dbg(const rsx_state* state)
+@@ -5484,6 +11105,21 @@ static void vp_attrs_dbg(const rsx_state* state)
          if (a->enabled) fprintf(stderr, "[VPATTR] a%d off=0x%X stride=%u size=%u type=%u freq=%u fmt=0x%08X\n",
                                  i, a->offset, a->stride, a->size, a->type, a->frequency, a->format);
      }
@@ -15929,7 +15997,7 @@ index 68929ed..36bf152 100644
      /* VP_ATTRS_DUMP=<attr>:<n>: read n entries of that attribute straight out of
       * guest memory. Answers "did the guest write these values, or did our fetch
       * mangle them" without inferring it from the rendered image. */
-@@ -5568,18 +11187,47 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5568,18 +11204,47 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
  {
      extern uint8_t* vm_base;
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
@@ -15981,7 +16049,7 @@ index 68929ed..36bf152 100644
          /* quad -> two triangles (perimeter winding) */
          static const int idx[6] = {0,1,2, 0,2,3};
          for (int t = 0; t < 6; t++) { memcpy(&out[o*16], c[idx[t]], sizeof(c[0])); o++; }
-@@ -5591,7 +11239,7 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5591,7 +11256,7 @@ static u32 upload_quads_vp(const rsx_state* state, u32 first, u32 count)
                      c[k][8].v[0],c[k][8].v[1]);
                fclose(f); } } }
      }
@@ -15990,7 +16058,7 @@ index 68929ed..36bf152 100644
      return o;
  }
  
-@@ -5602,16 +11250,16 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5602,16 +11267,16 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
      extern uint8_t* vm_base;
      s_req_verts += count; s_req_draws++;
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
@@ -16011,7 +16079,7 @@ index 68929ed..36bf152 100644
      { double _tv = perf_on() ? perf_now() : 0.0;
        for (u32 k = 0; k < count; k++)
            read_vp_vertex(state, first + k, &out[k*16]);
-@@ -5655,7 +11303,7 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
+@@ -5655,7 +11320,7 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
                  out[k*16+2].v[0],out[k*16+2].v[1],out[k*16+2].v[2],
                  out[k*16+9].v[0],out[k*16+9].v[1],out[k*16+9].v[2],out[k*16+9].v[3]);
            fclose(f); } } }
@@ -16020,7 +16088,7 @@ index 68929ed..36bf152 100644
      return count;
  }
  
-@@ -5668,24 +11316,41 @@ static u32 upload_strip_vp(const rsx_state* state, u32 first, u32 count, int fan
+@@ -5668,24 +11333,41 @@ static u32 upload_strip_vp(const rsx_state* state, u32 first, u32 count, int fan
  {
      extern uint8_t* vm_base;
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
@@ -16073,7 +16141,7 @@ index 68929ed..36bf152 100644
      return o;
  }
  
-@@ -5701,10 +11366,10 @@ static u32 read_guest_index(const rsx_state* st, u32 k)
+@@ -5701,10 +11383,10 @@ static u32 read_guest_index(const rsx_state* st, u32 k)
      const u8* p = vm_base + base;
      if (((st->index_array_dma >> 4) & 0xF) == 1) {
          p += (u64)k * 2;
@@ -16086,7 +16154,7 @@ index 68929ed..36bf152 100644
  }
  
  /* Indexed variants of the VP-path uploads. */
-@@ -5714,10 +11379,10 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5714,10 +11396,10 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
      if (!state->vertex_attribs[0].enabled) return 0;
      u32 quads = count / 4;
@@ -16100,7 +16168,7 @@ index 68929ed..36bf152 100644
      u32 o = 0;
      for (u32 q = 0; q < quads; q++) {
          VPSlot c[4][16];
-@@ -5744,7 +11409,7 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5744,7 +11426,7 @@ static u32 upload_quads_vp_indexed(const rsx_state* state, u32 first, u32 count)
                  fclose(f);
              } } }
      }
@@ -16109,7 +16177,7 @@ index 68929ed..36bf152 100644
      return o;
  }
  
-@@ -5755,14 +11420,56 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5755,14 +11437,56 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
      if (!state || !vm_base || !s_d3d.vp_vb_mapped) return 0;
      if (!state->vertex_attribs[0].enabled) return 0;
      vp_attrs_dbg(state);
@@ -16169,7 +16237,7 @@ index 68929ed..36bf152 100644
      { double _tv = perf_on() ? perf_now() : 0.0;
        for (u32 k = 0; k < count; k++)
            read_vp_vertex(state, read_guest_index(state, first + k), &out[k*16]);
-@@ -5957,7 +11664,7 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5957,7 +11681,7 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
                  read_guest_index(state, first+2),
                  a0->offset, vbase, nz, a0->stride, a0->size, a0->type,
                  out[0].v[0], out[0].v[1], out[0].v[2], 10); } }
@@ -16178,7 +16246,7 @@ index 68929ed..36bf152 100644
      return count;
  }
  
-@@ -5967,28 +11674,115 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
+@@ -5967,28 +11691,115 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
   * octopus tentacles -- are indexed strips. */
  static u32 upload_strip_vp_indexed(const rsx_state* state, u32 first, u32 count, int fan)
  {
@@ -16305,7 +16373,7 @@ index 68929ed..36bf152 100644
      /* RSX_LIVE_FEED_DBG=1: pair with the [feed] method counts so "the FIFO
       * carries no draw batches" can be checked against "the backend is told
       * to draw" in the same run. */
-@@ -5997,6 +11791,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -5997,6 +11808,7 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
            if (((++n) % 20000) == 0)
                printf("[backend] arrays callbacks=%lld (prim=%u count=%u)\n", n, primitive, count), fflush(stdout); } }
      (void)ud;
@@ -16313,7 +16381,7 @@ index 68929ed..36bf152 100644
      /* Log the first 20 calls in detail, then every 1000th to show liveness
       * without flooding. */
      static u64 s_total = 0;
-@@ -6022,10 +11817,14 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6022,10 +11834,14 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
           * off-screen. Untextured VP draws now render via the colour PSO. */
          if (s_d3d.vp_vb_mapped && s_d3d.vp_root_sig) {
              u32 rec = s_d3d.vp_vb_offset;
@@ -16330,7 +16398,7 @@ index 68929ed..36bf152 100644
                  dr->vertex_count   = emitted;
                  dr->topology       = RSX_TOPOLOGY_TRIANGLES;
                  dr->textured       = s_d3d.tex_bound;
-@@ -6036,6 +11835,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6036,6 +11852,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  dr->cull = rsx_cull_key(s_d3d.current_rsx_state);
          dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
              dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
@@ -16339,7 +16407,7 @@ index 68929ed..36bf152 100644
                  dr->cmask = 0xF;
                  if (s_d3d.current_rsx_state) {
                      u32 _cm = s_d3d.current_rsx_state->color_mask;
-@@ -6046,10 +11847,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6046,10 +11864,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  }
                  dr->alpha_ctl = 0;
                  if (s_d3d.current_rsx_state)
@@ -16352,7 +16420,7 @@ index 68929ed..36bf152 100644
                      dr->tex[_u].off = s_d3d.cur_texs[_u].off;
                      dr->tex[_u].raw = s_d3d.cur_texs[_u].raw;
                      dr->tex[_u].w   = s_d3d.cur_texs[_u].w;
-@@ -6062,10 +11861,13 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6062,10 +11878,13 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                      dr->tex_rt[_u]  = -1;
                  }
                  dr->tex_slot = -1;
@@ -16367,7 +16435,7 @@ index 68929ed..36bf152 100644
                  if (getenv("BLENDDBG")) { static u32 seen[32]; static int ns=0;
                      u32 k = (dr->blend ? 0x80000000u : 0u) | dr->blend_key;
                      int f=0; for (int i=0;i<ns;i++) if (seen[i]==k) f=1;
-@@ -6073,31 +11875,33 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6073,31 +11892,33 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                          fprintf(stderr, "[BLEND] enable=%d key=0x%X%c",
                                  dr->blend, dr->blend_key, 10); } }
                  dr->rt_off = current_rt_off(&dr->rt_w, &dr->rt_h, dr->rt_mrt);
@@ -16413,7 +16481,7 @@ index 68929ed..36bf152 100644
          }
          return;
      }
-@@ -6113,14 +11917,22 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6113,14 +11934,22 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
       * zero pixels (it also uploads to vp_vb, leaving the fixed-function vb empty).
       * Geometry already in clip space with no VP -- flOw's injected scene -- must
       * go down the fixed-function passthrough below instead. */
@@ -16438,7 +16506,7 @@ index 68929ed..36bf152 100644
          /* RSX splits one primitive stream across several DRAW_ARRAYS entries
           * inside a single BEGIN/END (each carries at most 256 vertices), and the
           * hardware concatenates them before assembling primitives. Recording a
-@@ -6130,24 +11942,26 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6130,24 +11959,26 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
           * rendered as spike triangles with a zero texcoord along the tub rim.
           * The batches land contiguously in the vertex buffer, so extending the
           * previous record is all that is needed to restore the stream. */
@@ -16470,7 +16538,7 @@ index 68929ed..36bf152 100644
              dr->vertex_count   = emitted;
              dr->topology       = RSX_TOPOLOGY_TRIANGLES;
              dr->textured       = s_d3d.tex_bound;
-@@ -6158,6 +11972,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6158,6 +11989,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
              dr->cull = rsx_cull_key(s_d3d.current_rsx_state);
          dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
              dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
@@ -16479,7 +16547,7 @@ index 68929ed..36bf152 100644
              dr->cmask = 0xF;
              if (s_d3d.current_rsx_state) {
                  u32 _cm = s_d3d.current_rsx_state->color_mask;
-@@ -6168,10 +11984,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6168,10 +12001,8 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
              }
              dr->alpha_ctl = 0;
              if (s_d3d.current_rsx_state)
@@ -16492,7 +16560,7 @@ index 68929ed..36bf152 100644
                  dr->tex[_u].off = s_d3d.cur_texs[_u].off;
                  dr->tex[_u].raw = s_d3d.cur_texs[_u].raw;
                  dr->tex[_u].w   = s_d3d.cur_texs[_u].w;
-@@ -6184,21 +11998,26 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6184,21 +12015,26 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
                  dr->tex_rt[_u]  = -1;
              }
              dr->tex_slot = -1;
@@ -16523,7 +16591,7 @@ index 68929ed..36bf152 100644
              /* Anchor for merging the next DRAW_ARRAYS batch of this stream. */
              s_d3d.merge_prev_draw  = (primitive == RSX_PRIMITIVE_TRIANGLES);
              s_d3d.merge_first_end  = first + count;
-@@ -6224,20 +12043,21 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6224,20 +12060,21 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
      u32 actual_count  = upload_vertices_from_rsx(first, count);
      if (actual_count == 0) return;
  
@@ -16554,7 +16622,7 @@ index 68929ed..36bf152 100644
      /* RSX_LIVE_FEED_DBG=1: pair with the [feed] method counts so "the FIFO
       * carries no draw batches" can be checked against "the backend is told
       * to draw" in the same run. */
-@@ -6254,6 +12074,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6254,6 +12091,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
      }
      if (!s_d3d.pipeline_ready) return;
      if (count == 0 || count > MAX_VERTICES) return;
@@ -16562,7 +16630,7 @@ index 68929ed..36bf152 100644
      if (!s_d3d.vp_vb_mapped || !s_d3d.vp_root_sig) return;
  
      /* Expand through the VP path (indices resolved CPU-side): QUADS -> two
-@@ -6261,6 +12082,9 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6261,6 +12099,9 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
       * list. Other primitives are skipped rather than drawn wrong. */
      u32 emitted = 0;
      u32 rec = s_d3d.vp_vb_offset;
@@ -16572,7 +16640,7 @@ index 68929ed..36bf152 100644
      if (primitive == RSX_PRIMITIVE_QUADS)             emitted = upload_quads_vp_indexed(s_d3d.current_rsx_state, first, count);
      else if (primitive == RSX_PRIMITIVE_TRIANGLES)    emitted = upload_tris_vp_indexed(s_d3d.current_rsx_state, first, count);
      else if (primitive == RSX_PRIMITIVE_TRIANGLE_STRIP) emitted = upload_strip_vp_indexed(s_d3d.current_rsx_state, first, count, 0);
-@@ -6271,27 +12095,100 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6271,27 +12112,100 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
              printf("[D3D12] draw_indexed: skipping prim=%u (not wired)\n", primitive);
          return;
      }
@@ -16678,7 +16746,7 @@ index 68929ed..36bf152 100644
          dr->vertex_count   = emitted;
          dr->topology       = RSX_TOPOLOGY_TRIANGLES;
          dr->textured       = s_d3d.tex_bound;
-@@ -6301,6 +12198,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6301,6 +12215,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
              ((s_d3d.current_rsx_state->shader_control & 0x40) != 0) : 1;
          dr->cull = rsx_cull_key(s_d3d.current_rsx_state);
          dr->begin_epoch = s_d3d.current_rsx_state ? s_d3d.current_rsx_state->begin_epoch : 0;
@@ -16687,7 +16755,7 @@ index 68929ed..36bf152 100644
          dr->cmask = 0xF;
          if (s_d3d.current_rsx_state) {
              u32 _cm = s_d3d.current_rsx_state->color_mask;
-@@ -6311,10 +12210,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6311,10 +12227,8 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
          }
          dr->alpha_ctl = 0;
          if (s_d3d.current_rsx_state)
@@ -16700,7 +16768,7 @@ index 68929ed..36bf152 100644
              dr->tex[_u].off = s_d3d.cur_texs[_u].off;
              dr->tex[_u].raw = s_d3d.cur_texs[_u].raw;
              dr->tex[_u].w   = s_d3d.cur_texs[_u].w;
-@@ -6327,21 +12224,49 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
+@@ -6327,21 +12241,49 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
              dr->tex_rt[_u]  = -1;
          }
          dr->tex_slot = -1;
@@ -16754,7 +16822,7 @@ index 68929ed..36bf152 100644
          /* Anchor for merging the next batch of this indexed stream. */
          s_d3d.merge_prev_draw = (primitive == RSX_PRIMITIVE_TRIANGLES);
          s_d3d.merge_first_end = first + count;
-@@ -6416,14 +12341,27 @@ static void d3d12_bind_texture(void* ud, u32 unit, const rsx_texture_state* tex)
+@@ -6416,14 +12358,27 @@ static void d3d12_bind_texture(void* ud, u32 unit, const rsx_texture_state* tex)
       * as-seen 0xA1 with the LN flag) is wired up so far; other formats fall
       * back to untextured. */
      u32 base_fmt = format & 0x9F;   /* strip LN(0x20)/UN(0x40) flags */
@@ -16784,7 +16852,7 @@ index 68929ed..36bf152 100644
          /* TEX_RESOLVE_AUTO=1: resolve through the page tables (local-page map
           * then IO table) instead of trusting the format's location bits. A
           * texture the guest built in main memory but tagged local resolves to
-@@ -6583,12 +12521,13 @@ static rsx_backend s_d3d12_backend = {0};
+@@ -6583,12 +12538,13 @@ static rsx_backend s_d3d12_backend = {0};
  int rsx_d3d12_backend_init(u32 width, u32 height, const char* title)
  {
      memset(&s_d3d, 0, sizeof(s_d3d));
@@ -16802,7 +16870,7 @@ index 68929ed..36bf152 100644
  
      /* Debug: dump the first N presented frames to BMP if CELLMARK_DUMP is set
       * (its numeric value when > 1, else 24). */
-@@ -6636,6 +12575,7 @@ int rsx_d3d12_backend_init(u32 width, u32 height, const char* title)
+@@ -6636,6 +12592,7 @@ int rsx_d3d12_backend_init(u32 width, u32 height, const char* title)
      s_d3d12_backend.set_shader        = d3d12_set_shader;
      s_d3d12_backend.set_vertex_attribs = d3d12_set_vertex_attribs;
      s_d3d12_backend.draw_arrays       = d3d12_draw_arrays;
@@ -16810,7 +16878,7 @@ index 68929ed..36bf152 100644
      s_d3d12_backend.draw_indexed      = d3d12_draw_indexed;
      s_d3d12_backend.bind_texture      = d3d12_bind_texture;
  
-@@ -6652,7 +12592,9 @@ void rsx_d3d12_backend_shutdown(void)
+@@ -6652,7 +12609,9 @@ void rsx_d3d12_backend_shutdown(void)
  {
      if (!s_d3d.initialized) return;
  
@@ -16820,7 +16888,7 @@ index 68929ed..36bf152 100644
  
      /* Release D3D12 resources */
      if (s_d3d.vertex_buffer) {
-@@ -6662,6 +12604,8 @@ void rsx_d3d12_backend_shutdown(void)
+@@ -6662,6 +12621,8 @@ void rsx_d3d12_backend_shutdown(void)
      if (s_d3d.pipeline_state)        s_d3d.pipeline_state->lpVtbl->Release(s_d3d.pipeline_state);
      if (s_d3d.pipeline_state_lines)  s_d3d.pipeline_state_lines->lpVtbl->Release(s_d3d.pipeline_state_lines);
      if (s_d3d.pipeline_state_points) s_d3d.pipeline_state_points->lpVtbl->Release(s_d3d.pipeline_state_points);
@@ -16829,7 +16897,7 @@ index 68929ed..36bf152 100644
      if (s_d3d.depth_buffer) s_d3d.depth_buffer->lpVtbl->Release(s_d3d.depth_buffer);
      if (s_d3d.dsv_heap)     s_d3d.dsv_heap->lpVtbl->Release(s_d3d.dsv_heap);
      if (s_d3d.root_signature) s_d3d.root_signature->lpVtbl->Release(s_d3d.root_signature);
-@@ -6677,7 +12621,7 @@ void rsx_d3d12_backend_shutdown(void)
+@@ -6677,7 +12638,7 @@ void rsx_d3d12_backend_shutdown(void)
      if (s_d3d.cmd_queue) s_d3d.cmd_queue->lpVtbl->Release(s_d3d.cmd_queue);
      if (s_d3d.device) s_d3d.device->lpVtbl->Release(s_d3d.device);
  
@@ -16838,7 +16906,7 @@ index 68929ed..36bf152 100644
  
      rsx_set_backend(NULL);
      s_d3d.initialized = 0;
-@@ -6687,6 +12631,7 @@ void rsx_d3d12_backend_shutdown(void)
+@@ -6687,6 +12648,7 @@ void rsx_d3d12_backend_shutdown(void)
  
  int rsx_d3d12_backend_pump_messages(void)
  {
@@ -16846,7 +16914,7 @@ index 68929ed..36bf152 100644
      MSG msg;
      while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
          if (msg.message == WM_QUIT) return -1;
-@@ -6700,7 +12645,7 @@ void rsx_d3d12_backend_present(void)
+@@ -6700,7 +12662,7 @@ void rsx_d3d12_backend_present(void)
  {
      if (blink_dbg())
          printf("[PRESENT] draws=%u clears_since_last=%u clear_presents=%u\n",
@@ -16855,7 +16923,7 @@ index 68929ed..36bf152 100644
      s_dbg_clears_since_present = 0;
  
      /* Once frame-boundary presents are active (d3d12_clear presents each
-@@ -6709,8 +12654,22 @@ void rsx_d3d12_backend_present(void)
+@@ -6709,8 +12671,22 @@ void rsx_d3d12_backend_present(void)
       * that partial present right after the FIFO ring recycle was the visible
       * blink. Keep the ticker present solely as the boot-time fallback (before
       * the first framed clear arrives). */
@@ -16880,7 +16948,7 @@ index 68929ed..36bf152 100644
  
      /* Same display gate as d3d12_present: a batch of offscreen pass work only
       * (render-to-texture) keeps accumulating until its composite arrives.
-@@ -6718,9 +12677,9 @@ void rsx_d3d12_backend_present(void)
+@@ -6718,9 +12694,9 @@ void rsx_d3d12_backend_present(void)
       * empty present is a flip/drain race and wipes the screen for a frame
       * (wave: black flashes and layout flicker between frames). */
      static int s_seen_content = 0;
@@ -16893,7 +16961,7 @@ index 68929ed..36bf152 100644
              has_display = 1;
              break;
          }
-@@ -6729,7 +12688,7 @@ void rsx_d3d12_backend_present(void)
+@@ -6729,7 +12705,7 @@ void rsx_d3d12_backend_present(void)
        if (gfb < 0) { const char* e = getenv("GCM_GUEST_FB"); gfb = e ? 1 : 0; }
        if (gfb) has_display = 1; }
      if (s_composite_src) has_display = 1;
@@ -16902,7 +16970,7 @@ index 68929ed..36bf152 100644
  
      /* VP_SUBMIT=<N>: has_display gates render_frame() entirely, so a batch whose
       * records all target an OFFSCREEN rt (rt_off != 0) presents without ever
-@@ -6737,26 +12696,26 @@ void rsx_d3d12_backend_present(void)
+@@ -6737,26 +12713,26 @@ void rsx_d3d12_backend_present(void)
       * reads as "nothing rasterizes" from every downstream check. */
      { static int cap = -1, n = 0;
        if (cap < 0) { const char* e = getenv("VP_SUBMIT"); cap = e ? atoi(e) : 0; }
@@ -16939,7 +17007,7 @@ index 68929ed..36bf152 100644
              }
              /* The execution loop skips anything without is_vp, so a batch full
               * of !is_vp records is counted, gated and then never drawn. */
-@@ -6767,7 +12726,7 @@ void rsx_d3d12_backend_present(void)
+@@ -6767,7 +12743,7 @@ void rsx_d3d12_backend_present(void)
            fprintf(stderr, "%c", 10); }
          fprintf(stderr, "[PRESENTGATE] records=%u onscreen=%u offscreen=%u clears=%u"
                          " has_display=%d seen_content=%d -> render_frame=%s\n",
@@ -16948,7 +17016,7 @@ index 68929ed..36bf152 100644
                  s_seen_content, (s_d3d.initialized && has_display) ? "YES" : "SKIPPED"); } }
  
      /* Execute the batch whenever it has draws. Gating the whole call on
-@@ -6775,14 +12734,14 @@ void rsx_d3d12_backend_present(void)
+@@ -6775,14 +12751,14 @@ void rsx_d3d12_backend_present(void)
       * offscreen surface -- was DISCARDED rather than deferred, so the texture
       * it produces was never written and whatever sampled it later read an
       * empty resource. Only the Present needs onscreen content. */
@@ -20760,13 +20828,314 @@ index 9e58833..563c39b 100644
      return 0;
  }
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..ace1ece 100644
+index 4f82063..884c780 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
-@@ -35,6 +35,85 @@ extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
- volatile unsigned g_spurs_pm_polls = 0;   /* selectWorkload calls this run */
- volatile unsigned g_spurs_pm_exited = 0;  /* set when exitToKernel was taken */
- volatile unsigned g_wws_batch_gets = 0;   /* loadCommands (LS 0xC00) fetch count, spu_dma.h */
+@@ -1,271 +1,384 @@
+-/* spurs_policy.c — run a SPURS workload's policy module on a lifted SPU.
+- *
+- * The real SPURS kernel dispatches a workload by loading its policy module
+- * (a raw SPU binary) at LS 0xA00 and entering it with the ABI of
+- * cellSpursModuleEntry(uintptr_t context, uint64_t ea):
+- *
+- *   r0 = return-to-kernel address     r3 = kernel context LS address (0x100)
+- *   r1 = stack (the PM re-loads its   r4 = the workload's u64 data (preferred
+- *        own initial stack)                doubleword) — e.g. a joblist EA
+- *                                     r5 = poll status
+- *
+- * The SpursKernelContext fields this fills, per the layout RPCS3 documents
+- * (Emu/Cell/Modules/cellSpurs.h, struct SpursKernelContext) and the lifted
+- * wwsjob PM verifiably reads. NOTE both pointers are 64-BIT:
+- *   0x1C0 be u64 spurs EA           0x1D8 be u32 wklCurrentUniqueId
+- *   0x1C8 be u32 spuNum             0x1DC be u32 wklCurrentId
+- *   0x1CC be u32 dmaTagId           0x1E0 be u32 exitToKernelAddr
+- *   0x1D0 be u64 wklCurrentAddr     0x1E4 be u32 selectWorkloadAddr
+- *        (PM base 0xA00, in the LOW word at 0x1D4)
+- *
+- * exitToKernel/selectWorkload point at two reserved LS addresses below the PM
+- * base; spu_indirect_branch intercepts them (ctx->policy_mode) and HLEs the
+- * kernel side: select = "no contention, keep running", exit = end of run.
+- */
+-#include "spu_context.h"
+-#include "spu_workload.h"
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <string.h>
+-
+-extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
+-
+-/* Counters the intercepts in spu_channels.c maintain for the CURRENT run
+- * (single writer per run; reads are diagnostic). */
+-volatile unsigned g_spurs_pm_polls = 0;   /* selectWorkload calls this run */
+-volatile unsigned g_spurs_pm_exited = 0;  /* set when exitToKernel was taken */
+-volatile unsigned g_wws_batch_gets = 0;   /* loadCommands (LS 0xC00) fetch count, spu_dma.h */
+-
+-int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+-                          const uint8_t* pm_host, uint32_t pm_size,
+-                          uint64_t wkl_data, uint32_t wid, uint32_t spurs_ea,
+-                          uint32_t spu_num)
+-{
+-    if (!entry || !pm_host || !pm_size || pm_size > SPU_LS_SIZE - 0xA00)
+-        return -1;
+-
+-    /* Reuse one context per thread: this runs per policy dispatch (thousands
+-     * per second with the SPURS workload churn live), and a fresh 260KB
+-     * calloc/free each time was allocator + page-zeroing churn. The explicit
+-     * memset preserves the exact fresh-zero semantics calloc provided. */
+-    /* PERSISTENT context per (workload, virtual SPU): a real policy module
+-     * stays RESIDENT on its SPU -- its LS carries continuation state between
+-     * scheduling quanta (the wwsjob PM caches the last-seen queue line at LS
+-     * 0x14B0 and its staging rings at 0x12xx; a freshly zeroed context every
+-     * dispatch made it treat every re-entry as first contact and it could
+-     * never progress its claim/stage pipeline). Image + context init happen
+-     * once; re-entries keep LS and only refresh the entry registers and the
+-     * (possibly game-updated) kernel-context fields. */
+-    enum { SPURS_PM_MAX_WKL = 16 };
+-    static spu_context* s_pm_ctx[SPURS_PM_MAX_WKL][6];
+-    if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
+-    spu_context* ctx = s_pm_ctx[wid][spu_num];
+-    int first = 0;
+-    /* SPURS_PM_FRESH=1: treat EVERY dispatch as first contact (zeroed LS, image
+-     * reloaded). A/B against the persistent default: with persistence, the wwsjob
+-     * PM's first entry attaches + claims exactly ONE ticket then yields, and every
+-     * RE-entry takes a stale-state path that does NOTHING (LS 0x12A0/0x12C0/0x12F0
+-     * job-pipeline slots persist; entry only partially re-inits them) -- LBP's
+-     * 10-ticket loading queue stalls at lanes {1,2} forever. Fresh contexts make
+-     * each dispatch run the full attach->claim->yield cycle, so repeated kernel
+-     * dispatches drain the queue one ticket at a time (the persistent-LS claim
+-     * that motivated the cache predates the r4 word0/word1 layout fix). */
+-    static int s_fresh = -1;
+-    if (s_fresh < 0) s_fresh = getenv("SPURS_PM_FRESH") ? 1 : 0;
+-    /* Reset the persistent context when the workload's DATA (queue EA)
+-     * changes: the game re-points a wid at a NEW job queue once the old one
+-     * drains, and a real SPURS kernel reloads the policy module fresh on a
+-     * workload switch. Carrying queue A's LS (header cache 0x14B0, busy
+-     * masks 0x1270/0x1280, records) into queue B made the PM see stale
+-     * state and claim nothing (observed: LBP's second loading queue sat at
+-     * lanes {0,...} while the first drained fine). */
+-    static uint64_t s_pm_data[SPURS_PM_MAX_WKL][6];
+-    if (!ctx) {
+-        ctx = (spu_context*)malloc(sizeof(spu_context));
+-        if (!ctx) return -1;
+-        s_pm_ctx[wid][spu_num] = ctx;
+-        first = 1;
+-        /* SPU_CTX_LOG=1: policy-module contexts are PERSISTENT and there is one
+-         * per (workload, spu_num) -- a workload with readyCount 8 legitimately
+-         * runs on several simulated SPUs, which then contend its lock lines
+-         * exactly as real SPUs would. Counting only the job contexts in
+-         * spu_lifted_job.h reports "two contexts" for a run that has five, and
+-         * makes correct multi-SPU execution look like duplicated state. */
+-        { static int s_cl = -1;
+-          if (s_cl < 0) s_cl = getenv("SPU_CTX_LOG") ? 1 : 0;
+-          if (s_cl) fprintf(stderr, "[spu-ctx] new POLICY context %p wid=%u spu_num=%u\n",
+-                            (void*)ctx, wid, spu_num); }
+-        memset(ctx, 0, sizeof(*ctx));
+-        spu_context_init(ctx, 0);
+-    } else if (s_fresh || s_pm_data[wid][spu_num] != wkl_data) {
+-        if (!s_fresh) {
+-            static int _n = 0;
+-            if (_n++ < 8)
+-                fprintf(stderr, "[spurs-pm] wid=%u spu=%u workload data changed "
+-                        "0x%llX -> 0x%llX: fresh PM context\n", wid, spu_num,
+-                        (unsigned long long)s_pm_data[wid][spu_num],
+-                        (unsigned long long)wkl_data);
+-        }
+-        first = 1;
+-        memset(ctx, 0, sizeof(*ctx));
+-        spu_context_init(ctx, 0);
+-    }
+-    s_pm_data[wid][spu_num] = wkl_data;
+-    ctx->image_id    = image_id;
+-    ctx->policy_mode = 1;
+-
+-    /* PM image at its load base (first entry only -- LS persists). */
+-    if (first)
+-        memcpy(ctx->ls + 0xA00, pm_host, pm_size);
+-
+-    /* SpursKernelContext at LS 0x100 (fields big-endian, like all guest data). */
+-    uint8_t* ls = ctx->ls;
+-#define KBE32(off, v) do { uint32_t _v = (v); ls[(off)] = (uint8_t)(_v >> 24); \
+-        ls[(off)+1] = (uint8_t)(_v >> 16); ls[(off)+2] = (uint8_t)(_v >> 8);   \
+-        ls[(off)+3] = (uint8_t)_v; } while (0)
+-    /* wklCurrentAddr is a 64-BIT pointer (vm::bcptr<void,u64>), so it occupies
+-     * 0x1D0..0x1D7 and everything after it sits 4 bytes higher than a u32 would
+-     * put it. Writing it as a u32 shifted the whole tail of the struct:
+-     * exitToKernelAddr landed on selectWorkloadAddr's slot and selectWorkloadAddr
+-     * fell off into moduleId, leaving 0x1E4 zero. The wwsjob PM reads both --
+-     * `lqa $2,0x1e0; bisl $0,$2` at LS 0x3588 calls exitToKernel, and
+-     * `lqa $7,0x1e0; rotqbyi $6,$7,4; bisl $0,$6` at LS 0x35A0 calls
+-     * selectWorkload -- so it called our exit intercept for every poll and
+-     * branched to 0 for every select. It also tests wklCurrentId (0x1DC) against
+-     * 1, which only reads sensibly at the correct offset. */
+-    KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
+-    KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
+-    KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
+-    KBE32(0x1CC, 8);                    /* dmaTagId (kernel's tag)  */
+-    KBE32(0x1D0, 0);                    /* wklCurrentAddr hi32 (u64 ptr) */
+-    KBE32(0x1D4, 0xA00);                /* wklCurrentAddr lo32 = PM load base */
+-    KBE32(0x1D8, wid);                  /* wklCurrentUniqueId       */
+-    KBE32(0x1DC, wid);                  /* wklCurrentId             */
+-    KBE32(0x1E0, SPURS_PM_EXIT_TO_KERNEL_LS);
+-    KBE32(0x1E4, SPURS_PM_SELECT_WORKLOAD_LS);
+-#undef KBE32
+-
+-    /* Entry registers per cellSpursModuleEntry. */
+-    ctx->gpr[0]._u32[0] = SPURS_PM_EXIT_TO_KERNEL_LS;  /* return-to-kernel link */
+-    ctx->gpr[1]._u32[0] = 0x3FFB0;                     /* stack (PM reloads its own) */
+-    ctx->gpr[3]._u32[0] = 0x100;                       /* context */
+-    /* r4 layout is LO-WORD-IN-PREFERRED, not a big-endian u64: verified
+-     * against the authentic wwsjob PM bytes (entry 0x2BF0 `stqa r4,0x14E0`,
+-     * attach 0x2720 `brz r4`/`wrch MFC_EAL, r4` -- it treats r4's PREFERRED
+-     * WORD as the 32-bit queue EA, and `shlqbyi r4,4`'s next word as the aux
+-     * half). Passing {hi,lo} put 0 in the preferred slot, so the queue attach
+-     * early-returned on every run: tickets got claimed via the shifted copy
+-     * but the job-list header never DMA'd in, and the PM wedged forever in
+-     * its staged-job wait (LBP's post-intro loading freeze). */
+-    /* ...and the CLAIM path reads the EA from the shlqbyi(r4,4) copy (LS
+-     * 0x13F0, via func_3038 -> 2418), i.e. r4's SECOND word. Both word 0
+-     * (attach) and word 1 (claim) must carry the 32-bit EA; the hi half
+-     * rides in words 2-3. */
+-    ctx->gpr[4]._u32[0] = (uint32_t)wkl_data;          /* attach reads word0  */
+-    ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;          /* claim reads word1   */
+-    ctx->gpr[4]._u32[2] = (uint32_t)(wkl_data >> 32);
+-    ctx->gpr[4]._u32[3] = (uint32_t)(wkl_data >> 32);
+-    ctx->gpr[5]._u32[0] = 0;                           /* poll status */
+-
+-    g_spurs_pm_polls  = 0;
+-    g_spurs_pm_exited = 0;
+-
+-    /* RUN/END tracing: thousands of policy dispatches per second made these
+-     * unconditional fprintf+fflush pairs a real fraction of movie playback.
+-     * Default off; SPURS_PM_TRACE=1 restores them (first 64 + every 4096th
+-     * so an enabled trace can't flood either). */
+-    static int s_trace = -1;
+-    if (s_trace < 0) s_trace = getenv("SPURS_PM_TRACE") ? 1 : 0;
+-    static unsigned long s_runs = 0;
+-    unsigned long runno = ++s_runs;
+-    int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
+-    if (log_this) {
+-        fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
+-                runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
+-        fflush(stderr);
+-    }
+-
+-    /* SPURS_PM_FLOW=1: capture this run's cross-function transfer trail (drain
+-     * hook in spu_drain.c) and dump it IF the run performed a PUTLLC (= a queue
+-     * claim) -- reconstructs the post-claim decision path that ends in a bare
+-     * exit-to-kernel instead of job staging. Only spu_num 0 is traced (the
+-     * concurrent lanes would interleave the buffer). */
+-    extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
+-    extern void* volatile g_pm_flow_ctx;
+-    extern volatile unsigned g_spu_putllc_count;
+-    extern volatile unsigned g_spu_putllc_sync_hit;
+-    extern uint32_t g_barrier_sync_watch;
+-    static int s_flow = -1;
+-    if (s_flow < 0) s_flow = getenv("SPURS_PM_FLOW") ? 1 : 0;
+-    unsigned putllc_before = g_spu_putllc_sync_hit;
+-    (void)g_spu_putllc_count;
+-    /* Trace ONLY the stalled queue's own runs: wkl_data == the sync EA the PPU
+-     * barrier/ticket probes armed (ticket-pub arms it at first publish, before
+-     * the PM's first work pass). Idle re-runs of this wid matter as much as the
+-     * claim run -- the empty-cursor path returns without any PUTLLC. */
+-    /* SPURS_PM_FLOW_ALL=1: trace EVERY spu_num-0 run of this workload without
+-     * requiring the PPU-side barrier probe to have armed g_barrier_sync_watch.
+-     * Needed to answer "does the job's buffer-binding routine (pm 0x3098, the
+-     * only writer of logicalToBufferNumArray@0x11B0 + jobState@0x12C0) ever
+-     * execute?" on a run that never reaches the barrier at all -- the RPCS3
+-     * guest dump shows a working SPU has 0x11B0 bound and runJobNum=0, ours
+-     * has 0x11B0 == 0 and runJobNum == -1. */
+-    static int s_flow_all = -1;
+-    if (s_flow_all < 0) s_flow_all = getenv("SPURS_PM_FLOW_ALL") ? 1 : 0;
+-    int tracing = (s_flow && spu_num == 0 && g_pm_flow_ctx == 0 &&
+-                   (s_flow_all ||
+-                    (g_barrier_sync_watch &&
+-                     (uint32_t)wkl_data == g_barrier_sync_watch)));
+-    static volatile unsigned long long s_flow_arm_ms;
+-    extern unsigned long long ps3_ms_now(void);
+-    if (tracing) {
+-        g_pm_flow_n = 0; g_pm_flow_ctx = ctx;
+-        s_flow_arm_ms = ps3_ms_now();
+-        { static int _a = 0; if (_a++ < 8) {
+-            fprintf(stderr, "[pm-flow] ARM wid=%u spu=%u (watch=0x%08X)\n",
+-                    wid, spu_num, g_barrier_sync_watch); fflush(stderr); } }
+-        /* Watchdog: the traced run has been observed to HANG the jobmanager
+-         * kernel thread (the claim run never returns -> no later dispatch can
+-         * report). A detached thread dumps the partial trail after 5s; the
+-         * trail's LAST pc names the looping lifted function. */
+-        { static int s_wd_started = 0;
+-          if (!s_wd_started) { s_wd_started = 1;
+-            extern void spurs_pm_flow_watchdog_start(void);
+-            spurs_pm_flow_watchdog_start(); } }
+-    }
+-
+-    /* SPURS_PM_PIPE=1: trace how the WWS job PIPELINE state evolves across
+-     * kernel dispatches. Prints the pipeline counters (loadJobState@0x12A0
+-     * preferred hword, nextLoadJobNum@0x12C0, loadJobNum@0x12D0, runJobNum@
+-     * 0x12E0, storeJobNum@0x12F0) before and after each PM run, plus the pc
+-     * spu_run_with_halt halted at. Answers: does re-entry advance the pipeline
+-     * or reset/stall it? Only wid<=1 (jobmanager) traced, first 4000 runs. */
+-    static int s_pipe = -1;
+-    if (s_pipe < 0) s_pipe = getenv("SPURS_PM_PIPE") ? 1 : 0;
+-    /* trace ALL workloads (the jobmanager is wid=12, not <=1); 4000-run cap bounds volume */
+-    int pipe_this = s_pipe && spu_num == 0;
+-    uint32_t st_before = 0;
+-    if (pipe_this) {
+-        const uint8_t* L = ctx->ls;
+-        #define HW(o) ((L[(o)+2]<<8)|L[(o)+3])   /* preferred hword (bytes 2-3) */
+-        st_before = HW(0x12A0);
+-        (void)st_before;
+-        #undef HW
+-    }
+-
+-    /* SPURS_PM_CLAIMLOG=1: per-run claim-vs-stage summary for BOTH lanes.
+-     * The loading freeze's signature is a dispatch that CLAIMS a ticket
+-     * (sync-PUTLLC hit) but never STAGES its job (no loadCommands GET): the
+-     * claimed ticket is eaten and the batch's barrier can never release
+-     * (observed: 4-job batch, counter=4, lanes {2,1}). Diffing the sync-PUTLLC
+-     * and 0xC00-GET counters across each run names that dispatch and shows the
+-     * LS pipeline state it left behind. */
+-    static int s_claimlog = -1;
+-    if (s_claimlog < 0) s_claimlog = getenv("SPURS_PM_CLAIMLOG") ? 1 : 0;
+-    unsigned batch_before = g_wws_batch_gets;
+-    unsigned claim_before = g_spu_putllc_sync_hit;
+-
++/* spurs_policy.c — run a SPURS workload's policy module on a lifted SPU.
++ *
++ * The real SPURS kernel dispatches a workload by loading its policy module
++ * (a raw SPU binary) at LS 0xA00 and entering it with the ABI of
++ * cellSpursModuleEntry(uintptr_t context, uint64_t ea):
++ *
++ *   r0 = return-to-kernel address     r3 = kernel context LS address (0x100)
++ *   r1 = stack (the PM re-loads its   r4 = the workload's u64 data (preferred
++ *        own initial stack)                doubleword) — e.g. a joblist EA
++ *                                     r5 = poll status
++ *
++ * The SpursKernelContext fields this fills, per the layout RPCS3 documents
++ * (Emu/Cell/Modules/cellSpurs.h, struct SpursKernelContext) and the lifted
++ * wwsjob PM verifiably reads. NOTE both pointers are 64-BIT:
++ *   0x1C0 be u64 spurs EA           0x1D8 be u32 wklCurrentUniqueId
++ *   0x1C8 be u32 spuNum             0x1DC be u32 wklCurrentId
++ *   0x1CC be u32 dmaTagId           0x1E0 be u32 exitToKernelAddr
++ *   0x1D0 be u64 wklCurrentAddr     0x1E4 be u32 selectWorkloadAddr
++ *        (PM base 0xA00, in the LOW word at 0x1D4)
++ *
++ * exitToKernel/selectWorkload point at two reserved LS addresses below the PM
++ * base; spu_indirect_branch intercepts them (ctx->policy_mode) and HLEs the
++ * kernel side: select = "no contention, keep running", exit = end of run.
++ */
++#include "spu_context.h"
++#include "spu_workload.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
++
++/* Counters the intercepts in spu_channels.c maintain for the CURRENT run
++ * (single writer per run; reads are diagnostic). */
++volatile unsigned g_spurs_pm_polls = 0;   /* selectWorkload calls this run */
++volatile unsigned g_spurs_pm_exited = 0;  /* set when exitToKernel was taken */
++volatile unsigned g_wws_batch_gets = 0;   /* loadCommands (LS 0xC00) fetch count, spu_dma.h */
 +volatile unsigned long g_pm_flow_arms = 0; /* traced runs started; the hang watchdog compares two samples */
 +
 +/* Every lane's persistent policy-module context, by workload and SPU. */
@@ -20802,27 +21171,27 @@ index 4f82063..ace1ece 100644
 +            }
 +}
 +
-+static void spurs_ring_trace_dump(int w, int n)
++static void spurs_ring_trace_dump(FILE* out, int w, int n)
 +{
 +    unsigned k = g_rt_n[w][n];
 +    if (!k) return;
 +    unsigned first = k > RT_N ? k - RT_N : 0;
 +    for (unsigned i = first; i < k; i++) {
 +        const spurs_rt_ent* e = &g_rt[w][n][i % RT_N];
-+        fprintf(stderr, "[stall]     rt #%u seq=%u head=%08X want=%08X label=%08X@%08X%s%c",
++        fprintf(out, "[stall]     rt #%u seq=%u head=%08X want=%08X label=%08X@%08X%s%c",
 +                i, e->seq, e->head, e->want, e->label, e->lab_ea, e->wait == 2 ? " JOB-END" : e->wait ? " WAIT" : "", 10);
 +    }
 +}
 +
 +/* For a stall report (gt5p_present.cpp): where each lane's SPU stands. Read
 + * racily from the live contexts. */
-+void spurs_pm_debug_dump(void)
++void spurs_pm_debug_dump_to(FILE* out)
 +{
 +    for (int w = 0; w < 16; w++)
 +        for (int n = 0; n < 6; n++) {
 +            const spu_context* c = g_pm_ctx_tab[w][n];
 +            if (!c) continue;
-+            fprintf(stderr, "[stall]   lane wid=%d spu=%d pc=0x%05X lr=0x%05X r3=%08X img=%d ovl=%d depth=%u "
++            fprintf(out, "[stall]   lane wid=%d spu=%d pc=0x%05X lr=0x%05X r3=%08X img=%d ovl=%d depth=%u "
 +                            "int=%d evmask=%X evstat=%X resv=%d@%08X mfc lsa=%05X eal=%08X size=%X steps=%u%c",
 +                    w, n, (unsigned)(c->pc & 0x3FFFF), c->gpr[0]._u32[0] & 0x3FFFF, c->gpr[3]._u32[0],
 +                    c->image_id, c->resident_ovl, c->host_depth, c->int_enable, c->event_mask,
@@ -20835,55 +21204,250 @@ index 4f82063..ace1ece 100644
 +            if (c->ls) {
 +                const uint8_t* q = c->ls + 0x1F000;
 +                #define BE32(p) ((uint32_t)(p)[0] << 24 | (uint32_t)(p)[1] << 16 | (uint32_t)(p)[2] << 8 | (p)[3])
-+                fprintf(stderr, "[stall]     ring start=%08X end=%08X head=%08X label@%08X last=%08X | "
++                fprintf(out, "[stall]     ring start=%08X end=%08X head=%08X label@%08X last=%08X | "
 +                                "r5=%08X r12=%08X r21=%08X r24=%08X r25=%08X r50=%08X r9=%08X%c",
 +                        BE32(q + 0x80), BE32(q + 0x84), BE32(q + 0x88), BE32(q + 0x8C), BE32(q),
 +                        c->gpr[5]._u32[0], c->gpr[12]._u32[0], c->gpr[21]._u32[0], c->gpr[24]._u32[0],
 +                        c->gpr[25]._u32[0], c->gpr[50]._u32[0], c->gpr[9]._u32[0], 10);
 +                #undef BE32
 +            }
-+            if (w < 2) spurs_ring_trace_dump(w, n);
++            if (w < 2) spurs_ring_trace_dump(out, w, n);
 +        }
-+    fflush(stderr);
++    fflush(out);
 +}
- 
- int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
-                           const uint8_t* pm_host, uint32_t pm_size,
-@@ -57,7 +136,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
-      * once; re-entries keep LS and only refresh the entry registers and the
-      * (possibly game-updated) kernel-context fields. */
-     enum { SPURS_PM_MAX_WKL = 16 };
--    static spu_context* s_pm_ctx[SPURS_PM_MAX_WKL][6];
++
++void spurs_pm_debug_dump(void) { spurs_pm_debug_dump_to(stderr); }
++
++int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
++                          const uint8_t* pm_host, uint32_t pm_size,
++                          uint64_t wkl_data, uint32_t wid, uint32_t spurs_ea,
++                          uint32_t spu_num)
++{
++    if (!entry || !pm_host || !pm_size || pm_size > SPU_LS_SIZE - 0xA00)
++        return -1;
++
++    /* Reuse one context per thread: this runs per policy dispatch (thousands
++     * per second with the SPURS workload churn live), and a fresh 260KB
++     * calloc/free each time was allocator + page-zeroing churn. The explicit
++     * memset preserves the exact fresh-zero semantics calloc provided. */
++    /* PERSISTENT context per (workload, virtual SPU): a real policy module
++     * stays RESIDENT on its SPU -- its LS carries continuation state between
++     * scheduling quanta (the wwsjob PM caches the last-seen queue line at LS
++     * 0x14B0 and its staging rings at 0x12xx; a freshly zeroed context every
++     * dispatch made it treat every re-entry as first contact and it could
++     * never progress its claim/stage pipeline). Image + context init happen
++     * once; re-entries keep LS and only refresh the entry registers and the
++     * (possibly game-updated) kernel-context fields. */
++    enum { SPURS_PM_MAX_WKL = 16 };
 +    spu_context* (*s_pm_ctx)[6] = g_pm_ctx_tab;   /* file scope: spurs_pm_debug_dump reads it */
-     if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
-     spu_context* ctx = s_pm_ctx[wid][spu_num];
-     int first = 0;
-@@ -219,7 +298,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
-     static volatile unsigned long long s_flow_arm_ms;
-     extern unsigned long long ps3_ms_now(void);
-     if (tracing) {
--        g_pm_flow_n = 0; g_pm_flow_ctx = ctx;
++    if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
++    spu_context* ctx = s_pm_ctx[wid][spu_num];
++    int first = 0;
++    /* SPURS_PM_FRESH=1: treat EVERY dispatch as first contact (zeroed LS, image
++     * reloaded). A/B against the persistent default: with persistence, the wwsjob
++     * PM's first entry attaches + claims exactly ONE ticket then yields, and every
++     * RE-entry takes a stale-state path that does NOTHING (LS 0x12A0/0x12C0/0x12F0
++     * job-pipeline slots persist; entry only partially re-inits them) -- LBP's
++     * 10-ticket loading queue stalls at lanes {1,2} forever. Fresh contexts make
++     * each dispatch run the full attach->claim->yield cycle, so repeated kernel
++     * dispatches drain the queue one ticket at a time (the persistent-LS claim
++     * that motivated the cache predates the r4 word0/word1 layout fix). */
++    static int s_fresh = -1;
++    if (s_fresh < 0) s_fresh = getenv("SPURS_PM_FRESH") ? 1 : 0;
++    /* Reset the persistent context when the workload's DATA (queue EA)
++     * changes: the game re-points a wid at a NEW job queue once the old one
++     * drains, and a real SPURS kernel reloads the policy module fresh on a
++     * workload switch. Carrying queue A's LS (header cache 0x14B0, busy
++     * masks 0x1270/0x1280, records) into queue B made the PM see stale
++     * state and claim nothing (observed: LBP's second loading queue sat at
++     * lanes {0,...} while the first drained fine). */
++    static uint64_t s_pm_data[SPURS_PM_MAX_WKL][6];
++    if (!ctx) {
++        ctx = (spu_context*)malloc(sizeof(spu_context));
++        if (!ctx) return -1;
++        s_pm_ctx[wid][spu_num] = ctx;
++        first = 1;
++        /* SPU_CTX_LOG=1: policy-module contexts are PERSISTENT and there is one
++         * per (workload, spu_num) -- a workload with readyCount 8 legitimately
++         * runs on several simulated SPUs, which then contend its lock lines
++         * exactly as real SPUs would. Counting only the job contexts in
++         * spu_lifted_job.h reports "two contexts" for a run that has five, and
++         * makes correct multi-SPU execution look like duplicated state. */
++        { static int s_cl = -1;
++          if (s_cl < 0) s_cl = getenv("SPU_CTX_LOG") ? 1 : 0;
++          if (s_cl) fprintf(stderr, "[spu-ctx] new POLICY context %p wid=%u spu_num=%u\n",
++                            (void*)ctx, wid, spu_num); }
++        memset(ctx, 0, sizeof(*ctx));
++        spu_context_init(ctx, 0);
++    } else if (s_fresh || s_pm_data[wid][spu_num] != wkl_data) {
++        if (!s_fresh) {
++            static int _n = 0;
++            if (_n++ < 8)
++                fprintf(stderr, "[spurs-pm] wid=%u spu=%u workload data changed "
++                        "0x%llX -> 0x%llX: fresh PM context\n", wid, spu_num,
++                        (unsigned long long)s_pm_data[wid][spu_num],
++                        (unsigned long long)wkl_data);
++        }
++        first = 1;
++        memset(ctx, 0, sizeof(*ctx));
++        spu_context_init(ctx, 0);
++    }
++    s_pm_data[wid][spu_num] = wkl_data;
++    ctx->image_id    = image_id;
++    ctx->policy_mode = 1;
++
++    /* PM image at its load base (first entry only -- LS persists). */
++    if (first)
++        memcpy(ctx->ls + 0xA00, pm_host, pm_size);
++
++    /* SpursKernelContext at LS 0x100 (fields big-endian, like all guest data). */
++    uint8_t* ls = ctx->ls;
++#define KBE32(off, v) do { uint32_t _v = (v); ls[(off)] = (uint8_t)(_v >> 24); \
++        ls[(off)+1] = (uint8_t)(_v >> 16); ls[(off)+2] = (uint8_t)(_v >> 8);   \
++        ls[(off)+3] = (uint8_t)_v; } while (0)
++    /* wklCurrentAddr is a 64-BIT pointer (vm::bcptr<void,u64>), so it occupies
++     * 0x1D0..0x1D7 and everything after it sits 4 bytes higher than a u32 would
++     * put it. Writing it as a u32 shifted the whole tail of the struct:
++     * exitToKernelAddr landed on selectWorkloadAddr's slot and selectWorkloadAddr
++     * fell off into moduleId, leaving 0x1E4 zero. The wwsjob PM reads both --
++     * `lqa $2,0x1e0; bisl $0,$2` at LS 0x3588 calls exitToKernel, and
++     * `lqa $7,0x1e0; rotqbyi $6,$7,4; bisl $0,$6` at LS 0x35A0 calls
++     * selectWorkload -- so it called our exit intercept for every poll and
++     * branched to 0 for every select. It also tests wklCurrentId (0x1DC) against
++     * 1, which only reads sensibly at the correct offset. */
++    KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
++    KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
++    KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
++    KBE32(0x1CC, 8);                    /* dmaTagId (kernel's tag)  */
++    KBE32(0x1D0, 0);                    /* wklCurrentAddr hi32 (u64 ptr) */
++    KBE32(0x1D4, 0xA00);                /* wklCurrentAddr lo32 = PM load base */
++    KBE32(0x1D8, wid);                  /* wklCurrentUniqueId       */
++    KBE32(0x1DC, wid);                  /* wklCurrentId             */
++    KBE32(0x1E0, SPURS_PM_EXIT_TO_KERNEL_LS);
++    KBE32(0x1E4, SPURS_PM_SELECT_WORKLOAD_LS);
++#undef KBE32
++
++    /* Entry registers per cellSpursModuleEntry. */
++    ctx->gpr[0]._u32[0] = SPURS_PM_EXIT_TO_KERNEL_LS;  /* return-to-kernel link */
++    ctx->gpr[1]._u32[0] = 0x3FFB0;                     /* stack (PM reloads its own) */
++    ctx->gpr[3]._u32[0] = 0x100;                       /* context */
++    /* r4 layout is LO-WORD-IN-PREFERRED, not a big-endian u64: verified
++     * against the authentic wwsjob PM bytes (entry 0x2BF0 `stqa r4,0x14E0`,
++     * attach 0x2720 `brz r4`/`wrch MFC_EAL, r4` -- it treats r4's PREFERRED
++     * WORD as the 32-bit queue EA, and `shlqbyi r4,4`'s next word as the aux
++     * half). Passing {hi,lo} put 0 in the preferred slot, so the queue attach
++     * early-returned on every run: tickets got claimed via the shifted copy
++     * but the job-list header never DMA'd in, and the PM wedged forever in
++     * its staged-job wait (LBP's post-intro loading freeze). */
++    /* ...and the CLAIM path reads the EA from the shlqbyi(r4,4) copy (LS
++     * 0x13F0, via func_3038 -> 2418), i.e. r4's SECOND word. Both word 0
++     * (attach) and word 1 (claim) must carry the 32-bit EA; the hi half
++     * rides in words 2-3. */
++    ctx->gpr[4]._u32[0] = (uint32_t)wkl_data;          /* attach reads word0  */
++    ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;          /* claim reads word1   */
++    ctx->gpr[4]._u32[2] = (uint32_t)(wkl_data >> 32);
++    ctx->gpr[4]._u32[3] = (uint32_t)(wkl_data >> 32);
++    ctx->gpr[5]._u32[0] = 0;                           /* poll status */
++
++    g_spurs_pm_polls  = 0;
++    g_spurs_pm_exited = 0;
++
++    /* RUN/END tracing: thousands of policy dispatches per second made these
++     * unconditional fprintf+fflush pairs a real fraction of movie playback.
++     * Default off; SPURS_PM_TRACE=1 restores them (first 64 + every 4096th
++     * so an enabled trace can't flood either). */
++    static int s_trace = -1;
++    if (s_trace < 0) s_trace = getenv("SPURS_PM_TRACE") ? 1 : 0;
++    static unsigned long s_runs = 0;
++    unsigned long runno = ++s_runs;
++    int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
++    if (log_this) {
++        fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
++                runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
++        fflush(stderr);
++    }
++
++    /* SPURS_PM_FLOW=1: capture this run's cross-function transfer trail (drain
++     * hook in spu_drain.c) and dump it IF the run performed a PUTLLC (= a queue
++     * claim) -- reconstructs the post-claim decision path that ends in a bare
++     * exit-to-kernel instead of job staging. Only spu_num 0 is traced (the
++     * concurrent lanes would interleave the buffer). */
++    extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
++    extern void* volatile g_pm_flow_ctx;
++    extern volatile unsigned g_spu_putllc_count;
++    extern volatile unsigned g_spu_putllc_sync_hit;
++    extern uint32_t g_barrier_sync_watch;
++    static int s_flow = -1;
++    if (s_flow < 0) s_flow = getenv("SPURS_PM_FLOW") ? 1 : 0;
++    unsigned putllc_before = g_spu_putllc_sync_hit;
++    (void)g_spu_putllc_count;
++    /* Trace ONLY the stalled queue's own runs: wkl_data == the sync EA the PPU
++     * barrier/ticket probes armed (ticket-pub arms it at first publish, before
++     * the PM's first work pass). Idle re-runs of this wid matter as much as the
++     * claim run -- the empty-cursor path returns without any PUTLLC. */
++    /* SPURS_PM_FLOW_ALL=1: trace EVERY spu_num-0 run of this workload without
++     * requiring the PPU-side barrier probe to have armed g_barrier_sync_watch.
++     * Needed to answer "does the job's buffer-binding routine (pm 0x3098, the
++     * only writer of logicalToBufferNumArray@0x11B0 + jobState@0x12C0) ever
++     * execute?" on a run that never reaches the barrier at all -- the RPCS3
++     * guest dump shows a working SPU has 0x11B0 bound and runJobNum=0, ours
++     * has 0x11B0 == 0 and runJobNum == -1. */
++    static int s_flow_all = -1;
++    if (s_flow_all < 0) s_flow_all = getenv("SPURS_PM_FLOW_ALL") ? 1 : 0;
++    int tracing = (s_flow && spu_num == 0 && g_pm_flow_ctx == 0 &&
++                   (s_flow_all ||
++                    (g_barrier_sync_watch &&
++                     (uint32_t)wkl_data == g_barrier_sync_watch)));
++    static volatile unsigned long long s_flow_arm_ms;
++    extern unsigned long long ps3_ms_now(void);
++    if (tracing) {
 +        { extern volatile unsigned long long g_pm_flow_total; g_pm_flow_total = 0; }
 +        g_pm_flow_n = 0; g_pm_flow_ctx = ctx; g_pm_flow_arms++;
-         s_flow_arm_ms = ps3_ms_now();
-         { static int _a = 0; if (_a++ < 8) {
-             fprintf(stderr, "[pm-flow] ARM wid=%u spu=%u (watch=0x%08X)\n",
-@@ -265,18 +345,49 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
-     unsigned batch_before = g_wws_batch_gets;
-     unsigned claim_before = g_spu_putllc_sync_hit;
- 
--    const int pm_halted = spu_run_with_halt(entry, ctx);
--    /* A lane's run should only end through exitToKernel. Anything else strands
--     * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
--    if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
--        extern unsigned spu_recent_pcs(uint32_t*, unsigned);
--        uint32_t r[32]; unsigned n = spu_recent_pcs(r, 32);
--        static volatile long s_pe; if (__atomic_add_fetch(&s_pe, 1, __ATOMIC_RELAXED) <= 64) {
--            fprintf(stderr, "[pm-end] lane %u ctx=%p halted=%d status=0x%X pc=0x%05X lr=0x%05X r3=0x%08X depth=%u recent:",
--                    spu_num, (void*)ctx, pm_halted, ctx->status, (uint32_t)ctx->pc & SPU_LS_MASK,
--                    ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[3]._u32[0], ctx->host_depth);
--            for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
--            fprintf(stderr, "\n"); fflush(stderr); } }
++        s_flow_arm_ms = ps3_ms_now();
++        { static int _a = 0; if (_a++ < 8) {
++            fprintf(stderr, "[pm-flow] ARM wid=%u spu=%u (watch=0x%08X)\n",
++                    wid, spu_num, g_barrier_sync_watch); fflush(stderr); } }
++        /* Watchdog: the traced run has been observed to HANG the jobmanager
++         * kernel thread (the claim run never returns -> no later dispatch can
++         * report). A detached thread dumps the partial trail after 5s; the
++         * trail's LAST pc names the looping lifted function. */
++        { static int s_wd_started = 0;
++          if (!s_wd_started) { s_wd_started = 1;
++            extern void spurs_pm_flow_watchdog_start(void);
++            spurs_pm_flow_watchdog_start(); } }
++    }
++
++    /* SPURS_PM_PIPE=1: trace how the WWS job PIPELINE state evolves across
++     * kernel dispatches. Prints the pipeline counters (loadJobState@0x12A0
++     * preferred hword, nextLoadJobNum@0x12C0, loadJobNum@0x12D0, runJobNum@
++     * 0x12E0, storeJobNum@0x12F0) before and after each PM run, plus the pc
++     * spu_run_with_halt halted at. Answers: does re-entry advance the pipeline
++     * or reset/stall it? Only wid<=1 (jobmanager) traced, first 4000 runs. */
++    static int s_pipe = -1;
++    if (s_pipe < 0) s_pipe = getenv("SPURS_PM_PIPE") ? 1 : 0;
++    /* trace ALL workloads (the jobmanager is wid=12, not <=1); 4000-run cap bounds volume */
++    int pipe_this = s_pipe && spu_num == 0;
++    uint32_t st_before = 0;
++    if (pipe_this) {
++        const uint8_t* L = ctx->ls;
++        #define HW(o) ((L[(o)+2]<<8)|L[(o)+3])   /* preferred hword (bytes 2-3) */
++        st_before = HW(0x12A0);
++        (void)st_before;
++        #undef HW
++    }
++
++    /* SPURS_PM_CLAIMLOG=1: per-run claim-vs-stage summary for BOTH lanes.
++     * The loading freeze's signature is a dispatch that CLAIMS a ticket
++     * (sync-PUTLLC hit) but never STAGES its job (no loadCommands GET): the
++     * claimed ticket is eaten and the batch's barrier can never release
++     * (observed: 4-job batch, counter=4, lanes {2,1}). Diffing the sync-PUTLLC
++     * and 0xC00-GET counters across each run names that dispatch and shows the
++     * LS pipeline state it left behind. */
++    static int s_claimlog = -1;
++    if (s_claimlog < 0) s_claimlog = getenv("SPURS_PM_CLAIMLOG") ? 1 : 0;
++    unsigned batch_before = g_wws_batch_gets;
++    unsigned claim_before = g_spu_putllc_sync_hit;
++
 +    /* SPURS_PM_ENDLOG=<wid>: every run of that workload's module, per virtual
 +     * SPU: how long it ran, where it ended and how many DMAs it issued. */
 +    static int s_endlog = -2;
@@ -20892,7 +21456,7 @@ index 4f82063..ace1ece 100644
 +    extern unsigned long long __stdcall GetTickCount64(void);
 +    unsigned el_putllc = g_spu_putllc_count;
 +    unsigned long long el_t0 = (s_endlog == (int)wid) ? GetTickCount64() : 0;
-+    const int pm_halted = spu_run_with_halt(entry, ctx);
+     const int pm_halted = spu_run_with_halt(entry, ctx);
 +    if (s_endlog == (int)wid)
 +        fprintf(stderr, "[pm-run] wid=%u spu=%u first=%d %llu ms end pc=0x%05X r3=0x%08X halted=%d putllc=%u ready=%u%c",
 +                wid, spu_num, first, GetTickCount64() - el_t0, (uint32_t)ctx->pc & SPU_LS_MASK,
@@ -20916,27 +21480,448 @@ index 4f82063..ace1ece 100644
 +        fprintf(stderr, "%s%c", line, 10);
 +        (void)rp; (void)rn;
 +    }
-+    /* A lane's run should only end through exitToKernel. Anything else strands
-+     * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
-+    if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-+        extern unsigned spu_recent_pcs(uint32_t*, unsigned);
-+        uint32_t r[32]; unsigned n = spu_recent_pcs(r, 32);
-+        static volatile long s_pe; if (__atomic_add_fetch(&s_pe, 1, __ATOMIC_RELAXED) <= 64) {
-+            fprintf(stderr, "[pm-end] lane %u ctx=%p halted=%d status=0x%X pc=0x%05X lr=0x%05X r3=0x%08X depth=%u recent:",
-+                    spu_num, (void*)ctx, pm_halted, ctx->status, (uint32_t)ctx->pc & SPU_LS_MASK,
-+                    ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[3]._u32[0], ctx->host_depth);
-+            for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
-+            fprintf(stderr, "\n"); fflush(stderr); } }
- 
-     if (s_claimlog) {
-         unsigned claims = g_spu_putllc_sync_hit - claim_before;
-@@ -439,9 +550,25 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
-     (void)p;
-     extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
-     extern void* volatile g_pm_flow_ctx;
+     /* A lane's run should only end through exitToKernel. Anything else strands
+      * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
+     if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
+@@ -277,276 +390,292 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+                     ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[3]._u32[0], ctx->host_depth);
+             for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
+             fprintf(stderr, "\n"); fflush(stderr); } }
+-
+-    if (s_claimlog) {
+-        unsigned claims = g_spu_putllc_sync_hit - claim_before;
+-        unsigned stages = g_wws_batch_gets - batch_before;
+-        if (claims || stages) {
+-            static unsigned s_cl = 0;
+-            if (s_cl++ < 64) {
+-                const uint8_t* L = ctx->ls;
+-                #define W(o)  ((L[(o)]<<24)|(L[(o)+1]<<16)|(L[(o)+2]<<8)|L[(o)+3])
+-                fprintf(stderr, "[pm-claim] wid=%u spu=%u first=%d claims=%u stages=%u%s halt_pc=0x%05X "
+-                        "nextLoad=0x%X loadJob=0x%X runJob=0x%X storeJob=0x%X q13F0=%08X q14E0=%08X\n",
+-                        wid, spu_num, first, claims, stages,
+-                        (claims && !stages) ? " <-- CLAIM EATEN" : "",
+-                        ctx->pc & SPU_LS_MASK,
+-                        W(0x12C0), W(0x12D0), W(0x12E0), W(0x12F0),
+-                        W(0x13F0), W(0x14E0));
+-                fflush(stderr);
+-                #undef W
+-            }
+-        }
+-    }
+-
+-    if (pipe_this) {
+-        /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
+-         * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
+-         * own budget so wid=12's pipeline is always captured. */
+-        static unsigned long s_pn_wid[16] = {0};
+-        unsigned long s_pn = ++s_pn_wid[wid & 15];
+-        if (s_pn < 300) {
+-            const uint8_t* L = ctx->ls;
+-            #define HW(o) ((L[(o)+2]<<8)|L[(o)+3])
+-            #define W(o)  ((L[(o)]<<24)|(L[(o)+1]<<16)|(L[(o)+2]<<8)|L[(o)+3])
+-            fprintf(stderr, "[pm-pipe] wid=%u run#%lu first=%d halt_pc=0x%05X "
+-                    "loadState=%u->%u nextLoad=0x%X loadJob=0x%X runJob=0x%X storeJob=0x%X "
+-                    "lastStore=0x%X\n",
+-                    wid, s_pn, first, ctx->pc & SPU_LS_MASK,
+-                    st_before, HW(0x12A0), W(0x12C0), W(0x12D0), W(0x12E0),
+-                    W(0x12F0), W(0x1300));
+-            /* WHY-NO-JOB1 probe: AllocateJob (via TryChangeFreeToLoadJob) stores
+-             * its result at g_WwsJob_jobHeader(0x1420) + g_WwsJob_jobIndex(0x1410).
+-             * jobHeader low-hword: 0=none(PPU hasn't published)/1=exists/3=nop.
+-             * Also dump the joblist header in RAM (eaWorkLoad@0x13F0) to see the
+-             * PPU-published numJobs + claimed jobIndex -- decides whether the PM
+-             * stops because the header is unpublished (PPU-side) or because our
+-             * load path bails after claiming. */
+-            {
+-                extern uint8_t* vm_base;
+-                uint32_t eaWL = W(0x13F0);
+-                fprintf(stderr, "         jobIndex=0x%X jobHeader=0x%08X(cmd=%u) eaWL=0x%08X\n",
+-                        W(0x1410), W(0x1420), HW(0x1420), eaWL);
+-                /* Dump the joblist header region eaWL+0x00..0x9F so we can see the
+-                 * ticket/counter rows AND where the PPU actually wrote the job
+-                 * headers (ref AllocateJob reads eaWL+0x20; oracle layout puts
+-                 * jobHeaders at +0x80). If +0x20 is 0 but +0x80 has 0x00xx0001
+-                 * entries, our AllocateJob reads the WRONG offset. */
+-                if (vm_base && eaWL) {
+-                    for (uint32_t o = 0; o < 0xA0; o += 0x10) {
+-                        const uint8_t* r = vm_base + eaWL + o;
+-                        #define RW(i) ((r[i]<<24)|(r[i+1]<<16)|(r[i+2]<<8)|r[i+3])
+-                        fprintf(stderr, "         jl+%02X: %08X %08X %08X %08X\n",
+-                                o, RW(0), RW(4), RW(8), RW(12));
+-                        #undef RW
+-                    }
+-                }
+-            }
+-            fflush(stderr);
+-            #undef HW
+-            #undef W
+-        }
+-    }
+-
+-    if (tracing) {
+-        g_pm_flow_ctx = 0;
+-        static int s_dumps = 0;
+-        /* Only dump once the PPU is actually spinning on a job barrier
+-         * (g_barrier_sync_watch armed by the barrier probe): boot-time idle
+-         * runs also PUTLLC (queue-check protocol) and would burn the cap. */
+-        /* Only dump runs that actually had a JOB STAGED. A boot-time idle run
+-         * has empty loadCommands(0xC00)/bufferSetArray(0xDF0) and its trail says
+-         * nothing about the Load->Run gate -- with SPURS_PM_FLOW_ALL tracing
+-         * every run, the dump budget was being spent entirely on idle runs. */
+-        int has_job = 0;
+-        for (uint32_t _i = 0xDF0; _i < 0xE10 && !has_job; _i++)
+-            if (ctx->ls[_i]) has_job = 1;
+-        for (uint32_t _i = 0xC00; _i < 0xC60 && !has_job; _i++)
+-            if (ctx->ls[_i]) has_job = 1;
+-        if (has_job && s_dumps < 6) {
+-            s_dumps++;
+-            unsigned n = g_pm_flow_n; if (n > 8192) n = 8192;
+-            fprintf(stderr, "[pm-flow] dump#%d wid=%u %u transfers (sync-PUTLLC delta %u):",
+-                    s_dumps, wid, n, g_spu_putllc_sync_hit - putllc_before);
+-            uint32_t last = 0xFFFFFFFFu; unsigned rep = 0;
+-            for (unsigned i = 0; i < n; i++) {
+-                uint32_t pc = g_pm_flow_buf[i] & SPU_LS_MASK;
+-                if (pc == last) { rep++; continue; }
+-                if (rep) { fprintf(stderr, "*%u", rep + 1); rep = 0; }
+-                fprintf(stderr, "%s%05X", (i % 16) ? " " : "\n  ", pc);
+-                last = pc;
+-            }
+-            if (rep) fprintf(stderr, "*%u", rep + 1);
+-            fprintf(stderr, "\n");
+-            /* Pipeline LS state right after this traced run: same regions the
+-             * hung-run watchdog dumps -- shows what the 5 type-1 passes built
+-             * (records/ring) and why the type-2 loads never dispatch. */
+-            { static const struct { uint32_t a, len; const char* tag; } R[] = {
+-                  { 0xC00, 0x60, "cmds" }, { 0xDF0, 0x40, "rec" },
+-                  { 0xEB0, 0x60, "ring" }, { 0x11B0, 0x20, "mark" },
+-                  { 0x1270, 0x20, "busy" }, { 0x12A0, 0x10, "st12A0" },
+-                  { 0x12C0, 0x40, "state" } };
+-              for (unsigned r = 0; r < sizeof R / sizeof R[0]; r++) {
+-                  fprintf(stderr, "[pm-ls] %-6s 0x%04X:", R[r].tag, R[r].a);
+-                  for (uint32_t o = 0; o < R[r].len; o += 4) {
+-                      if (o && (o & 15) == 0) fprintf(stderr, " |");
+-                      fprintf(stderr, " %02X%02X%02X%02X",
+-                              ctx->ls[R[r].a+o], ctx->ls[R[r].a+o+1],
+-                              ctx->ls[R[r].a+o+2], ctx->ls[R[r].a+o+3]);
+-                  }
+-                  fprintf(stderr, "\n");
+-              } }
+-            fflush(stderr);
+-        }
+-    }
+-
+-    if (log_this) {
+-        fprintf(stderr, "[spurs-pm] END wid=%u status=0x%X pc=0x%05X polls=%u exited=%u\n",
+-                wid, ctx->status, ctx->pc, g_spurs_pm_polls, g_spurs_pm_exited);
+-        fflush(stderr);
+-    }
+-
+-    return g_spurs_pm_exited ? 0 : -2;
+-}
+-
+-/* ---------------------------------------------------------------------------
+- * Real taskset-policy probe (Option 2, A/B vs spurs_pm_build_context).
+- *
+- * Runs the REAL lifted SPURS taskset policy (tsp_spu_func_00000A00, extracted
+- * from libsre vaddr 0x23680) far enough to build the SpursTasksetContext at LS
+- * 0x2700, then copies that region out for comparison against the C reimpl. The
+- * policy's raw bytes (its data tables at LS 0x27B0-0x2840, read via lqr) come
+- * from the embedded array so there is no dependency on libsre's guest load
+- * address. The policy will eventually `bi` to the selected task's entry (an
+- * address in the task image's LS range, unregistered under image id 100) and
+- * halt as branch-to-0 -- by then LS 0x2700 holds the authentic context.
+- *
+- * image_id 100 is reserved for the policy's own indirect-branch table (the
+- * lifted policy registers its 130 funcs there via tsp_spu_recomp_register()
+- * under spu_begin_image(100)).  Returns the SPU status at halt.
+- * ------------------------------------------------------------------------- */
+-extern const unsigned char g_taskset_policy_bytes[];
+-extern const unsigned g_taskset_policy_size;
+-extern void tsp_spu_func_00000A00(spu_context*);
+-
+-/* pm-flow hang watchdog: dump the traced run's partial transfer trail + live
+- * ctx state 5s after arm if the run hasn't returned (g_pm_flow_ctx still set).
+- * Reads of the running ctx are racy by design -- diagnostic only. */
+-#ifdef _WIN32
+-#include <windows.h>
+-static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
+-{
+-    (void)p;
+-    extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
+-    extern void* volatile g_pm_flow_ctx;
 -    Sleep(5000);
 -    spu_context* ctx = (spu_context*)g_pm_flow_ctx;
 -    if (!ctx) { fprintf(stderr, "[pm-flow] watchdog: run returned (no hang)\n"); return 0; }
+-    unsigned n = g_pm_flow_n; if (n > 8192) n = 8192;
+-    fprintf(stderr, "[pm-flow] HUNG-RUN PARTIAL: %u transfers, live pc=0x%05X "
+-            "LS12A0=%02X%02X LS12C0=%02X%02X LS12F0=%02X%02X%02X%02X LS1300=%02X%02X:",
+-            n, ctx->pc & SPU_LS_MASK,
+-            ctx->ls[0x12A0], ctx->ls[0x12A1],
+-            ctx->ls[0x12C0], ctx->ls[0x12C1],
+-            ctx->ls[0x12F0], ctx->ls[0x12F1], ctx->ls[0x12F2], ctx->ls[0x12F3],
+-            ctx->ls[0x1300], ctx->ls[0x1301]);
+-    /* Pipeline-state hex dump: batch commands (0xC00), per-slot records (0xDF0),
+-     * staging ring (0xEB0), FFFF markers (0x11B0), scheduler vars (0x1270-0x1340),
+-     * queue caches (0x13B0-0x1520). One shot -- everything the state-2 cycle's
+-     * stage decision reads, so the divergent condition can be hand-simulated. */
+-    { static const struct { uint32_t a, len; const char* tag; } R[] = {
+-          { 0xC00, 0x60, "cmds" }, { 0xDF0, 0x40, "rec" }, { 0xEB0, 0x40, "ring" },
+-          { 0x11B0, 0x20, "mark" }, { 0x1270, 0x40, "sched" }, { 0x12C0, 0x50, "state" },
+-          { 0x13B0, 0x30, "qvar" }, { 0x14A0, 0x30, "qcache" }, { 0x1440, 0x40, "batchrec" } };
+-      for (unsigned r = 0; r < sizeof R / sizeof R[0]; r++) {
+-          fprintf(stderr, "\n[pm-ls] %-8s 0x%04X:", R[r].tag, R[r].a);
+-          for (uint32_t o = 0; o < R[r].len; o += 4) {
+-              if (o && (o & 15) == 0) fprintf(stderr, " |");
+-              fprintf(stderr, " %02X%02X%02X%02X",
+-                      ctx->ls[R[r].a+o], ctx->ls[R[r].a+o+1],
+-                      ctx->ls[R[r].a+o+2], ctx->ls[R[r].a+o+3]);
+-          }
+-      }
+-      fprintf(stderr, "\n"); }
+-    uint32_t last = 0xFFFFFFFFu; unsigned rep = 0; unsigned col = 0;
+-    for (unsigned i = 0; i < n; i++) {
+-        uint32_t pc = g_pm_flow_buf[i] & SPU_LS_MASK;
+-        if (pc == last) { rep++; continue; }
+-        if (rep) { fprintf(stderr, "*%u", rep + 1); rep = 0; }
+-        fprintf(stderr, "%s%05X", (col++ % 16) ? " " : "\n  ", pc);
+-        last = pc;
+-    }
+-    if (rep) fprintf(stderr, "*%u", rep + 1);
+-    fprintf(stderr, "\n"); fflush(stderr);
+-    return 0;
+-}
+-void spurs_pm_flow_watchdog_start(void)
+-{
+-    HANDLE h = CreateThread(NULL, 0, spurs_pm_flow_watchdog, NULL, 0, NULL);
+-    if (h) CloseHandle(h);
+-}
+-#else
+-void spurs_pm_flow_watchdog_start(void) {}
+-#endif
+-
+-int spurs_run_taskset_policy_probe(uint32_t taskset_ea, uint32_t taskid,
+-                                   uint32_t spurs_ea, uint64_t wkl_data,
+-                                   uint32_t wid, uint8_t* out_2700, uint32_t out_len)
+-{
+-    spu_context* ctx = (spu_context*)calloc(1, sizeof(spu_context));
+-    if (!ctx) return -1;
+-    spu_context_init(ctx, 0);
+-    ctx->image_id    = 100;      /* policy's own indirect-branch table */
+-    ctx->policy_mode = 1;
+-
+-    /* Policy module image at its load base LS 0xA00 (code + data tables). */
+-    /* size 0 = this port linked the default stub blob (spurs_policy_blob_weak.c),
+-     * i.e. it has no lifted taskset policy image -- don't run an empty LS. */
+-    if (!g_taskset_policy_size ||
+-        g_taskset_policy_size > SPU_LS_SIZE - 0xA00) { free(ctx); return -1; }
+-    memcpy(ctx->ls + 0xA00, g_taskset_policy_bytes, g_taskset_policy_size);
+-
+-    /* SpursKernelContext at LS 0x100 (same layout as spu_run_policy_module). */
+-    uint8_t* ls = ctx->ls;
+-#define KBE32(off, v) do { uint32_t _v = (v); ls[(off)] = (uint8_t)(_v >> 24); \
+-        ls[(off)+1] = (uint8_t)(_v >> 16); ls[(off)+2] = (uint8_t)(_v >> 8);   \
+-        ls[(off)+3] = (uint8_t)_v; } while (0)
+-    KBE32(0x1C0, 0);                    KBE32(0x1C4, spurs_ea);
+-    KBE32(0x1C8, 0);                    KBE32(0x1CC, 8);
+-    KBE32(0x1D0, 0);                    KBE32(0x1D4, 0xA00);
+-    KBE32(0x1D8, wid);                  KBE32(0x1DC, wid);
+-    KBE32(0x1E0, SPURS_PM_EXIT_TO_KERNEL_LS);
+-    KBE32(0x1E4, SPURS_PM_SELECT_WORKLOAD_LS);
+-    /* taskset EA also planted at the SpursKernelContext taskset slot the policy
+-     * reads for its taskset DMA (mirrors the cri-r4 injection at LS 0x27B8). */
+-#undef KBE32
+-
+-    ctx->gpr[0]._u32[0] = SPURS_PM_EXIT_TO_KERNEL_LS;
+-    ctx->gpr[1]._u32[0] = 0x3FFB0;
+-    ctx->gpr[3]._u32[0] = 0x100;
+-    ctx->gpr[4]._u32[0] = (uint32_t)(wkl_data >> 32);
+-    ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;
+-    ctx->gpr[5]._u32[0] = 0;
+-
+-    g_spurs_pm_polls = 0; g_spurs_pm_exited = 0;
+-
+-    fprintf(stderr, "[real-pm] RUN taskset=0x%08X task=%u spurs=0x%08X wkl=0x%llX wid=%u\n",
+-            taskset_ea, taskid, spurs_ea, (unsigned long long)wkl_data, wid);
+-    fflush(stderr);
+-
+-    spu_run_with_halt(tsp_spu_func_00000A00, ctx);
+-
+-    fprintf(stderr, "[real-pm] END status=0x%X pc=0x%05X polls=%u exited=%u\n",
+-            ctx->status, ctx->pc, g_spurs_pm_polls, g_spurs_pm_exited);
+-    fflush(stderr);
+-
+-    if (out_2700 && out_len) {
+-        uint32_t n = out_len;
+-        if ((uint32_t)0x2700 + n > SPU_LS_SIZE) n = SPU_LS_SIZE - 0x2700;
+-        memcpy(out_2700, ctx->ls + 0x2700, n);
+-    }
+-    int st = (int)ctx->status;
+-    { extern void spu_coh_unregister(spu_context*); spu_coh_unregister(ctx); }
+-    free(ctx);
+-    return st;
+-}
++
++    if (s_claimlog) {
++        unsigned claims = g_spu_putllc_sync_hit - claim_before;
++        unsigned stages = g_wws_batch_gets - batch_before;
++        if (claims || stages) {
++            static unsigned s_cl = 0;
++            if (s_cl++ < 64) {
++                const uint8_t* L = ctx->ls;
++                #define W(o)  ((L[(o)]<<24)|(L[(o)+1]<<16)|(L[(o)+2]<<8)|L[(o)+3])
++                fprintf(stderr, "[pm-claim] wid=%u spu=%u first=%d claims=%u stages=%u%s halt_pc=0x%05X "
++                        "nextLoad=0x%X loadJob=0x%X runJob=0x%X storeJob=0x%X q13F0=%08X q14E0=%08X\n",
++                        wid, spu_num, first, claims, stages,
++                        (claims && !stages) ? " <-- CLAIM EATEN" : "",
++                        ctx->pc & SPU_LS_MASK,
++                        W(0x12C0), W(0x12D0), W(0x12E0), W(0x12F0),
++                        W(0x13F0), W(0x14E0));
++                fflush(stderr);
++                #undef W
++            }
++        }
++    }
++
++    if (pipe_this) {
++        /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
++         * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
++         * own budget so wid=12's pipeline is always captured. */
++        static unsigned long s_pn_wid[16] = {0};
++        unsigned long s_pn = ++s_pn_wid[wid & 15];
++        if (s_pn < 300) {
++            const uint8_t* L = ctx->ls;
++            #define HW(o) ((L[(o)+2]<<8)|L[(o)+3])
++            #define W(o)  ((L[(o)]<<24)|(L[(o)+1]<<16)|(L[(o)+2]<<8)|L[(o)+3])
++            fprintf(stderr, "[pm-pipe] wid=%u run#%lu first=%d halt_pc=0x%05X "
++                    "loadState=%u->%u nextLoad=0x%X loadJob=0x%X runJob=0x%X storeJob=0x%X "
++                    "lastStore=0x%X\n",
++                    wid, s_pn, first, ctx->pc & SPU_LS_MASK,
++                    st_before, HW(0x12A0), W(0x12C0), W(0x12D0), W(0x12E0),
++                    W(0x12F0), W(0x1300));
++            /* WHY-NO-JOB1 probe: AllocateJob (via TryChangeFreeToLoadJob) stores
++             * its result at g_WwsJob_jobHeader(0x1420) + g_WwsJob_jobIndex(0x1410).
++             * jobHeader low-hword: 0=none(PPU hasn't published)/1=exists/3=nop.
++             * Also dump the joblist header in RAM (eaWorkLoad@0x13F0) to see the
++             * PPU-published numJobs + claimed jobIndex -- decides whether the PM
++             * stops because the header is unpublished (PPU-side) or because our
++             * load path bails after claiming. */
++            {
++                extern uint8_t* vm_base;
++                uint32_t eaWL = W(0x13F0);
++                fprintf(stderr, "         jobIndex=0x%X jobHeader=0x%08X(cmd=%u) eaWL=0x%08X\n",
++                        W(0x1410), W(0x1420), HW(0x1420), eaWL);
++                /* Dump the joblist header region eaWL+0x00..0x9F so we can see the
++                 * ticket/counter rows AND where the PPU actually wrote the job
++                 * headers (ref AllocateJob reads eaWL+0x20; oracle layout puts
++                 * jobHeaders at +0x80). If +0x20 is 0 but +0x80 has 0x00xx0001
++                 * entries, our AllocateJob reads the WRONG offset. */
++                if (vm_base && eaWL) {
++                    for (uint32_t o = 0; o < 0xA0; o += 0x10) {
++                        const uint8_t* r = vm_base + eaWL + o;
++                        #define RW(i) ((r[i]<<24)|(r[i+1]<<16)|(r[i+2]<<8)|r[i+3])
++                        fprintf(stderr, "         jl+%02X: %08X %08X %08X %08X\n",
++                                o, RW(0), RW(4), RW(8), RW(12));
++                        #undef RW
++                    }
++                }
++            }
++            fflush(stderr);
++            #undef HW
++            #undef W
++        }
++    }
++
++    if (tracing) {
++        g_pm_flow_ctx = 0;
++        static int s_dumps = 0;
++        /* Only dump once the PPU is actually spinning on a job barrier
++         * (g_barrier_sync_watch armed by the barrier probe): boot-time idle
++         * runs also PUTLLC (queue-check protocol) and would burn the cap. */
++        /* Only dump runs that actually had a JOB STAGED. A boot-time idle run
++         * has empty loadCommands(0xC00)/bufferSetArray(0xDF0) and its trail says
++         * nothing about the Load->Run gate -- with SPURS_PM_FLOW_ALL tracing
++         * every run, the dump budget was being spent entirely on idle runs. */
++        int has_job = 0;
++        for (uint32_t _i = 0xDF0; _i < 0xE10 && !has_job; _i++)
++            if (ctx->ls[_i]) has_job = 1;
++        for (uint32_t _i = 0xC00; _i < 0xC60 && !has_job; _i++)
++            if (ctx->ls[_i]) has_job = 1;
++        if (has_job && s_dumps < 6) {
++            s_dumps++;
++            unsigned n = g_pm_flow_n; if (n > 8192) n = 8192;
++            fprintf(stderr, "[pm-flow] dump#%d wid=%u %u transfers (sync-PUTLLC delta %u):",
++                    s_dumps, wid, n, g_spu_putllc_sync_hit - putllc_before);
++            uint32_t last = 0xFFFFFFFFu; unsigned rep = 0;
++            for (unsigned i = 0; i < n; i++) {
++                uint32_t pc = g_pm_flow_buf[i] & SPU_LS_MASK;
++                if (pc == last) { rep++; continue; }
++                if (rep) { fprintf(stderr, "*%u", rep + 1); rep = 0; }
++                fprintf(stderr, "%s%05X", (i % 16) ? " " : "\n  ", pc);
++                last = pc;
++            }
++            if (rep) fprintf(stderr, "*%u", rep + 1);
++            fprintf(stderr, "\n");
++            /* Pipeline LS state right after this traced run: same regions the
++             * hung-run watchdog dumps -- shows what the 5 type-1 passes built
++             * (records/ring) and why the type-2 loads never dispatch. */
++            { static const struct { uint32_t a, len; const char* tag; } R[] = {
++                  { 0xC00, 0x60, "cmds" }, { 0xDF0, 0x40, "rec" },
++                  { 0xEB0, 0x60, "ring" }, { 0x11B0, 0x20, "mark" },
++                  { 0x1270, 0x20, "busy" }, { 0x12A0, 0x10, "st12A0" },
++                  { 0x12C0, 0x40, "state" } };
++              for (unsigned r = 0; r < sizeof R / sizeof R[0]; r++) {
++                  fprintf(stderr, "[pm-ls] %-6s 0x%04X:", R[r].tag, R[r].a);
++                  for (uint32_t o = 0; o < R[r].len; o += 4) {
++                      if (o && (o & 15) == 0) fprintf(stderr, " |");
++                      fprintf(stderr, " %02X%02X%02X%02X",
++                              ctx->ls[R[r].a+o], ctx->ls[R[r].a+o+1],
++                              ctx->ls[R[r].a+o+2], ctx->ls[R[r].a+o+3]);
++                  }
++                  fprintf(stderr, "\n");
++              } }
++            fflush(stderr);
++        }
++    }
++
++    if (log_this) {
++        fprintf(stderr, "[spurs-pm] END wid=%u status=0x%X pc=0x%05X polls=%u exited=%u\n",
++                wid, ctx->status, ctx->pc, g_spurs_pm_polls, g_spurs_pm_exited);
++        fflush(stderr);
++    }
++
++    return g_spurs_pm_exited ? 0 : -2;
++}
++
++/* ---------------------------------------------------------------------------
++ * Real taskset-policy probe (Option 2, A/B vs spurs_pm_build_context).
++ *
++ * Runs the REAL lifted SPURS taskset policy (tsp_spu_func_00000A00, extracted
++ * from libsre vaddr 0x23680) far enough to build the SpursTasksetContext at LS
++ * 0x2700, then copies that region out for comparison against the C reimpl. The
++ * policy's raw bytes (its data tables at LS 0x27B0-0x2840, read via lqr) come
++ * from the embedded array so there is no dependency on libsre's guest load
++ * address. The policy will eventually `bi` to the selected task's entry (an
++ * address in the task image's LS range, unregistered under image id 100) and
++ * halt as branch-to-0 -- by then LS 0x2700 holds the authentic context.
++ *
++ * image_id 100 is reserved for the policy's own indirect-branch table (the
++ * lifted policy registers its 130 funcs there via tsp_spu_recomp_register()
++ * under spu_begin_image(100)).  Returns the SPU status at halt.
++ * ------------------------------------------------------------------------- */
++extern const unsigned char g_taskset_policy_bytes[];
++extern const unsigned g_taskset_policy_size;
++extern void tsp_spu_func_00000A00(spu_context*);
++
++/* pm-flow hang watchdog: dump the traced run's partial transfer trail + live
++ * ctx state 5s after arm if the run hasn't returned (g_pm_flow_ctx still set).
++ * Reads of the running ctx are racy by design -- diagnostic only. */
++#ifdef _WIN32
++#include <windows.h>
++static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
++{
++    (void)p;
++    extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
++    extern void* volatile g_pm_flow_ctx;
 +    /* A run is hung when the same traced run is still going 5 s later. The
 +     * first traced run is an idle one at boot, so keep watching: the run that
 +     * hangs is whichever one first gets real work. Reported once. */
@@ -20956,9 +21941,114 @@ index 4f82063..ace1ece 100644
 +          fprintf(stderr, "\n"); fflush(stderr);
 +          if (!pass) Sleep(2000);
 +      } }
-     unsigned n = g_pm_flow_n; if (n > 8192) n = 8192;
-     fprintf(stderr, "[pm-flow] HUNG-RUN PARTIAL: %u transfers, live pc=0x%05X "
-             "LS12A0=%02X%02X LS12C0=%02X%02X LS12F0=%02X%02X%02X%02X LS1300=%02X%02X:",
++    unsigned n = g_pm_flow_n; if (n > 8192) n = 8192;
++    fprintf(stderr, "[pm-flow] HUNG-RUN PARTIAL: %u transfers, live pc=0x%05X "
++            "LS12A0=%02X%02X LS12C0=%02X%02X LS12F0=%02X%02X%02X%02X LS1300=%02X%02X:",
++            n, ctx->pc & SPU_LS_MASK,
++            ctx->ls[0x12A0], ctx->ls[0x12A1],
++            ctx->ls[0x12C0], ctx->ls[0x12C1],
++            ctx->ls[0x12F0], ctx->ls[0x12F1], ctx->ls[0x12F2], ctx->ls[0x12F3],
++            ctx->ls[0x1300], ctx->ls[0x1301]);
++    /* Pipeline-state hex dump: batch commands (0xC00), per-slot records (0xDF0),
++     * staging ring (0xEB0), FFFF markers (0x11B0), scheduler vars (0x1270-0x1340),
++     * queue caches (0x13B0-0x1520). One shot -- everything the state-2 cycle's
++     * stage decision reads, so the divergent condition can be hand-simulated. */
++    { static const struct { uint32_t a, len; const char* tag; } R[] = {
++          { 0xC00, 0x60, "cmds" }, { 0xDF0, 0x40, "rec" }, { 0xEB0, 0x40, "ring" },
++          { 0x11B0, 0x20, "mark" }, { 0x1270, 0x40, "sched" }, { 0x12C0, 0x50, "state" },
++          { 0x13B0, 0x30, "qvar" }, { 0x14A0, 0x30, "qcache" }, { 0x1440, 0x40, "batchrec" } };
++      for (unsigned r = 0; r < sizeof R / sizeof R[0]; r++) {
++          fprintf(stderr, "\n[pm-ls] %-8s 0x%04X:", R[r].tag, R[r].a);
++          for (uint32_t o = 0; o < R[r].len; o += 4) {
++              if (o && (o & 15) == 0) fprintf(stderr, " |");
++              fprintf(stderr, " %02X%02X%02X%02X",
++                      ctx->ls[R[r].a+o], ctx->ls[R[r].a+o+1],
++                      ctx->ls[R[r].a+o+2], ctx->ls[R[r].a+o+3]);
++          }
++      }
++      fprintf(stderr, "\n"); }
++    uint32_t last = 0xFFFFFFFFu; unsigned rep = 0; unsigned col = 0;
++    for (unsigned i = 0; i < n; i++) {
++        uint32_t pc = g_pm_flow_buf[i] & SPU_LS_MASK;
++        if (pc == last) { rep++; continue; }
++        if (rep) { fprintf(stderr, "*%u", rep + 1); rep = 0; }
++        fprintf(stderr, "%s%05X", (col++ % 16) ? " " : "\n  ", pc);
++        last = pc;
++    }
++    if (rep) fprintf(stderr, "*%u", rep + 1);
++    fprintf(stderr, "\n"); fflush(stderr);
++    return 0;
++}
++void spurs_pm_flow_watchdog_start(void)
++{
++    HANDLE h = CreateThread(NULL, 0, spurs_pm_flow_watchdog, NULL, 0, NULL);
++    if (h) CloseHandle(h);
++}
++#else
++void spurs_pm_flow_watchdog_start(void) {}
++#endif
++
++int spurs_run_taskset_policy_probe(uint32_t taskset_ea, uint32_t taskid,
++                                   uint32_t spurs_ea, uint64_t wkl_data,
++                                   uint32_t wid, uint8_t* out_2700, uint32_t out_len)
++{
++    spu_context* ctx = (spu_context*)calloc(1, sizeof(spu_context));
++    if (!ctx) return -1;
++    spu_context_init(ctx, 0);
++    ctx->image_id    = 100;      /* policy's own indirect-branch table */
++    ctx->policy_mode = 1;
++
++    /* Policy module image at its load base LS 0xA00 (code + data tables). */
++    /* size 0 = this port linked the default stub blob (spurs_policy_blob_weak.c),
++     * i.e. it has no lifted taskset policy image -- don't run an empty LS. */
++    if (!g_taskset_policy_size ||
++        g_taskset_policy_size > SPU_LS_SIZE - 0xA00) { free(ctx); return -1; }
++    memcpy(ctx->ls + 0xA00, g_taskset_policy_bytes, g_taskset_policy_size);
++
++    /* SpursKernelContext at LS 0x100 (same layout as spu_run_policy_module). */
++    uint8_t* ls = ctx->ls;
++#define KBE32(off, v) do { uint32_t _v = (v); ls[(off)] = (uint8_t)(_v >> 24); \
++        ls[(off)+1] = (uint8_t)(_v >> 16); ls[(off)+2] = (uint8_t)(_v >> 8);   \
++        ls[(off)+3] = (uint8_t)_v; } while (0)
++    KBE32(0x1C0, 0);                    KBE32(0x1C4, spurs_ea);
++    KBE32(0x1C8, 0);                    KBE32(0x1CC, 8);
++    KBE32(0x1D0, 0);                    KBE32(0x1D4, 0xA00);
++    KBE32(0x1D8, wid);                  KBE32(0x1DC, wid);
++    KBE32(0x1E0, SPURS_PM_EXIT_TO_KERNEL_LS);
++    KBE32(0x1E4, SPURS_PM_SELECT_WORKLOAD_LS);
++    /* taskset EA also planted at the SpursKernelContext taskset slot the policy
++     * reads for its taskset DMA (mirrors the cri-r4 injection at LS 0x27B8). */
++#undef KBE32
++
++    ctx->gpr[0]._u32[0] = SPURS_PM_EXIT_TO_KERNEL_LS;
++    ctx->gpr[1]._u32[0] = 0x3FFB0;
++    ctx->gpr[3]._u32[0] = 0x100;
++    ctx->gpr[4]._u32[0] = (uint32_t)(wkl_data >> 32);
++    ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;
++    ctx->gpr[5]._u32[0] = 0;
++
++    g_spurs_pm_polls = 0; g_spurs_pm_exited = 0;
++
++    fprintf(stderr, "[real-pm] RUN taskset=0x%08X task=%u spurs=0x%08X wkl=0x%llX wid=%u\n",
++            taskset_ea, taskid, spurs_ea, (unsigned long long)wkl_data, wid);
++    fflush(stderr);
++
++    spu_run_with_halt(tsp_spu_func_00000A00, ctx);
++
++    fprintf(stderr, "[real-pm] END status=0x%X pc=0x%05X polls=%u exited=%u\n",
++            ctx->status, ctx->pc, g_spurs_pm_polls, g_spurs_pm_exited);
++    fflush(stderr);
++
++    if (out_2700 && out_len) {
++        uint32_t n = out_len;
++        if ((uint32_t)0x2700 + n > SPU_LS_SIZE) n = SPU_LS_SIZE - 0x2700;
++        memcpy(out_2700, ctx->ls + 0x2700, n);
++    }
++    int st = (int)ctx->status;
++    { extern void spu_coh_unregister(spu_context*); spu_coh_unregister(ctx); }
++    free(ctx);
++    return st;
++}
 diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
 index bcb1df4..8102958 100644
 --- a/runtime/syscalls/lv2_register.c

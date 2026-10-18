@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 85)
+## Start here: state of play (2026-10-19, Phase 86)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 85 is the latest).
+has the evidence, newest phase first (Phase 86 is the latest).
 
 ### What works now
 
@@ -98,6 +98,16 @@ has the evidence, newest phase first (Phase 85 is the latest).
   `scripts/test/unnorm_hi.ps1` checks the actual backend helpers without a GPU.
 
 ### Open work, in the order the user left it
+
+**Latest: High Speed Ring at 1080p can corrupt during the grid preview.** The
+user's new screenshots show large pale planes and broken grid text after an
+initially correct preview. This is still open; the screenshots alone cannot
+establish whether presents stopped or which data became corrupt. Phase 86 adds
+an opt-in diagnostic export: F1 settings, DEBUG, Debug export On; then F3,
+Export debug report (or F8 while F3 is visible). Attach the ZIP from
+`logs/debug/`. Enable it before reproducing to retain recent logs. It applies
+live and defaults Off; `GT5P_DEBUG_EXPORT=0` disables it, and no environment
+value can enable it without the settings option. Tests: `scripts/test/debug_export.ps1`.
 
 **High Speed Ring water appearance is closed (Phase 85):** the user compared
 it with RPCS3 and confirmed the same dark appearance there. No colour or

@@ -41,6 +41,7 @@ struct Gt5pSettings {
 
     /* [debug] */
     int verbose_log = -1;       /* -1 auto (quiet when started by hand), 0 off, 1 on */
+    bool debug_export = false;  /* opt in to bounded recent logs and F3 reports */
 };
 
 /* The settings in effect, environment overrides included. Built-in defaults

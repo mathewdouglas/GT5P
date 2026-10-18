@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-19, Phase 85): playable from the menus into a
+**Disc build status (2026-10-19, Phase 86): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -82,6 +82,16 @@ The reported dark High Speed Ring water matches RPCS3 in the user's comparison;
 its appearance is unchanged.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
+
+For a bug report, first enable **F1 Settings → DEBUG → Debug export** (Off by
+default). When the fault occurs, open **F3 → Export debug report**, or press
+**F8 while F3 is visible**. Attach the ZIP from `logs/debug/`; the F3 panel also
+has **Open reports folder**. The option applies immediately. It retains recent
+logs only while enabled, so turn it on before reproducing the problem.
+Reports include settings/build details, frame history, thread/FIFO/SPU state
+and a best-effort game-window screenshot. A blocked renderer may prevent the
+screenshot; the rest of the report can still save. The intermittent High Speed
+Ring grid-preview corruption remains under investigation.
 
 | Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
 |---|---|---|
