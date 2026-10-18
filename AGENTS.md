@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 80)
+## Start here: state of play (2026-10-18, Phase 81)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 80 is the latest).
+has the evidence, newest phase first (Phase 81 is the latest).
 
 ### What works now
 
@@ -82,9 +82,24 @@ has the evidence, newest phase first (Phase 80 is the latest).
   (`RSX_MASK_STATE_RESET=0` restores missing glyph parts and white blocks).
   `race.ps1 -LoadingShots` captures the list before it disappears.
 
+- Road normal maps now honour TEX `_bx2`, with typed per-channel expansion,
+  and compressed road textures stop at their valid mip count on the shorter
+  axis (Phase 81). Switches: `RSX_TEX_EXPAND=0`, `RSX_BC_MIP_LIMIT=0`.
+
 ### Open work, in the order the user left it
 
-The latest reports are **pixelly backgrounds and broken loading fonts**,
+The latest report is **High Speed Ring's remaining road-surface bands**,
+compared with RPCS3 (ignore the reference screenshot's HDR brightness).
+Phase 81 fixes ignored TEX `_bx2` normal expansion (`RSX_TEX_EXPAND=0`
+restores it) and excess compressed mip levels (`RSX_BC_MIP_LIMIT=0`).
+The lighting atlas itself matches RPCS3. Its reusable local reference is
+`scratch/rdoc/hsrroad-reference.rrc.gz`: replay it with RPCS3's
+`--rsx-capture` option instead of repeating live race navigation. It was
+saved with Alt+C and inspected under RenderDoc. Read Phase 81 for exact
+pixels, diagnostic files and validation limits. The final 1080p preview
+capture verifies signed normal decoding and reference mip counts; full-race
+verification was blocked by start stalls, also seen with both switches off.
+Earlier reports were **pixelly backgrounds and broken loading fonts**,
 following High Speed Ring's loading/compilation, 60 fps and race graphics
 request (Phases 78-80). The font atlas, scenery mip views, bridge
 occlusion, road corruption and redundant pipeline builds have
@@ -136,7 +151,7 @@ The PPU-inline experiment was not adopted; the normal exe is rebuilt with
 ### Local state of this machine
 
 - **ps3recomp** is at `../ps3recomp-gt5p-master`, based on `5244db9`, with
-  local changes in 58 files. `patches/ps3recomp-5244db9-local.patch` is
+  local changes in 62 files. `patches/ps3recomp-5244db9-local.patch` is
   their backup. After every change there, refresh it with bash, not
   PowerShell, whose `>` re-encodes the file:
 

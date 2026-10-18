@@ -9,6 +9,110 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 81 - Road normal expansion and compressed mip limits (2026-10-18)
+
+**High Speed Ring's road shading differs after Phase 80.** The RPCS3
+reference shows continuous asphalt with local bridge/fence shadows; its HDR
+screenshot brightness is not the comparison target. Two missing texture
+sampling rules were found using a reusable reference RSX frame.
+
+Pixel debugging `scratch/rdoc/mipviewsfix_frame3499.rdc` separates this from
+the dynamic shadow map. At (450,500), draw 361 / event 6712 samples texture
+unit 4 at UV (0.7868585,0.4751896). The 2048x2048 BC1 baked-lighting atlas
+(resource 8427) is black at that coordinate, so the direct-light term is
+zero even though the dynamic shadow comparison is fully lit. The result is
+approximately (0.016,0.022,0.031). Nearby light road, draw 360 at (650,400),
+uses UV (1,0), samples white and retains direct light. The atlas contains
+recognisable fence, bridge and tree shadows; the observation alone does
+not establish whether its binding, coordinates or contents are wrong.
+Do not replace it with white or flip coordinates without a reference.
+
+Two diagnostic runs preserve the bands: `roadslow` disables both
+`RSX_VFAST` and `RSX_VTX_GPU`, and `roadtexfresh` sets `TEX_NOCACHE=1`.
+Those rule out the GPU vertex-fetch path and a persistent stale upload as
+sufficient explanations. The atlas coordinates are fetched as float2
+attribute 12 from an interleaved 68-byte vertex, then passed to TEX4.
+The diffuse asphalt and normal maps have valid-looking images and mip views.
+
+`scripts/diag/rdoc_debugpixel.py` makes the pixel trace reproducible under
+qrenderdoc. Set `RDOC_CAP`, `RDOC_OUT`, `RDOC_EVENT`, `RDOC_PIXEL=x,y`;
+optional `RDOC_SAMPLE`, `RDOC_PRIMITIVE` and `RDOC_FIRST_INST` narrow it.
+It reports inputs and register changes. `next_instruction` is the instruction
+*after* each change, not the instruction producing it. It was exercised on
+event 6712 and reproduced the black atlas sample. Reports are derived game
+data and belong in ignored scratch space.
+
+**Reference capture workflow: save a durable RSX frame.** Live RenderDoc
+captures `rpcroad_frame11673.rdc` and `rpcroadnext_frame5228..5231.rdc`
+contain reflection/depth updates or presentation work, with no main road
+draws or 2048x2048 BC1 atlas. A valid-looking final colour image is not proof
+that its producing draws were recorded. Replaying alongside RPCS3 also
+returned `VK_ERROR_OUT_OF_DEVICE_MEMORY`; closing the test instance allowed
+replay, but did not restore the missing draws. Do not repeat live menu/race
+round trips for this. RPCS3's built-in **Alt+C (RSX Capture)** saves a local
+`.rrc.gz` file and pauses emulation; replay it with `--rsx-capture <file>`
+for further inspection. This succeeded: the original local capture is
+`BCUS98158_20261018205947_capture.rrc.gz` (15,523,689 bytes); an ignored copy
+is `scratch/rdoc/hsrroad-reference.rrc.gz`. Replaying it under RenderDoc gave
+`rpcroadreplay_frame187.rdc`, including road draws on a 1280x720/4x-MSAA
+target. It can be inspected again without booting or driving the title.
+Keep all captures local and ignored, and learn from RPCS3 without copying
+its GPL implementation.
+
+The reference's lighting atlas (resource 31992) and native resource 8427
+have identical RGB pixels; the other atlas also matches. Matching material
+coordinates found 28 common road vertices with identical TEX4 UVs. These
+observations do not support an arbitrary UV flip or atlas replacement.
+
+**TEX `_bx2` was ignored.** The road's normal-map fetch on unit 5 requests
+OPDEST bit 21, which expands unsigned sampled components from [0,1] into
+[-1,1]. The native shader instead feeds approximately (0.5,0.5,1) into the
+lighting calculation. The decompiler now applies that modifier to texture
+instructions before destination scaling, saturation and predication.
+`RSX_TEX_EXPAND=0` restores the old sample. D3D12 snapshots a per-unit RGBA
+mask in existing b1 alignment padding: float formats, absent channels and
+constant-zero crossbar outputs are not expanded. The standalone emitter
+assumes unsigned texture components; the typed D3D12 path specialises its
+helper using the dynamic mask. Programs without expanded fetches keep their
+old HLSL and cache keys. Existing shadercache contents are retained.
+
+**Compressed mip counts also exceeded the reference.** The native view
+exposes twelve levels for the 2048-square lighting atlas and eleven for a
+1024x128 road texture; the reference exposes ten and six respectively.
+RSX compressed chains end at a block on the shorter dimension, whereas the
+uploader continued to 1x1 on the longer one and consumed following guest
+bytes. `rsx_texture_bc_mip_count` now bounds the non-cube upload, resource
+view and source checksum span. `RSX_BC_MIP_LIMIT=0` restores the old limit;
+`RSX_TEX_MIPS=0` still disables mip uploads altogether. Cubes retain their
+existing upload path.
+
+**Validation so far:** the normal-expansion decoder regression passes with
+the other decompiler cases (39 checks), and the texture-layout suite passes
+with measured square/rectangular mip-count cases. The normal-only 720p
+run shows continuous road shading at the first bend; disabling expansion
+reproduces the bridge stripes (`roadexpandoff720.intro24.png`). Native
+shader compilation succeeds. A warm 720p run and a 1080p run hit the known
+race-start stall, so their displayed fps values are not valid benchmarks.
+A 1080p control with both new switches off (`roadcontrol1080`) also stalled,
+before the grid: it never reached QuickArcadeRoot in 240 s. No steady 60 fps
+claim is made from these runs.
+
+**Final 1080p/2x-MSAA preview capture succeeds.** With no race-start press,
+`roadmaterialpreview1080_frame3260.rdc` records the grid scene. Road draw
+309 / event 6604 now exposes six resource/view mips on its 1024x128 diffuse
+and normal textures, and ten on the 2048-square lighting atlas, matching
+the reference. The generated shader expands the unit-5 sample. Pixel
+debugging draw 303 / event 6550 at (700,900) confirms the actual conversion:
+(0.495445,0.498726,1) becomes (-0.009110,-0.002548,1), before lighting.
+Reports/images are under `scratch/rdoc/roadmaterialpreview1080_*`.
+This validates the material state and GPU arithmetic, not a completed race
+or steady frame rate. The race-start stall and 60 fps target remain open.
+
+The runtime backup now covers 62 files (the four new patch entries are
+the portable texture-layout helper/header and the two existing test files).
+The normal build remains `GT5P_VM_INLINE=OFF`; no re-lift is needed. The
+cumulative patch reverse-apply check passes.
+
 ## Phase 80 - Scenery mip views and loading-font draw state (2026-10-18)
 
 **Background grain reproduced at 720p/2x MSAA.** In the post-bridge-fix

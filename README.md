@@ -60,17 +60,20 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-18, Phase 80): playable from the menus into a
+**Disc build status (2026-10-18, Phase 81): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
-open. The race-start freeze and the 1080p
-menu's black tree rectangles are fixed. MSAA depth now reaches depth of
+open. The main race-start freeze and the 1080p
+menu's black tree rectangles have fixes; intermittent start stalls remain. MSAA depth now reaches depth of
 field, the crowd has coloured spectators, and race textures have more cache
 capacity. High Speed Ring's road filtering and cars appearing over the bridge
 are fixed, and native pipeline compilation is cached between sessions.
 Distant scenery now uses its mip chain to reduce grain, and loading-screen
-car names no longer lose glyph parts or show solid blocks.
+car names no longer lose glyph parts or show solid blocks. Road normal-map
+samples now honour signed expansion, and compressed scenery mip chains stop
+at their valid shorter-axis limit. `RSX_TEX_EXPAND=0` and
+`RSX_BC_MIP_LIMIT=0` restore those two faults for comparison.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 
@@ -99,7 +102,7 @@ What the disc build needs that upstream does not:
 - **Local ps3recomp changes.** The disc build does not boot on stock ps3recomp.
   The changes are in
   [patches/ps3recomp-5244db9-local.patch](patches/ps3recomp-5244db9-local.patch),
-  against ps3recomp `5244db9`. They touch 58 files and cover:
+  against ps3recomp `5244db9`. They touch 62 files and cover:
   - SPURS and the job manager;
   - the PPU and SPU lifters (jump tables, `bisl`, vector stores);
   - the D3D12 RSX backend (render targets, MSAA, shadow compares, samplers,
