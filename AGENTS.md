@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 84)
+## Start here: state of play (2026-10-19, Phase 85)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 84 is the latest).
+has the evidence, newest phase first (Phase 85 is the latest).
 
 ### What works now
 
@@ -99,8 +99,12 @@ has the evidence, newest phase first (Phase 84 is the latest).
 
 ### Open work, in the order the user left it
 
-The latest report is **High Speed Ring water: stretched ripples / dark bands**,
-under investigation. The preceding Daytona idle-grid blackout stopped
+**High Speed Ring water appearance is closed (Phase 85):** the user compared
+it with RPCS3 and confirmed the same dark appearance there. No colour or
+filtering change was shipped. Capture diagnostics now save sampler registers
+with each draw rather than consulting later live state; see Phase 85.
+
+The preceding Daytona idle-grid blackout stopped
 reproducing for the user once heavy shader compilation ended. A warm three-minute
 grid idle followed by a moving Daytona race passed (Phase 84); cold-cache
 reliability is unverified. High Speed Ring still reproduced the older race-start

@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-19, Phase 84): playable from the menus into a
+**Disc build status (2026-10-19, Phase 85): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -78,6 +78,8 @@ The opening logos also show at 1080p; `SCREEN_AS_TEX=1` restores the old
 size-only frame-copy substitution that hid them.
 Dark-region flicker in the menus/showroom also has a fix: dither textures on
 upper units now use the correct pixel coordinates (`RSX_UNNORM_HI=0` to compare).
+The reported dark High Speed Ring water matches RPCS3 in the user's comparison;
+its appearance is unchanged.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 

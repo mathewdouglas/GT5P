@@ -9,6 +9,40 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 85 - Water appearance matches the user's RPCS3 reference (2026-10-19)
+
+**Closed by reference comparison:** the user reported stretched ripples / dark
+bands on High Speed Ring water, then asked whether its almost-black appearance
+should be blue. They subsequently checked RPCS3 and confirmed the same
+appearance there: this is not a demonstrated port regression. No water tint,
+material or filtering change is shipped. The temporary host anisotropy
+experiment was removed; its compilation-heavy, unmatched-camera runs did not
+establish a quality or performance result.
+
+The local GPU investigation remains useful evidence, not a claim that every
+water pixel matches RPCS3. In `scratch/rdoc/hsrwater_frame4113.rdc`, water draw
+664 / event 7057 has ripple, lighting-atlas and normal textures bound. At
+pixel (1000,780), signed normal reconstruction is valid and the water layer
+blends dark blue-grey over a lighter blue-grey base. The saved road-reference
+captures do not contain a matching water draw, so they cannot independently
+validate water colour. Captures, textures and shader disassembly remain
+gitignored in scratch.
+
+**Diagnostic improvement retained:** draw records snapshot all sixteen units'
+raw `control0`, `filter` and `address` registers. `RSX_CAP` manifests now include
+`ctl0=`, `filter=` and `address=` per texture; `RSX_TEXUNITDBG` reads the same
+snapshot instead of later live state during replay. Existing diagnostic
+switches control the output. Rendering, sampler selection and cache keys are
+unchanged. A fresh `cap_watersampler` manifest records water's trilinear filter,
+zero LOD bias, and authored 4x anisotropy request. The static sampler bank's
+anisotropy limitation remains a separate possible quality task, not an
+established cause of a water bug.
+
+**Checks:** the BCUS98158 build passes with `GT5P_VM_INLINE=OFF` after removing
+the experiment. All three configurations in `scripts/test/unnorm_hi.ps1` pass.
+The refreshed cumulative runtime patch passes its reverse-apply check. No new
+live race or frame-rate result is claimed for this diagnostic-only change.
+
 ## Phase 84 - Idle starting-grid investigation and race-test progress (2026-10-19)
 
 **Reported:** leaving the starting-grid preview for a few minutes makes it
