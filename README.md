@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-18, Phase 79): playable from the menus into a
+**Disc build status (2026-10-18, Phase 80): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -69,6 +69,8 @@ menu's black tree rectangles are fixed. MSAA depth now reaches depth of
 field, the crowd has coloured spectators, and race textures have more cache
 capacity. High Speed Ring's road filtering and cars appearing over the bridge
 are fixed, and native pipeline compilation is cached between sessions.
+Distant scenery now uses its mip chain to reduce grain, and loading-screen
+car names no longer lose glyph parts or show solid blocks.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 

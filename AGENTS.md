@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-18, Phase 79)
+## Start here: state of play (2026-10-18, Phase 80)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 79 is the latest).
+has the evidence, newest phase first (Phase 80 is the latest).
 
 ### What works now
 
@@ -75,11 +75,18 @@ has the evidence, newest phase first (Phase 79 is the latest).
   kept in order. `RSX_DEPTH_KEEP=0` restores the fault. Verified at 1080p/2x
   MSAA; `race.ps1 -IntroShots` captures the introduction. Shared shader
   bytecode also stays in a bounded memory cache (`RSX_DXBC_MEM=0` bypasses).
+- Distant grass, hills and road now use the uploaded mip chain in per-draw
+  views (Phase 80); previously those views exposed only level zero.
+  `RSX_TEX_MIP_VIEWS=0` restores the grain. Loading-list fonts also reset
+  reused shadow-pass state before building their glyph atlas
+  (`RSX_MASK_STATE_RESET=0` restores missing glyph parts and white blocks).
+  `race.ps1 -LoadingShots` captures the list before it disappears.
 
 ### Open work, in the order the user left it
 
-The latest request is **High Speed Ring: loading/compilation, 60 fps, and race
-graphics** (Phases 78-79), including cars drawn over the bridge. The bridge
+The latest reports are **pixelly backgrounds and broken loading fonts**,
+following High Speed Ring's loading/compilation, 60 fps and race graphics
+request (Phases 78-80). The font atlas, scenery mip views, bridge
 occlusion, road corruption and redundant pipeline builds have
 fixes; a verified 720p/2x-MSAA race measured a median 41 fps over 25 s, not 60.
 Other black materials/geometry in the race remain to investigate. Beware
@@ -119,9 +126,10 @@ The PPU-inline experiment was not adopted; the normal exe is rebuilt with
    Circle to close the menu popup (`@PitSceneRoot+23000`) comes too early,
    so move it later. On the last runs, an Arcade round trip alone showed
    nothing.
-3. **Reported before Phase 69 and not re-checked since:** loading-screen
-   text with letters dropped or swapped ("Car Na e"). Phase 69's stack-leak
-   fix may have cured it. The 1080p Kyoto tree slabs were fixed in Phase 74.
+3. **Loading-screen text fixed in Phase 80:** glyph-mask draws inherited
+   `zonly` from reused shadow draw records and went to depth-only targets.
+   A warm shader cache did not prevent it. The 720p and 1080p lists now draw
+   completely; see Phase 80 for captures and the switches that were ruled out.
 4. **Speed and long-standing items:** the "Next" bullet at the end of the
    list below, and [docs/plan-30fps.md](docs/plan-30fps.md).
 

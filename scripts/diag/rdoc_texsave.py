@@ -1,6 +1,8 @@
 # Run inside qrenderdoc: qrenderdoc.exe --python scripts\diag\rdoc_texsave.py
 # RDOC_CAP, RDOC_OUT (a folder), RDOC_DRAW. Saves every texture the draw's
-# pixel shader reads (t0..t15) as PNG and prints their sizes and formats.
+# pixel shader reads as PNG and prints resource/view mip counts as well as
+# sizes and formats. File indices are reflection indices, not necessarily
+# texture registers. RDOC_MIPS=1 also saves each resource's lower mip levels.
 import os, traceback
 import renderdoc as rd
 
@@ -32,10 +34,16 @@ try:
         if rid == rd.ResourceId.Null() or rid not in texs:
             continue
         t = texs[rid]
-        p("slot", ub.access.index, rid, t.width, t.height, t.format.Name())
+        p("resource_index", ub.access.index, rid, t.width, t.height, t.format.Name(),
+          "resource_mips", t.mips, "view_mips", ub.descriptor.numMips,
+          "first_mip", ub.descriptor.firstMip)
         s = rd.TextureSave(); s.resourceId = rid; s.destType = rd.FileType.PNG
         s.alpha = rd.AlphaMapping.Discard
         ctrl.SaveTexture(s, os.path.join(outdir, "t%d.png" % ub.access.index))
+        if os.environ.get("RDOC_MIPS") == "1":
+            for mip in range(1, t.mips):
+                s.mip = mip
+                ctrl.SaveTexture(s, os.path.join(outdir, "t%d_m%d.png" % (ub.access.index, mip)))
     ctrl.Shutdown(); cf.Shutdown()
 except Exception:
     p(traceback.format_exc())

@@ -9,6 +9,76 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 80 - Scenery mip views and loading-font draw state (2026-10-18)
+
+**Background grain reproduced at 720p/2x MSAA.** In the post-bridge-fix
+capture `scratch/rdoc/hsrbridgefix_frame3052.rdc`, grass draw 1274
+(event 18207) reads a 1024x512 BC3 texture with eleven valid mip levels.
+Its bound SRV exposes only one. The same restriction affects the distant
+grass and foliage draws, despite their trilinear samplers. Dumping lower
+resource mips shows valid filtered images; the upload is not the remaining
+fault. The upload SRV exposes the chain, but `srv_write_ex` overwrites it
+with a base-level-only view when binding each draw.
+
+Per-draw 2D and cube SRVs now expose the resource's actual mip count.
+Resource mip counts are immutable, so the existing descriptor-cache
+resource identity remains sufficient; null views retain one level.
+`RSX_TEX_MIP_VIEWS=0` restores the restricted views independently of
+`RSX_TEX_MIPS=0`, which disables mip uploads. The diagnostic texture tools
+now report both resource and view counts; `rdoc_texsave.py` also accepts
+`RDOC_MIPS=1` to save lower levels. Comparing resource counts alone missed
+this fault.
+
+`mipviews720.intro08.png` and `intro12.png` show much smoother grass,
+hills and road at the original 720p resolution. The run reaches the driving
+HUD with D3D12 validation enabled and no validation errors. Its short fps
+sample is not a controlled performance comparison.
+
+**The loading-font corruption is reproducible, including with warm shaders.**
+`race.ps1 -LoadingShots` now records sixteen window shots at half-second
+intervals after `LoadingRoot`, before the list disappears. The user was
+unsure whether the text later recovers. Captures reproduce missing glyph
+parts and solid blocks in the car-name list at both 720p and 1080p. Turning
+off the vertex cache, constant-buffer reuse, draw merging (both CPU and GPU
+paths), or GPU vertex fetch does not cure it. A temporary stencil-write-mask
+probe observes only `FF` during a successful load; that probe was removed.
+
+**Cause:** reused draw records retain `zonly` from earlier depth-only draws.
+`dr_note_surface` returns early for a redirected stencil-mask pass before
+resetting it. In `scratch/rdoc/gridfont_frame2816.rdc`, glyph draws 210-217
+(events 2303-2394) have no colour output, while neighbouring glyph draws
+write atlas resource 2064. The corresponding manifest records mask passes
+with `zonly=1`, despite a zero guest depth address. Pixel history in the
+missing T glyph's atlas cell has no writes. This is not a missing final
+car-name quad: draw 218 samples the damaged atlas normally.
+
+Mask passes now reset that flag, polygon offset and shadow comparison state
+before returning. `RSX_MASK_STATE_RESET=0` restores the old early return for
+comparison. No game-specific glyph or address workaround is involved.
+
+**Verification:** `maskreset1080.loading08.png` and
+`maskreset720.loading10.png` show all sixteen car names complete, including
+JTS Q4, ST, Type R, Evoluzione and Volkswagen GTI. Both use 2x MSAA and the
+normal build (`GT5P_VM_INLINE=OFF`). `maskreset720.win.png` reaches actual
+driving at `0'11.683`, with coloured spectators and the smoother road.
+`mipviewsfix_frame3499.rdc` independently confirms grass resource 8536 has
+eleven mips exposed through an eleven-level view; its lighting atlas has ten
+resource/view levels. These runs report no D3D12 validation errors.
+`roundtrip.ps1 -NoArcade -Tag mipmaskmenus GT5P_RESOLUTION=1080p
+RSX_MSAA=2 D3D12_DBG=1` also completes the Kyoto menu and Acura dealer
+checks: normal text, tree cutouts and floor reflections, no validation
+errors, and 30 fps at the dealer shot. This is the direct route, not the
+parked pit round trip.
+
+The first 1080p validation run hit the previously documented race-start stall
+after the clean loading list and bridge introduction; its final image remains
+at `0'00.000`, so its fps sample is not a racing benchmark. The successful
+720p validation sample is only eight seconds with the debug layer enabled,
+also not a controlled speed comparison. Steady 60 fps, rare start stalls and
+black race materials remain open. Sampler LOD limits/bias and anisotropy are
+still incomplete; the mip-view fix removes heavy grain but does not establish
+that all distant or oblique surfaces now match the console's detail.
+
 ## Phase 79 - Track depth between passes and repeated shader reads (2026-10-18)
 
 **Reproduced cars in front of the bridge.** The user's follow-up screenshots

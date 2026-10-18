@@ -4,9 +4,10 @@
 # Pass GT5P_RESOLUTION=1080p RSX_MSAA=2 to warm those settings instead.
 # -IntroShots saves the first 25 s of the grid/race transition once per second,
 # before collecting fps samples (useful for checking car/track occlusion).
+# -LoadingShots also records the loading list at half-second intervals.
 [CmdletBinding(PositionalBinding = $false)]
 param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
-      [string]$Tag = "race", [int]$Seconds = 60, [switch]$IntroShots,
+      [string]$Tag = "race", [int]$Seconds = 60, [switch]$IntroShots, [switch]$LoadingShots,
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -55,6 +56,15 @@ try {
         -RedirectStandardOutput "$dir/$Tag.out" -RedirectStandardError "$dir/$Tag.err"
     foreach ($k in $set.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
     $tail = New-LogTail "$dir/$Tag.out"
+    if ($LoadingShots) {
+        if ((Wait-Milestone $p $tail "LoadingRoot" 240) -lt 0) { throw "Race loading not reached" }
+        for ($s = 0; $s -lt 16; $s++) {
+            $p.Refresh()
+            if ($p.HasExited) { throw "Game exited during race loading" }
+            Save-RaceWindowShot $p (Join-Path $dir ("$Tag.loading{0:D2}.png" -f $s))
+            Start-Sleep -Milliseconds 500
+        }
+    }
     if ((Wait-Milestone $p $tail "QuickArcadeRoot" 240) -lt 0) { throw "Starting grid not reached" }
     # Allow the first Start press and camera transition before sampling.
     if ($IntroShots) {

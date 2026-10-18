@@ -1,5 +1,6 @@
 # Inspect the first draws writing a target: RDOC_CAP, RDOC_OUT (directory),
-# RDOC_TARGET (numeric resource id) or RDOC_DRAWS (draw indices), RDOC_N
+# RDOC_TARGET (numeric resource id), RDOC_DRAWS (draw indices) or RDOC_EVENTS
+# (event IDs), RDOC_N
 # (default 2). Derived dumps stay
 # in the ignored output directory, never beside this script.
 import os, struct, traceback
@@ -26,8 +27,10 @@ try:
     textures = {t.resourceId: t for t in ctrl.GetTextures()}
     want = int(os.environ.get("RDOC_TARGET", "0"))
     indices = {int(i) for i in os.environ.get("RDOC_DRAWS", "").split(",") if i}
+    events = {int(i) for i in os.environ.get("RDOC_EVENTS", "").split(",") if i}
     selected = [(i,a) for i,a in enumerate(flatten(ctrl.GetRootActions()))
-                if (i in indices if indices else any(int(o) == want for o in a.outputs))]
+                if (i in indices if indices else a.eventId in events if events
+                    else any(int(o) == want for o in a.outputs))]
     p("draws", [(i,a.eventId,a.numIndices) for i,a in selected])
     shaders = set()
     for i,a in selected[:int(os.environ.get("RDOC_N", "2"))]:
@@ -45,7 +48,9 @@ try:
             if rid not in textures:
                 continue
             t = textures[rid]
-            p("texture", ub.access.index, rid, t.width, t.height, t.format.Name())
+            p("texture", ub.access.index, rid, t.width, t.height, t.format.Name(),
+              "resource_mips", t.mips, "view_mips", ub.descriptor.numMips,
+              "first_mip", ub.descriptor.firstMip)
             s = rd.TextureSave()
             s.resourceId = rid
             s.destType = rd.FileType.PNG
