@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-19, Phase 86): playable from the menus into a
+**Disc build status (2026-10-19, Phase 87): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -79,7 +79,10 @@ size-only frame-copy substitution that hid them.
 Dark-region flicker in the menus/showroom also has a fix: dither textures on
 upper units now use the correct pixel coordinates (`RSX_UNNORM_HI=0` to compare).
 The reported dark High Speed Ring water matches RPCS3 in the user's comparison;
-its appearance is unchanged.
+its appearance is unchanged. The missing 1080p race-map outline is also fixed:
+MAIN texture uploads no longer sample overlapping LOCAL render targets
+(`RSX_RT_LOCATION=0` restores the old lookup). Driving freezes, missing replay
+controls and the reported dark tunnel remain under investigation.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 
@@ -89,9 +92,11 @@ default). When the fault occurs, open **F3 → Export debug report**, or press
 has **Open reports folder**. The option applies immediately. It retains recent
 logs only while enabled, so turn it on before reproducing the problem.
 Reports include settings/build details, frame history, thread/FIFO/SPU state
-and a best-effort game-window screenshot. A blocked renderer may prevent the
-screenshot; the rest of the report can still save. The intermittent High Speed
-Ring grid-preview corruption remains under investigation.
+and a best-effort game-window screenshot. While enabled, they also retain up
+to eight state samples taken during hitches over 250 ms (`hitches.txt`), so a
+report after recovery can include the stall itself. A blocked renderer may
+prevent the screenshot; the rest of the report can still save. The intermittent
+High Speed Ring grid-preview corruption remains under investigation.
 
 | Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
 |---|---|---|

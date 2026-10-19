@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -33,6 +34,12 @@ fs::path s_folder;
 std::atomic<ULONGLONG> s_since{0};
 std::atomic<LONG> s_busy{0};
 std::atomic<unsigned> s_serial{0};
+std::mutex s_hitch_lock;
+struct Hitch { unsigned frame; double age; ULONGLONG at; std::string state; };
+std::vector<Hitch> s_hitches;
+std::atomic<bool> s_hitch_busy{false};
+std::atomic<unsigned> s_generation{0};
+std::atomic<unsigned> s_hitch_frame{0};
 
 struct Log {
     std::mutex lock;
@@ -160,6 +167,37 @@ void guarded_profiler(FILE* out) {
     __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "\nProfiler snapshot unavailable\n"); }
 }
 
+struct HitchRequest { unsigned frame, generation; double age; ULONGLONG at; };
+DWORD WINAPI hitch_worker(void* ptr) {
+    HitchRequest* request = static_cast<HitchRequest*>(ptr);
+    try {
+        FILE* f = tmpfile();
+        if (f) {
+            guarded_snapshot(f);
+            guarded_profiler(f);
+            std::string state = from_file(f); fclose(f);
+            std::lock_guard<std::mutex> lock(s_hitch_lock);
+            if (s_enabled.load() && request->generation == s_generation.load()) {
+                if (s_hitches.size() == 8) s_hitches.erase(s_hitches.begin());
+                s_hitches.push_back({request->frame, request->age, request->at, std::move(state)});
+            }
+        }
+    } catch (...) { /* A diagnostic failure must not affect the game. */ }
+    delete request; s_hitch_busy = false; return 0;
+}
+
+std::string hitch_history() {
+    std::lock_guard<std::mutex> lock(s_hitch_lock);
+    std::string result = "Automatic hitch snapshots: last 8 gaps over 250 ms, sampled while Debug export is On.\n"
+        "These are live samples, not proof of a cause; GT5P_HITCH_CAPTURE=0 disables collection.\n";
+    for (const auto& h : s_hitches) {
+        result += "\n=== frame " + std::to_string(h.frame) + " age_ms=" + std::to_string(h.age) +
+            " since_enable_ms=" + std::to_string(h.at) + " ===\n" + h.state;
+    }
+    if (s_hitches.empty()) result += "No hitch snapshot retained in this capture interval.\n";
+    return result;
+}
+
 std::string report(HWND game) {
     FILE* f = tmpfile();
     if (!f) throw std::runtime_error("Could not create report scratch file");
@@ -168,7 +206,7 @@ std::string report(HWND game) {
     WIN32_FILE_ATTRIBUTE_DATA attr{}; GetFileAttributesExW(exe, GetFileExInfoStandard, &attr);
     SYSTEM_INFO si; GetNativeSystemInfo(&si);
     MEMORYSTATUSEX mem{}; mem.dwLength = sizeof mem; GlobalMemoryStatusEx(&mem);
-    fprintf(f, "GT5P debug report v1\nLocal time: %04u-%02u-%02u %02u:%02u:%02u\n"
+    fprintf(f, "GT5P debug report v2\nLocal time: %04u-%02u-%02u %02u:%02u:%02u\n"
         "Source: %s; target: %s; compiled: %s %s\nProcess id: %lu\n"
         "Log capture enabled for: %llu ms\nGame window handle: %p\n"
         "Executable bytes: %llu; last-write FILETIME: %08lX%08lX\n"
@@ -188,9 +226,10 @@ std::string report(HWND game) {
     /* Explicit allowlist: never dump the process environment, keys or game files. */
     static const char* names[] = {"GT5P_RESOLUTION", "RSX_MSAA", "RSX_SSAA", "RSX_PRESENT_SYNC",
         "RSX_SHADER_CACHE", "RSX_SHADER_ASYNC", "RSX_TEX_SLOTS", "RSX_DEPTH_KEEP", "RSX_TEX_EXPAND",
-        "RSX_BC_MIP_LIMIT", "RSX_TEX_MIP_VIEWS", "RSX_UNNORM_HI", "RSX_MASK_STATE_RESET",
+        "RSX_RT_LOCATION", "RSX_BC_MIP_LIMIT", "RSX_TEX_MIP_VIEWS", "RSX_UNNORM_HI", "RSX_MASK_STATE_RESET",
         "GT5P_VBLANK_HZ", "GT5P_PRESENT_SLEEP", "GT5P_STALL_DUMP", "GT5P_PROFVIEW",
         "GT5P_DEBUG_EXPORT", "SPURS_LANE_PIN", "SPURS_LANE_PRUNE", "SPURS_READY_GATE",
+        "GT5P_HITCH_CAPTURE", "GT5P_MAINSTACK", "GT5P_SAMPLE", "RSX_PRESENT_THREAD", "RSX_WINDOW_THREAD",
         "SPURS_READY_COH", "SPURS_JL_SPU3", "PS3_PPU_CORES", "PS3_PPU_PRIO_SCHED",
         "PS3_VERBOSE", "D3D12_DBG", "D3D12_IQ", "PAD_NO_SDL", "PAD_NO_KEYBOARD",
         "PAD_HOTPLUG", "AUDIO_HOTPLUG", "SCREEN_AS_TEX"};
@@ -247,12 +286,14 @@ DWORD WINAPI export_worker(void* ptr) {
         HWND game = static_cast<HWND>(ptr);
         std::vector<Entry> entries;
         entries.push_back({"report.txt", report(game)});
+        entries.push_back({"hitches.txt", hitch_history()});
         std::string bmp = screenshot(game);
         if (!bmp.empty()) entries.push_back({"game-window.bmp", std::move(bmp)});
         entries.push_back({"stdout.log", s_logs[0].snapshot()});
         entries.push_back({"stderr.log", s_logs[1].snapshot()});
         entries.push_back({"README.txt", "Attach this ZIP and describe the track, screen, actions and wait time.\r\n"
             "Logs contain only recent output since Debug export was enabled (up to 2 MiB per stream).\r\n"
+            "hitches.txt retains up to eight live state samples taken during gaps over 250 ms while enabled.\r\n"
             "No game files, shader code, full memory dump or save data are included.\r\n"
             "The optional image is only the game client window; it may be unavailable or blank on a hung renderer.\r\n"
             "The snapshot does not pause the game; fields may change while being sampled.\r\n"});
@@ -288,10 +329,13 @@ void gt5p_debug_enable(int on) {
     bool enabled = on && gt5p_settings_enabled() && gt5p_settings_file().debug_export && !(kill && *kill == '0');
     if (!enabled) {
         s_enabled = false;
+        ++s_generation;
         for (auto& log : s_logs) log.clear();
+        { std::lock_guard<std::mutex> lock(s_hitch_lock); s_hitches.clear(); }
         return;
     }
     if (s_enabled.load()) return;
+    s_hitch_frame = 0;
     if (!s_started.load()) {
         s_folder = fs::absolute("logs/debug");
         /* Logs only go to the player's reports folder. No env value can opt in. */
@@ -306,6 +350,18 @@ void gt5p_debug_enable(int on) {
 }
 bool gt5p_debug_enabled() { return s_enabled.load(); }
 bool gt5p_debug_logs_active() { return s_enabled.load(); }
+void gt5p_debug_watchdog(unsigned frames, double age) {
+    const unsigned generation = s_generation.load();
+    const char* e = getenv("GT5P_HITCH_CAPTURE");
+    if (!s_enabled.load() || (e && *e == '0') || frames < 200 || age < 250.0) return;
+    /* Called on one owner thread; do not take any game/renderer locks. */
+    if (s_hitch_frame == frames || s_hitch_busy.exchange(true)) return;
+    s_hitch_frame = frames;
+    auto* r = new (std::nothrow) HitchRequest{frames, generation, age, GetTickCount64() - s_since.load()};
+    if (!r) { s_hitch_busy = false; return; }
+    HANDLE h = CreateThread(nullptr, 0, hitch_worker, r, 0, nullptr);
+    if (h) CloseHandle(h); else { delete r; s_hitch_busy = false; }
+}
 void gt5p_debug_shutdown() {
     std::lock_guard<std::mutex> control(s_control);
     if (!s_started.load()) return;

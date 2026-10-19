@@ -9,6 +9,103 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 87 - Race report triage, missing map and hitch snapshots (2026-10-19)
+
+The user supplied five F3 exports from one 1080p/2x-MSAA High Speed Ring run
+(process 35540, source `784f48f`): grid preview, race introduction, paused in
+the tunnel, paused after a recoverable freeze, and post-race replay. They
+confirmed the freeze occurred during ordinary driving, with simulation
+continuing, and replay controls remained absent after controller input. They
+also reported a dark tunnel. The driving freeze, replay controls and tunnel
+lighting remain open; this phase does not establish that shader compilation
+caused them or that the fixes below cure them.
+
+**The map outline was replaced by a stale render target.** Two native races
+reproduced car markers without an outline. In
+`scratch/rdoc/racehudpin87_frame3928.rdc`, draw 1810 / event 19980 samples a
+1920x1080 RGBA target (resource 2062), although its guest texture is a 456x456
+BC3 outline. `RSX_TEXDUMP_SIZE=456x456` saved its actual MAIN-memory source;
+decoding those bytes produces the intact High Speed Ring outline. Its raw IO
+offset `0x01862C00` happens to fall inside an old LOCAL target starting at
+`0x01100000` (8192-byte pitch, 1080 rows). `off_rt_find_in` matched the number
+across these separate address spaces and supplied the old scene image. The
+manifest's op-header `t0=` is the raw offset; its indented texture `off=` is
+the resolved guest EA (`0x21762C00` here). Do not reverse these two.
+
+Texture location is now retained on all three draw-record paths. Only LOCAL
+textures can match this backend's LOCAL colour/depth/display targets, including
+interior target ranges and the reduced-viewport fallback. MAIN uploads retain
+their own bytes. `RSX_RT_LOCATION=0` restores numeric-only matching. This is a
+lookup correction; support for rendering into MAIN-memory surfaces is not
+added here. Capture manifests now print `loc=LOCAL/MAIN`. The existing raw
+texture dump also accepts `RSX_TEXDUMP_SIZE=<w>x<h>` for allocations whose
+addresses vary, still once per explicitly armed run, under ignored `scratch/`.
+
+The fixed 1080p race (`mapfixed87`) shows the outline around the moving car
+markers, with gauges, mirror and other HUD text present. The 12-second sample
+was 38 fps median; this is not a 60-fps fix. The old-lookup control
+(`mapoldretry87`, `RSX_RT_LOCATION=0`, 10 seconds, also 38 fps median) removes
+the outline again while retaining the markers. An earlier control attempt
+stalled before loading at the known FIFO `0x09A15A30` / `FFFFFFFF` condition;
+it was stopped and retried, not counted as a racing result. A 1080p Acura
+showroom regression (`rtlocdealer87`, 30 fps in its final title) retains both
+cars, floor reflections and readable text. A 720p loading-list shot
+(`rtloc72087.loading10.png`) has intact car names, but that run then hit the
+known race-start FIFO sentinel stall at `0x09A1F140`; the script rejected its
+stale FPS result. Do not count it as a racing pass. A retry with
+`SPURS_LANE_PIN=0` (`rtloc720retry87`) reached a moving 720p race with a readable
+map and HUD. Its short 5-second median was 24.63 fps under that diagnostic
+scheduling override; it is a graphics check, not a default-settings benchmark.
+Lane pinning remains unchanged in the shipped defaults.
+
+**The exports contain two different hitch shapes.** `scripts/diag/debug_reports.py`
+reads ZIP text without extracting game images; accepts files/folders, `--pid`
+and `--json`, and understands both frame CSV layouts. The original reports:
+
+| Export | Median interval | Largest interval | Intervals over 100 ms |
+| --- | ---: | ---: | ---: |
+| 1, grid | 33.39 ms | 680.84 ms | 1 |
+| 2, introduction | 33.55 ms | 804.04 ms | 13 |
+| 3, paused tunnel | 17.01 ms | 45.46 ms | 0 |
+| 4, paused after recovery | 25.09 ms | 2028.51 ms | 3 |
+| 5, replay | 33.60 ms | 93.86 ms | 0 |
+
+Each has 511 intervals. These are short histories, often including pauses;
+they do not measure equivalent racing workloads. Export 1's worst interval
+contains 648.20 ms of present work; export 2's contains 759.08 ms. Export 4
+instead has 1021.24, 2028.51 and 1024.34 ms gaps with only about 2, 20 and 2 ms
+of recorded FIFO work and almost no present/message-pump work. Its old format
+did not measure idle waits, vblank or flip work. Shader queues are empty at
+all five snapshots, no device loss is reported, and no FIFO resync/PSO failure
+appears in their retained logs. Snapshots after recovery cannot identify what
+the rendering producer was waiting on during those gaps. First-use pipeline
+loading remains a separate possible contributor to the early hitches.
+
+**Reports now retain state during hitches.** While F1 Debug export is On, the
+independent profiler thread checks the last-present age roughly every 100 ms.
+After 200 presents, a gap reaching 250 ms starts one diagnostic worker; it
+retains at most eight snapshots, once per stalled present number, in
+`hitches.txt` in the next manually exported ZIP. Samples include the existing
+thread/FIFO/SPURS/renderer state and profiler history. They do not suspend the
+game or wait on the renderer. They are sampled evidence, not atomic save states.
+`GT5P_HITCH_CAPTURE=0` disables this observer. It cannot bypass the F1 opt-in;
+Off clears history and rejects workers from an earlier enabled interval. The
+profiler must be enabled (the normal default; `GT5P_PROFVIEW=0` disables it).
+Report v2 also separates FIFO, present, message-pump, vblank, flip and idle-wait
+time in its per-frame CSV. Settings still default Off.
+
+Validation: the native build passed. The exporter integration fixture passes
+all eleven cases (missing/off/forced opt-in/kill/no-settings/enabled/hitch-off/
+epoch/fault/hung-window/write-failure), including once-per-gap retention,
+clearing on Off/On, and rejecting an in-flight sample from before Off after
+the setting is enabled again. It exercises the real exporter with stubbed runtime state; it does
+not reproduce the user's driving freeze. The upper-unit sampler/pipeline tests
+pass all three modes after the draw-record layout change. The report analyzer
+read all five v1 exports, and a synthetic v2 history verifies idle-wait timing
+is accounted for. Two initial RenderDoc boots stalled before reaching a race;
+a third capture with `SPURS_LANE_PIN=0` succeeded. That was a capture-only timing
+perturbation, not a shipped scheduling change.
+
 ## Phase 86 - Opt-in F3 debug export for grid-preview failures (2026-10-19)
 
 **New reproduction, not fixed here:** the user loaded High Speed Ring at

@@ -604,7 +604,8 @@ static void stall_dump_check(unsigned presents_total)
 extern "C" void gt5p_start_profview(void);
 extern "C" void gt5p_start_settings_ui(void);   /* F1 settings page: gt5p_settings_ui.cpp */
 extern "C" void gt5p_start_shader_indicator(void);   /* gt5p_shaderbusy.cpp */
-extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total);
+extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total,
+                             double vblank_total, double flip_total, double wait_total);
 extern "C" volatile double g_rsx_gpu_ms_last, g_rsx_gpu_ms_sum, g_rsx_gpu_ms_max;
 extern "C" volatile long g_rsx_gpu_n;
 
@@ -632,12 +633,12 @@ static DWORD WINAPI present_thread(LPVOID)
     /* GT5P_PRESENT_PROF=1: every 5 s, where this thread's time went. */
     const int prof = getenv("GT5P_PRESENT_PROF") != nullptr;
     LARGE_INTEGER qf; QueryPerformanceFrequency(&qf);
-    double p_vbl = 0, p_flip = 0, p_pres = 0, p_fifo = 0, p_pump = 0;
+    double p_vbl = 0, p_flip = 0, p_pres = 0, p_fifo = 0, p_pump = 0, p_wait = 0;
     unsigned p_ticks = 0, p_pres_n = 0, p_pres_total = 0;
     ULONGLONG p_last = GetTickCount64();
     /* Running totals of the same, never reset, for the profiler view
      * (gt5p_profview.cpp), which takes the difference at each present. */
-    double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0;
+    double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0, c_p_wait = 0;
 /* PS3_TIMELINE also gets each present (P) and FIFO walk (R), with its length. */
 #define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_;     if (g_tl_on && (&acc == &p_pres || &acc == &p_fifo)) ps3_tl_rec(&acc == &p_pres ? 'P' : 'R', 0, (uint32_t)(d_ * 1e6)); } while (0)
     if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); gt5p_start_shader_indicator(); }
@@ -665,7 +666,7 @@ static DWORD WINAPI present_thread(LPVOID)
     auto qpc_now = []() { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; };
     LONGLONG next_tick = qpc_now();
     for (;;) {
-        cellGcm_fifo_kick_wait(outer_sleep);
+        PROF_T(p_wait, cellGcm_fifo_kick_wait(outer_sleep));
         ps3_tl_tick();
         ULONGLONG now = GetTickCount64();
         const LONGLONG now_q = qpc_now();
@@ -681,7 +682,7 @@ static DWORD WINAPI present_thread(LPVOID)
             PROF_T(p_flip, cellGcmTickFlip());
             if (rsx_ok && cellGcm_take_flip_pending()) {
                 PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
-                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
+                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump, c_p_vbl, c_p_flip, c_p_wait);
             }
             if (drain)
                 PROF_T(p_fifo, cellGcm_rsx_process_fifo());
@@ -701,7 +702,7 @@ static DWORD WINAPI present_thread(LPVOID)
         if (drain) {
             if (cellGcm_take_flip_pending() && rsx_ok) {
                 PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
-                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
+                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump, c_p_vbl, c_p_flip, c_p_wait);
             }
             PROF_T(p_fifo, cellGcm_rsx_process_fifo());
         }
@@ -719,7 +720,7 @@ static DWORD WINAPI present_thread(LPVOID)
             fprintf(stderr, "[present-prof] 5 s: ticks=%u presents=%u | vblank %.2fs flip %.2fs "
                             "present %.2fs fifo %.2fs pump %.2fs | gpu %.2f ms avg %.2f max\n",
                     p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_pump, gavg, gmax);
-            p_vbl = p_flip = p_pres = p_fifo = p_pump = 0; p_ticks = p_pres_n = 0;
+            p_vbl = p_flip = p_pres = p_fifo = p_pump = p_wait = 0; p_ticks = p_pres_n = 0;
             p_last = GetTickCount64();
         }
     }

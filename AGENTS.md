@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 86)
+## Start here: state of play (2026-10-19, Phase 87)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 86 is the latest).
+has the evidence, newest phase first (Phase 87 is the latest).
 
 ### What works now
 
@@ -99,7 +99,24 @@ has the evidence, newest phase first (Phase 86 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: High Speed Ring at 1080p can corrupt during the grid preview.** The
+**Latest test reports (Phase 87):** the user reports stutters and a recoverable
+black/frozen image during ordinary driving while physics continues, missing
+replay controls even after input, and a dark High Speed Ring tunnel. These are
+open. Five exports from process 35540 show both expensive early presents and
+later 1/2/1-second delivery gaps not explained by the old timing categories.
+Do not call either a shader-compilation diagnosis. New exports include
+`hitches.txt`: up to eight live state samples during gaps over 250 ms, only
+while Debug export is On (`GT5P_HITCH_CAPTURE=0` disables). Report v2 adds idle,
+vblank and flip timings. `scripts/diag/debug_reports.py logs/debug --pid 35540`
+summarises the original reports without extracting game images.
+
+The missing 1080p track-map outline has a measured fix: MAIN texture offsets
+must not alias LOCAL render targets (`RSX_RT_LOCATION=0` restores the fault).
+The source outline was intact; the GPU sampled an old 1920x1080 target instead.
+A moving 1080p race now shows the outline. Replay controls and tunnel lighting
+have not been verified fixed by this change.
+
+**Also open: High Speed Ring at 1080p can corrupt during the grid preview.** The
 user's new screenshots show large pale planes and broken grid text after an
 initially correct preview. This is still open; the screenshots alone cannot
 establish whether presents stopped or which data became corrupt. Phase 86 adds

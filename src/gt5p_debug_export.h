@@ -8,6 +8,8 @@ void gt5p_debug_enable(int on);
 bool gt5p_debug_enabled();
 bool gt5p_debug_logs_active();
 void gt5p_debug_shutdown();
+/* Called by the independent profiler thread; records state during a hitch. */
+void gt5p_debug_watchdog(unsigned frames, double present_age_ms);
 void gt5p_debug_request(HWND game);
 void gt5p_debug_open_folder();
 /* 0 disabled, 1 ready, 2 busy, 3 saved, -1 failed. */

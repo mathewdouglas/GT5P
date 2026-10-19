@@ -7,6 +7,7 @@
 #include <atomic>
 
 static bool s_fault;
+static HANDLE s_snapshot_entered, s_snapshot_release;
 static std::atomic<HWND> s_hung_window{nullptr};
 static HANDLE s_hung_entered;
 static LRESULT CALLBACK hung_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -24,6 +25,10 @@ static DWORD WINAPI hung_window(void*) {
 }
 extern "C" void gt5p_debug_snapshot(FILE* out) {
     fprintf(out, "test snapshot marker\n");
+    if (s_snapshot_release) {
+        SetEvent(s_snapshot_entered);
+        assert(WaitForSingleObject(s_snapshot_release, 3000) == WAIT_OBJECT_0);
+    }
     if (s_fault) RaiseException(0xE0424242, 0, 0, nullptr);
 }
 extern "C" void gt5p_pv_export(FILE* out) { fprintf(out, "test frame marker\n"); }
@@ -54,6 +59,23 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 192; i++) { fwrite(block.data(), 1, block.size(), stdout); fwrite(block.data(), 1, block.size(), stderr); }
         printf("\nexport stdout tail\n"); fprintf(stderr, "\nexport stderr tail\n");
         fflush(stdout); fflush(stderr); Sleep(200);
+        if (mode == "enabled") {
+            gt5p_debug_watchdog(300, 1000); Sleep(200);
+            gt5p_debug_watchdog(300, 1200); /* same gap is not recorded twice */
+        }
+        if (mode == "epoch") {
+            s_snapshot_entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            s_snapshot_release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            assert(s_snapshot_entered && s_snapshot_release);
+            gt5p_debug_watchdog(301, 1000);
+            assert(WaitForSingleObject(s_snapshot_entered, 1000) == WAIT_OBJECT_0);
+            auto s = gt5p_settings_file(); s.debug_export = false;
+            assert(gt5p_settings_store(s)); gt5p_debug_enable(0);
+            s.debug_export = true; assert(gt5p_settings_store(s)); gt5p_debug_enable(1);
+            SetEvent(s_snapshot_release); Sleep(200);
+            printf("export stdout tail\n"); fprintf(stderr, "export stderr tail\n");
+            fflush(stdout); fflush(stderr); Sleep(100);
+        }
         HWND game = nullptr;
         if (mode == "hung") {
             s_hung_entered = CreateEventW(nullptr, TRUE, FALSE, nullptr); assert(s_hung_entered);

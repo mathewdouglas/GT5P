@@ -36,7 +36,7 @@ namespace {
 /* One entry per present: when it happened, and what the present thread spent
  * since the previous one. Written by the present thread only; the view reads
  * it unlocked and tolerates a torn entry for one repaint. */
-struct Frame { double t, fifo, pres, pump; };
+struct Frame { double t, fifo, pres, pump, vblank, flip, wait; };
 const int kFrames = 512;
 Frame s_fr[kFrames];
 volatile LONG s_fr_n = 0;
@@ -329,6 +329,8 @@ DWORD WINAPI view_thread(LPVOID)
         f8_was = f8;
         ULONGLONG t = GetTickCount64();
         if (t - last_sample >= 1000) { sample_threads(); last_sample = t; }
+        LONG frames = s_fr_n;
+        if (frames > 0) gt5p_debug_watchdog((unsigned)frames, (now_s() - s_fr[(frames - 1) % kFrames].t) * 1000.0);
         if (s_shown) {
             POINT p = { 8, 8 }; ClientToScreen(s_game, &p);
             SetWindowPos(s_wnd, NULL, p.x, p.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
@@ -344,14 +346,17 @@ static int s_pv_on = -1;
 
 /* Called by the present thread after each present, with its running totals
  * (seconds) of FIFO walk, present and message pump. */
-extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total)
+extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total,
+                             double vblank_total, double flip_total, double wait_total)
 {
     if (s_pv_on <= 0) return;
-    static double lf, lp, lm;
+    static double lf, lp, lm, lv, lb, lw;
     LONG n = s_fr_n;
     Frame& f = s_fr[n % kFrames];
     f.t = now_s(); f.fifo = fifo_total - lf; f.pres = pres_total - lp; f.pump = pump_total - lm;
+    f.vblank = vblank_total - lv; f.flip = flip_total - lb; f.wait = wait_total - lw;
     lf = fifo_total; lp = pres_total; lm = pump_total;
+    lv = vblank_total; lb = flip_total; lw = wait_total;
     InterlockedIncrement(&s_fr_n);
 }
 
@@ -375,10 +380,11 @@ extern "C" void gt5p_pv_export(FILE* out)
     double now = now_s();
     fprintf(out, "Total presents: %ld; last present age: %.3f s; last GPU time (may be stale): %.3f ms\n",
         n, have ? now - s_fr[(n - 1) % kFrames].t : -1.0, (double)g_rsx_gpu_ms_last);
-    fprintf(out, "age_s,fifo_ms,present_ms,pump_ms\n");
+    fprintf(out, "age_s,fifo_ms,present_ms,pump_ms,vblank_ms,flip_ms,idle_wait_ms\n");
     for (int i = have; i > 0; i--) {
         Frame f = s_fr[(n - i) % kFrames];
-        fprintf(out, "%.6f,%.6f,%.6f,%.6f\n", now - f.t, f.fifo * 1000, f.pres * 1000, f.pump * 1000);
+        fprintf(out, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", now - f.t,
+            f.fifo * 1000, f.pres * 1000, f.pump * 1000, f.vblank * 1000, f.flip * 1000, f.wait * 1000);
     }
     if (TryEnterCriticalSection(&s_rows_cs)) {
         fprintf(out, "CPU percent of one core: process=%.2f exited=%.2f\n", s_proc_pct, s_exited_pct);
