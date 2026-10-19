@@ -220,12 +220,12 @@ std::string report(HWND game) {
         si.dwNumberOfProcessors, mem.ullTotalPhys >> 20, mem.ullAvailPhys >> 20);
     const auto& s = gt5p_settings();
     fprintf(f, "Loaded settings: resolution=%d msaa=%d vsync=%d shader_cache=%d async=%d "
-        "sdl=%d keyboard=%d vblank=%d lane_cores=%d\nSettings file: %s\n",
+        "sdl=%d keyboard=%d vblank=%d lane_cores=%d warmup=%d\nSettings file: %s\n",
         s.resolution, s.msaa, s.vsync, s.shader_cache, s.shader_precompile,
-        s.sdl_controllers, s.keyboard, s.vblank_hz100, s.lane_cores, gt5p_settings_path().c_str());
+        s.sdl_controllers, s.keyboard, s.vblank_hz100, s.lane_cores, s.shader_warmup, gt5p_settings_path().c_str());
     /* Explicit allowlist: never dump the process environment, keys or game files. */
     static const char* names[] = {"GT5P_RESOLUTION", "RSX_MSAA", "RSX_SSAA", "RSX_PRESENT_SYNC",
-        "RSX_SHADER_CACHE", "RSX_SHADER_ASYNC", "RSX_TEX_SLOTS", "RSX_DEPTH_KEEP", "RSX_TEX_EXPAND",
+        "RSX_SHADER_CACHE", "RSX_SHADER_ASYNC", "RSX_SHADER_WARMUP", "RSX_PSO_RECIPES", "RSX_TEX_SLOTS", "RSX_DEPTH_KEEP", "RSX_TEX_EXPAND",
         "RSX_RT_LOCATION", "RSX_BC_MIP_LIMIT", "RSX_TEX_MIP_VIEWS", "RSX_UNNORM_HI", "RSX_MASK_STATE_RESET",
         "GT5P_VBLANK_HZ", "GT5P_PRESENT_SLEEP", "GT5P_STALL_DUMP", "GT5P_PROFVIEW",
         "GT5P_DEBUG_EXPORT", "SPURS_LANE_PIN", "SPURS_LANE_PRUNE", "SPURS_READY_GATE",

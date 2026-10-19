@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 87)
+## Start here: state of play (2026-10-19, Phase 88)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 87 is the latest).
+has the evidence, newest phase first (Phase 88 is the latest).
 
 ### What works now
 
@@ -111,7 +111,31 @@ feature gaps and acceptance gates. This is a plan, not an enabled renderer.
 The next proposed task is isolated Windows bring-up; D3D12 remains the default.
 
 
-**Latest test reports (Phase 87):** the user reports stutters and a recoverable
+**Latest: London pauses and startup preload (Phase 88).** Two exports from
+process 13712 (`27320247aa00`) overlap the same stall sequence. Early hitch
+samples often have shader compilation active; the later 1/2/1-second gaps
+have busy=0/pending=0, almost all time in idle waiting, and a FIFO parked on
+an unfinished `FFFFFFFF` command block. Render SPURS groups are idle with no
+ready work. This narrows the long freeze to command production, not a proven
+shader or GPU fault; the producer/guest scheduling cause remains open. Do not
+skip the unfinished block to force progress. Use
+`scripts/diag/debug_reports.py logs/debug --pid 13712` for the evidence.
+
+F1 VIDEO now offers **Preload known shaders**, default Off,
+`video.shader_warmup` / `RSX_SHADER_WARMUP=1`; restart required. Normal play
+records derived pipeline recipes under `shadercache/warmup-v1/` (never track
+them); `RSX_PSO_RECIPES=0` disables recipes. Preload prepares up to 4096 known
+pipelines before guest execution and retains them for normal lookups. New
+variants still compile later; this is not exhaustive shader discovery. Keep
+the shader cache enabled. Old caches learn recipes on the first new-build run.
+The old "Precompile shaders" option is now "Background shader compilation";
+its TOML key/behavior is unchanged. Verified: 333 known PSOs loaded in 344 ms,
+256+ memory hits en route to a working 1080p dealership; invalid recipe and
+truncated bytecode safely skipped. More startup time and RAM; leave opt-in.
+Checks: `scripts/test/shader_warmup.py`, `scripts/test/settings_test.ps1`,
+`scripts/test/debug_export.ps1`. Full London race comparison still needed.
+
+**Earlier test reports (Phase 87):** the user reports stutters and a recoverable
 black/frozen image during ordinary driving while physics continues, missing
 replay controls even after input, and a dark High Speed Ring tunnel. These are
 open. Five exports from process 35540 show both expensive early presents and

@@ -39,6 +39,15 @@ def summarise(path):
                                        ("shaders", "Shaders: "), ("present", "Total presents: "))}
         has_history = "hitches.txt" in archive.namelist()
         history = archive.read("hitches.txt").decode("utf-8", errors="replace") if has_history else ""
+        hitches = []
+        for entry in re.split(r"(?=^=== frame \d+ )", history, flags=re.M)[1:]:
+            head = re.search(r"=== frame (\d+) age_ms=([\d.]+) since_enable_ms=(\d+)", entry)
+            shaders = re.search(r"Shaders: busy=(\d+) pending=(\d+) compiled=(\d+) pipelines=(\d+)", entry)
+            fifo = re.search(r"fifo get io=([0-9A-Fa-f]+).*?park_ea=([0-9A-Fa-f]+) word=([0-9A-Fa-f]+)", entry)
+            if head:
+                hitches.append(dict(frame=int(head[1]), sample_age_ms=float(head[2]), since_enable_ms=int(head[3]),
+                    shaders=dict(zip(('busy', 'pending', 'compiled', 'pipelines'), map(int, shaders.groups()))) if shaders else None,
+                    fifo=dict(zip(('get_io', 'park_ea', 'word'), fifo.groups())) if fifo else None))
         return dict(file=str(path), **details, intervals=len(values),
                     median_ms=statistics.median(values) if values else None,
                     p95_ms=values[int((len(values) - 1) * .95)] if values else None,
@@ -46,7 +55,7 @@ def summarise(path):
                     over_100ms=sum(value > 100 for value in values),
                     worst=sorted(intervals, key=lambda row: row["interval_ms"], reverse=True)[:5],
                     hitch_history_available=has_history,
-                    automatic_hitches=len(re.findall(r"^=== frame \d+ ", history, re.M)))
+                    automatic_hitches=len(re.findall(r"^=== frame \d+ ", history, re.M)), hitches=hitches)
 
 
 def main():
@@ -74,10 +83,13 @@ def main():
             print("  " + row["shaders"])
             if row["hitch_history_available"]:
                 print(f'  Retained hitch snapshots: {row["automatic_hitches"]}')
+            for hitch in row['hitches']:
+                print(f'    Frame {hitch["frame"]}: sample age {hitch["sample_age_ms"]:.1f} ms, '
+                      f'shaders={hitch["shaders"]}, fifo={hitch["fifo"]}')
             for frame in row["worst"][:3]:
                 print(f'  {frame["age_s"]:.3f} s before snapshot: {frame["interval_ms"]:.2f} ms gap, '
                       f'FIFO {frame["fifo_ms"]:.2f}, present {frame["present_ms"]:.2f}, '
-                      f'other {frame["other_ms"]:.2f} ms')
+                      f'idle {frame.get("idle_wait_ms", 0):.2f}, other {frame["other_ms"]:.2f} ms')
         print("Each report covers a short window; paused previews and racing are not equivalent workloads.")
 
 

@@ -46,7 +46,20 @@ int main(int argc, char** argv) {
     assert(argc == 2);
     std::string mode = argv[1];
     s_fault = mode == "fault";
-    gt5p_settings_load(); gt5p_debug_init();
+    gt5p_settings_load();
+    if (mode == "warmup-settings") {
+        const bool file = std::string(getenv("TEST_WARMUP_FILE")) == "1";
+        const bool effective = std::string(getenv("TEST_WARMUP_EFFECTIVE")) == "1";
+        assert(gt5p_settings_file().shader_warmup == file);
+        assert(gt5p_settings().shader_warmup == effective);
+        if (gt5p_settings_enabled()) {
+            auto saved = gt5p_settings_file(); saved.shader_warmup = !file;
+            assert(gt5p_settings_store(saved));
+            assert(gt5p_settings_file().shader_warmup == !file);
+        }
+        return 0;
+    }
+    gt5p_debug_init();
     if (mode == "off") {
         assert(!gt5p_debug_enabled());
         gt5p_debug_enable(1); assert(!gt5p_debug_enabled());

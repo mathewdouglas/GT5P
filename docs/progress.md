@@ -9,6 +9,90 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 88 - London hitch evidence and startup pipeline preload (2026-10-19)
+
+The user reported London pauses and saved two exports from process 13712,
+source `27320247aa00`, 1080p/2x MSAA. They also requested an option to compile
+shaders before play. The reports overlap the same run and stall sequence;
+they are not two independent reproductions.
+
+### What the London reports establish
+
+The eight retained samples contain two different shapes. Four of the first
+five samples have shader busy=1 (two also pending=1); pipeline counts rise
+from 433 to 625. These establish compile activity during some early hitches,
+not that compilation alone accounts for every hitch.
+
+The last three samples have busy=0/pending=0 and the FIFO parked on an
+unfinished `FFFFFFFF` block, first at EA `29422590`, later `294231F0`.
+Render job groups 0 and 1 have no working or ready work. The frame history
+records 1018.840, 2019.982 and 1018.815 ms delivery gaps, with respectively
+1015.840, 2017.042 and 1005.310 ms in idle waiting. The measured FIFO work
+is only 2.543, 1.954 and 13.033 ms. No D3D device loss is recorded.
+This narrows these long pauses to waiting for command production; it does
+not identify the guest producer/scheduling fault or justify skipping the
+unfilled block. They remain open, independently of shader preload.
+
+Each report has 511 intervals; medians are 20.58/22.07 ms and p95s
+33.34/50.24 ms. These short windows can include paused screens; they are
+not a steady-race fps benchmark. Available system RAM is roughly 1.2 GiB
+of 16 GiB, but paging was not measured and is not a diagnosis.
+`scripts/diag/debug_reports.py` now lists shader and FIFO fields for each
+retained hitch and includes measured idle waiting in its worst-gap output.
+
+### Opt-in startup preparation
+
+F1 VIDEO **Preload known shaders**, default Off, persists as
+`video.shader_warmup` and maps to `RSX_SHADER_WARMUP=1`. It takes effect after
+restart. The existing **Precompile shaders** label is renamed **Background
+shader compilation**, preserving `video.shader_precompile` and
+`RSX_SHADER_ASYNC` behavior. The settings window has room for the help text
+and restart/close controls; the new row's restart badge is readable.
+
+Normal pipeline creation now records local derived VS/PS bytecode plus a
+pointer-free pipeline descriptor/input layout under `shadercache/warmup-v1/`.
+Existing native driver blobs cannot reconstruct that descriptor by themselves,
+so an old cache learns recipes during its first run of this build. Shared
+bytecode is stored once per content hash. `RSX_PSO_RECIPES=0` disables recipes;
+disabling the shader cache also disables preparation/recording. The native
+PSO hash and driver-cache fallback are unchanged.
+
+When enabled, the present owner prepares up to 4096 known recipes before
+the guest entry starts. The window title shows progress. Prepared PSOs remain
+in a bounded memory table and normal replay acquires references to them.
+Recipes validate version, exact size, checksum, pointer fields, layout and
+bytecode bounds/hash; invalid records are skipped. Native driver rejection
+still retries creation from the descriptor. Debug exports include preload
+state, counts and effective environment overrides. `RSX_PSO_TIMING=1` reports
+memory reuse. Default Off avoids retaining the extra PSOs for users who do
+not want the startup/RAM tradeoff.
+
+This is preparation of **known pipelines**, not exhaustive shader discovery.
+Unseen tracks/cars/effects/states can compile later. Discovering all variants
+would require a separate title-aware extraction/enumeration or coverage
+process; no complete database was derived here. A full London before/after
+driving comparison is still needed; no claim that this cures its long freeze.
+
+### Verification
+
+- Native build/link passed (`warmup88-build*.log`, ignored). One warmup-Off
+  learning boot hit the previously known unfilled-FIFO start stall before
+  reaching the dealer; subsequent warmup-On runs reached the dealer.
+- 55 recipes prepared in 47 ms. The next run prepared 333/333 in 344 ms,
+  no rejections, with at least 256 memory hits during normal boot/dealer
+  replay. A PrintWindow shot shows the 1080p Acura page, about 30 fps.
+- `scripts/test/shader_warmup.py` uses isolated copies of three real recipes:
+  3 loaded/0 rejected; with a malformed recipe and truncated bytecode,
+  2 loaded/2 rejected. Guest execution starts in both cases. The original
+  shadercache is never changed by these fault injections.
+- `scripts/test/debug_export.ps1`: six new setting checks (defaults, On,
+  environment precedence in both directions, invalid value, ignored settings)
+  plus all eleven exporter checks passed. Settings save round trips passed.
+- `scripts/test/settings_test.ps1`: keyboard selection saved the new option
+  On to a scratch TOML, displayed restart status/help, and closed normally.
+- Runtime cumulative patch refreshed and reverse-apply checked. No game
+  bytecode, recipes, reports or captures are tracked.
+
 ## Phase 87 - Race report triage, missing map and hitch snapshots (2026-10-19)
 
 The user supplied five F3 exports from one 1080p/2x-MSAA High Speed Ring run

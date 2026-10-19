@@ -44,7 +44,12 @@ try {
     Start-Sleep -Milliseconds 300; cap "vsync_off"
     key 0x26 2; key 0x27          # up to Resolution, right: 1080
     Start-Sleep -Milliseconds 300; cap "res_1080"
-    "--- file:"; Get-Content $toml | Select-String "^(resolution|msaa|vsync|shader_cache|sdl_controllers|keyboard|verbose_log) ="
+    key 0x28 6; key 0x27          # startup preload: off -> on (restart required)
+    Start-Sleep -Milliseconds 300; cap "warmup_on"
+    if (-not (Select-String -LiteralPath $toml -Pattern '^shader_warmup = true$' -Quiet)) {
+        throw 'Startup shader preload setting was not saved'
+    }
+    "--- file:"; Get-Content $toml | Select-String "^(resolution|msaa|vsync|shader_cache|shader_warmup|sdl_controllers|keyboard|verbose_log) ="
     key 0x1B                      # Esc: close
     Start-Sleep -Milliseconds 500; cap "closed"
 } finally {

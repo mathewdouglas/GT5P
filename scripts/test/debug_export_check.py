@@ -6,6 +6,27 @@ import sys
 import zipfile
 
 exe, root = map(Path, sys.argv[1:])
+for case, value, override, disabled, file_value, effective in (
+    ('default', '', None, False, False, False),
+    ('on', 'true', None, False, True, True),
+    ('override_off', 'true', '0', False, True, False),
+    ('override_on', 'false', '1', False, False, True),
+    ('invalid', '"yes"', None, False, False, False),
+    ('no_settings', 'true', '1', True, False, False),
+):
+    folder = root / ('warmup_' + case); folder.mkdir()
+    settings = folder / 'settings.toml'
+    settings.write_text('[video]\n' + ('shader_warmup = ' + value + '\n' if value else ''))
+    env = os.environ.copy()
+    for key in ('RSX_SHADER_WARMUP', 'GT5P_NO_SETTINGS'): env.pop(key, None)
+    env.update(GT5P_SETTINGS=str(settings), TEST_WARMUP_FILE=str(int(file_value)), TEST_WARMUP_EFFECTIVE=str(int(effective)))
+    if override is not None: env['RSX_SHADER_WARMUP'] = override
+    if disabled: env['GT5P_NO_SETTINGS'] = '1'
+    subprocess.run([str(exe), 'warmup-settings'], cwd=folder, env=env, timeout=10, check=True)
+    if not disabled:
+        assert ('shader_warmup = ' + str(not file_value).lower()) in settings.read_text()
+    print('warmup_' + case + ': passed')
+
 for case in ("missing", "off", "force_on", "kill", "no_settings", "enabled", "hitch_off", "epoch", "fault", "hung", "failure"):
     folder = root / case
     folder.mkdir()

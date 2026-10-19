@@ -98,13 +98,20 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.shader_indicator ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_indicator = v != 0; },
           [](int v) { gt5p_shader_indicator_enable(v); } },
-        { L"VIDEO", L"Precompile shaders",
+        { L"VIDEO", L"Background shader compilation",
           L"Build new shaders on background threads, all at once, instead of stopping the "
           L"picture to build them one by one. A new screen shows at once, its last details a "
           L"moment later. Needs the shader cache.",
           "RSX_SHADER_ASYNC", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_precompile ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_precompile = v != 0; }, nullptr },
+        { L"VIDEO", L"Preload known shaders",
+          L"Prepare pipelines recorded by previous runs before starting the game. The first "
+          L"run learns them; unseen tracks, cars or effects can still compile later. Needs "
+          L"the shader cache. Adds startup time and uses more memory.",
+          "RSX_SHADER_WARMUP", kOnOff,
+          [](const Gt5pSettings& s) { return s.shader_warmup ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.shader_warmup = v != 0; }, nullptr },
         { L"INPUT", L"PlayStation / other controllers",
           L"Read DualSense, DualShock, Switch and other controllers through SDL2.dll. Xbox "
           L"controllers work either way.",
@@ -159,7 +166,7 @@ const std::vector<Item>& items()
 /* Two columns, VIDEO on the left and the other sections on the right; the
  * "Restart now" and "Close" rows span both underneath. Fits 1280 x 720. */
 const int kColW = 520, kGap = 16, kMargin = 18;
-const int kW = 2 * kMargin + 2 * kColW + kGap, kH = 560;
+const int kW = 2 * kMargin + 2 * kColW + kGap, kH = 584;
 const int kTop = 70, kRowH = 30, kSectionH = 26, kValOff = 360;   /* value area, from a column's left */
 
 int column_of(const wchar_t* section) { return wcscmp(section, L"VIDEO") ? 1 : 0; }

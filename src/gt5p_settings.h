@@ -25,6 +25,7 @@ struct Gt5pSettings {
     bool vsync        = true;   /* wait for the monitor's vblank when presenting */
     bool shader_cache = true;   /* keep compiled shaders in shadercache/ between runs */
     bool shader_indicator = true;   /* "Compiling shaders" over the game while it is busy */
+    bool shader_warmup = false;     /* prepare previously recorded pipelines before guest execution */
     bool shader_precompile = true;  /* compile new shaders on background threads, all at once */
 
     /* [input] */

@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-19, Phase 87): playable from the menus into a
+**Disc build status (2026-10-19, Phase 88): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -97,6 +97,18 @@ to eight state samples taken during hitches over 250 ms (`hitches.txt`), so a
 report after recovery can include the stall itself. A blocked renderer may
 prevent the screenshot; the rest of the report can still save. The intermittent
 High Speed Ring grid-preview corruption remains under investigation.
+
+To prepare previously seen shaders before playing, enable **F1 Settings →
+VIDEO → Preload known shaders**, then restart. It defaults Off.
+This build first learns pipeline records during normal play; later launches
+prepare up to 4,096 recorded pipelines before guest execution, with progress
+in the window title. Keep Shader cache enabled. New tracks, cars and effects
+can still compile later: this does not discover every possible shader in the
+game. Startup takes longer and retains extra pipeline objects in memory.
+The existing asynchronous option is now named **Background shader compilation**.
+The London exports also show separate 1–2-second waits for guest command
+production with no shader compile work active; startup preload does not fix
+that unresolved stall.
 
 Experimental Windows Vulkan support is assessed in
 [docs/plan-vulkan.md](docs/plan-vulkan.md). The runtime has a Linux Vulkan

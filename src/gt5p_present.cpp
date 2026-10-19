@@ -609,6 +609,9 @@ extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_
 extern "C" volatile double g_rsx_gpu_ms_last, g_rsx_gpu_ms_sum, g_rsx_gpu_ms_max;
 extern "C" volatile long g_rsx_gpu_n;
 
+extern "C" void rsx_d3d12_backend_prewarm(void);
+static HANDLE s_startup_ready;
+
 static DWORD WINAPI present_thread(LPVOID)
 {
     fprintf(stderr, "[hostthread] present hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
@@ -642,6 +645,12 @@ static DWORD WINAPI present_thread(LPVOID)
 /* PS3_TIMELINE also gets each present (P) and FIFO walk (R), with its length. */
 #define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_;     if (g_tl_on && (&acc == &p_pres || &acc == &p_fifo)) ps3_tl_rec(&acc == &p_pres ? 'P' : 'R', 0, (uint32_t)(d_ * 1e6)); } while (0)
     if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); gt5p_start_shader_indicator(); }
+    if (s_startup_ready) {
+        if (rsx_ok && !s_rsx_live) rsx_d3d12_backend_prewarm();
+        else fprintf(stderr, "[shader-warmup] skipped: standard windowed D3D12 backend required\n");
+        SetEvent(s_startup_ready);
+    }
+
 
     /* GT5P_PRESENT_SLEEP=<ms>: the outer cadence, 1 by default (4 until
      * Phase 59). The FIFO is only walked once per pass, so the sleep is time
@@ -732,6 +741,20 @@ extern "C" void gt5p_start_present_thread(void)
         printf("[GT5P] GT5P_NO_PRESENT: headless, no present thread\n");
         return;
     }
-    CreateThread(NULL, 4u * 1024 * 1024, present_thread, NULL, 0, NULL);
+    const char* warm = getenv("RSX_SHADER_WARMUP");
+    if (warm && !strcmp(warm, "1")) {
+        s_startup_ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!s_startup_ready) fprintf(stderr, "[shader-warmup] startup barrier unavailable; skipping preload\n");
+    }
+    HANDLE thread = CreateThread(NULL, 4u * 1024 * 1024, present_thread, NULL, 0, NULL);
+    if (!thread) {
+        if (s_startup_ready) { CloseHandle(s_startup_ready); s_startup_ready = nullptr; }
+        fprintf(stderr, "[GT5P] could not start present thread\n"); return;
+    }
+    CloseHandle(thread);
+    if (s_startup_ready) {
+        WaitForSingleObject(s_startup_ready, INFINITE);
+        CloseHandle(s_startup_ready); s_startup_ready = nullptr;
+    }
     printf("[GT5P] present thread started (60 Hz vblank/flip ticker)\n");
 }
