@@ -99,6 +99,12 @@ has the evidence, newest phase first (Phase 87 is the latest).
 
 ### Open work, in the order the user left it
 
+**Xbox/keyboard prompt assessment:** [docs/plan-input-glyphs.md](docs/plan-input-glyphs.md)
+records current bindings and the proposed asset/input/settings work. No prompt
+atlas or font codepoint has been identified yet, and no glyph setting is enabled.
+Keyboard currently acts as a fallback only; automatic device switching also
+requires input arbitration while a controller stays connected.
+
 **Experimental Vulkan feasibility:** [docs/plan-vulkan.md](docs/plan-vulkan.md)
 assesses the existing Linux-only runtime backend, Windows integration, GT5P
 feature gaps and acceptance gates. This is a plan, not an enabled renderer.
