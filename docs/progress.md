@@ -9,6 +9,105 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 90 - Eiger report: accidental verbose logging and a separate render stall (2026-10-19)
+
+The user's Eiger Nordwand report (`40872`, source `24723b7a99f6`) is at
+1080p/2x MSAA with startup warmup enabled. It records persistent lag, chopping
+sound and a recoverable driving freeze. The 98% F3 entry is `spurs-jc`:
+96.88% in the export, 92.69-99.09% in the last retained hitch samples.
+
+### Evidence and the logging fix
+
+The report's stderr says 156325335 bytes captured in 425547 ms. Its retained
+tail is dominated by two per-job dispatch/completion lines and per-event
+wait tracing. `PS3_VERBOSE` is absent from the environment allowlist. These
+messages are gated by `ps3_log_verbose()`, whose runtime default is verbose
+when stderr is redirected. GT5P previously forced quiet only when stdout was
+a console. An IDE pipe, or starting with redirected output and enabling the
+debug exporter, therefore implicitly enabled costly tracing. That flag is
+cached separately in each runtime translation unit. This is an unintended
+launch-dependent cost; no evidence indicates offline shader preparation
+changed sound jobs.
+
+`main.cpp` now sets `PS3_VERBOSE=0` when unset, before debug capture or guest
+startup, for every output type. Explicit environment/settings values still
+win: F1 DEBUG Runtime log On or `PS3_VERBOSE=1` restores tracing. Auto's help
+and generated TOML comments now describe the quiet default. Debug exports
+keep normal diagnostic/milestone/error lines; enabling them does not require
+full runtime tracing. The report allowlist also includes the audio/chain
+measurement switches so subsequent investigations can identify them.
+
+Paired real 1080p/2x-MSAA dealership runs, using the same route and warmed
+cache, compare explicit verbose with an unset override (redirected output):
+
+| Observation | Verbose | Corrected default |
+| --- | --- | --- |
+| stderr bytes at run end | 21758978 | 75367 |
+| Per-job dispatch lines | 171271 | 0 |
+| Audio underruns at run end | 25 | 0 |
+| Sound-chain job wall time, steady samples | 0.26-0.38 ms | 0.13-0.16 ms |
+| Chain busy time, steady samples | 78-98% | 39-50% |
+
+The quiet chain maintains roughly 3188 jobs/s once music starts, with
+non-silent blocks and no measured underruns. The verbose run falls as low as
+2562 jobs/s in one five-second interval and records 19.8% silent blocks.
+These are individual runs, not an Eiger frame-rate benchmark. The quiet
+run itself hit a rendering stall, so its lower whole-window FPS is not
+presented as a throughput comparison. Logs are ignored under
+`scratch/perf/eiger90-{verbose,default}/` and `scratch/pv/`.
+
+### The freeze remains open
+
+Eiger's last 511 delivery intervals have median 26.592 ms and p95 41.080 ms.
+The three largest gaps are 1024.055, 2025.595 and 1026.235 ms; idle waiting
+accounts for 1022.275, 2023.066 and 1011.808 ms. Shader busy/pending are zero
+through all eight retained samples. During the long sequence the FIFO parks
+on `FFFFFFFF` at EA `2940CF10`; render groups 0/1 have working=ready=0 and
+dispatch counts unchanged at 5013. Device loss is zero. This reproduces
+Phase 88's London shape and does not support blaming shader compilation.
+
+Available RAM is 687 MB of 16215 MB, but no page-fault/working-set history was
+captured: memory pressure remains an unmeasured possibility, not a diagnosis.
+
+A separate quiet High Speed Ring test stalled before DrivingOptionRoot,
+while still in the pit transition, at an unfinished FIFO block `29415A20`.
+That sample has one render lane still working/waiting for ring progress,
+which differs from the all-idle Eiger samples. Its audio continues with zero
+underruns and a 41-47% busy chain. The test was terminated after repeated
+zero-present intervals; it did not validate race performance. Do not skip
+unfilled commands or claim the logging fix resolves the rendering deadlock.
+The next investigation must follow command production/ring progress and guest
+scheduling in a quiet run, separately from sound-chain cost.
+
+### Race follow-up and limits
+
+A second quiet 1080p High Speed Ring run reached driving (final window shot
+has the racing HUD) and measured median 39.41 fps over 30 s. Unlike the
+showroom, its sound chain still reaches 95-98% busy at 0.32-0.33 ms/job,
+with five audio underruns accumulated before the end. It later returns to
+about 80% busy. This is evidence of a remaining race-mixer throughput problem,
+not a claim that quiet logging cures all audio chopping. A subsequent quiet
+45 s run measured 36.42 fps, with a ten-second external thread sampling window
+inside it; that intrusive window must not be used as a comparable benchmark.
+
+Boot-time SPURS sampling perturbed navigation and never reached the race;
+that run was terminated and excluded. The later external race sample took
+3972 contexts, including 460 inside sound image 7's filter loop at LS 01E8.
+A tentative subnormal-input explanation was checked against that loop's
+floating operands: none of those samples contained a nonzero subnormal in
+the checked scalar operand lanes. No FTZ/DAZ or floating-point semantic change
+was made. More detailed per-job/call costs are needed before optimizing the
+race mixer. Existing `SPURS_JC_STATS`, `AUDIO_RATE` and `AUDIO_GAPDBG` are the
+measurement switches; timing runs must keep `PS3_VERBOSE=0`.
+
+### Verification
+
+- Native build/link passed; the default-unset launch emitted no per-job lines,
+  while `PS3_VERBOSE=1` still emitted them.
+- Real debug-export integration: all 17 settings/export/opt-in/epoch/fault/
+  timeout/failure fixtures passed. Captures remain gated by F1 Debug export.
+- No runtime source or cumulative patch changes were required for this fix.
+
 ## Phase 89 - File-based fragment shader preparation (2026-10-19)
 
 The user asked to reduce compilation by discovering shader programs in the game

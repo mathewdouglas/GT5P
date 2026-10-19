@@ -235,7 +235,8 @@ std::string report(HWND game) {
         "GT5P_HITCH_CAPTURE", "GT5P_MAINSTACK", "GT5P_SAMPLE", "RSX_PRESENT_THREAD", "RSX_WINDOW_THREAD",
         "SPURS_READY_COH", "SPURS_JL_SPU3", "PS3_PPU_CORES", "PS3_PPU_PRIO_SCHED",
         "PS3_VERBOSE", "D3D12_DBG", "D3D12_IQ", "PAD_NO_SDL", "PAD_NO_KEYBOARD",
-        "PAD_HOTPLUG", "AUDIO_HOTPLUG", "SCREEN_AS_TEX"};
+        "PAD_HOTPLUG", "AUDIO_HOTPLUG", "AUDIO_RATE", "AUDIO_GAPDBG", "AUDIO_LEADDBG",
+        "SPURS_JC_STATS", "SPURS_JC_SAMPLE", "SPURS_JC_NORMAL_PRIO", "SPURS_JG_GAPDBG", "SCREEN_AS_TEX"};
     for (const char* name : names) if (const char* value = getenv(name)) fprintf(f, "%s=%s\n", name, value);
     fprintf(f, "\nCURRENT STATE\n"); guarded_snapshot(f);
     fprintf(f, "\nFRAME AND CPU HISTORY\n"); guarded_profiler(f);

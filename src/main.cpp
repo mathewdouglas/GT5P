@@ -708,12 +708,12 @@ int main(int argc, char* argv[])
      * not already set (see gt5p_settings.h). */
     gt5p_settings_load();
 
-    /* Someone started this by hand if its output is a console window rather
-     * than a file. Verbose logging serialises every guest thread on one lock
-     * (the sound stutters and the menu drops frames), so it is off for them
-     * unless asked for; the scripts redirect output and are not affected. */
+    /* Quiet for every launch path, including IDE output pipes and the debug
+     * export's log pipes. The runtime otherwise treats redirected stderr as
+     * an opt-in to per-job logging: thousands of writes/flushes per second
+     * contend with audio and rendering. PS3_VERBOSE=1 explicitly restores it. */
     const bool by_hand = GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) == FILE_TYPE_CHAR;
-    if (by_hand && !getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
+    if (!getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
 
     if (argc <= 1 && !locate_project_root()) {
         const char* msg =

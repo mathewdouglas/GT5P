@@ -147,7 +147,7 @@ const std::vector<Item>& items()
          * it cannot work, as SPU 3's own bookkeeping row is the render lists'
          * progress row (Phase 64). The file key stays, for testing. */
         { L"DEBUG", L"Runtime log",
-          L"The full runtime log. Auto keeps it off when the game is started by hand. On makes "
+          L"The full runtime log. Auto keeps it off for all launch methods. On makes "
           L"the game stutter.",
           "PS3_VERBOSE", { {-1, L"Auto"}, {0, L"Off"}, {1, L"On"} },
           [](const Gt5pSettings& s) { return s.verbose_log; },

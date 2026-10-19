@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 89)
+## Start here: state of play (2026-10-19, Phase 90)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 89 is the latest).
+has the evidence, newest phase first (Phase 90 is the latest).
 
 ### What works now
 
@@ -99,6 +99,21 @@ has the evidence, newest phase first (Phase 89 is the latest).
 
 ### Open work, in the order the user left it
 
+**Latest: Eiger lag, audio chopping and recurring freeze (Phase 90).** Report
+process 40872 reproduces London's 1/2/1-second command-production gaps with
+shader busy/pending both zero and no device loss. Its `spurs-jc` thread is
+97-99% of a core. This run also captured 156 MB of verbose per-job logging;
+`PS3_VERBOSE` was unset, so redirected IDE/export output enabled it implicitly.
+Startup now defaults `PS3_VERBOSE=0` for every output type; F1 Runtime log On
+or explicit `PS3_VERBOSE=1` still restores full tracing. Debug export remains
+useful with Runtime log Auto/Off. Paired 1080p dealer runs recorded 25 audio
+underruns with verbose logging versus zero with the corrected default, and
+chain job time fell from roughly 80-98% to 40-50%. These are not Eiger FPS
+measurements. A quiet 1080p High Speed Ring race still reaches 95-98% chain
+busy with five audio underruns, so race-mixer throughput is also open. Quiet
+runs still hit unfinished FIFO blocks: the rendering freeze is open and must
+not be described as fixed by logging/precompilation.
+
 **Xbox/keyboard prompt assessment:** [docs/plan-input-glyphs.md](docs/plan-input-glyphs.md)
 records current bindings and the proposed asset/input/settings work. No prompt
 atlas or font codepoint has been identified yet, and no glyph setting is enabled.
@@ -111,7 +126,7 @@ feature gaps and acceptance gates. This is a plan, not an enabled renderer.
 The next proposed task is isolated Windows bring-up; D3D12 remains the default.
 
 
-**Latest: offline game-shader preparation (Phase 89).**
+**Offline game-shader preparation (Phase 89).**
 `scripts/precompile_shaders.py` and [docs/shader-precompile.md](docs/shader-precompile.md)
 are the workflow. SHDS fragment tables were located in the ELF and unpacked
 MDL3 assets. The disc inventory has 14465 records / 8142 distinct raw payloads

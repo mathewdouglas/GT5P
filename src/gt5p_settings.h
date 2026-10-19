@@ -41,7 +41,7 @@ struct Gt5pSettings {
     bool fifth_spu_lane = false;    /* let the render lists use SPU 3 too (experimental) */
 
     /* [debug] */
-    int verbose_log = -1;       /* -1 auto (quiet when started by hand), 0 off, 1 on */
+    int verbose_log = -1;       /* -1 auto (quiet), 0 off, 1 on */
     bool debug_export = false;  /* opt in to bounded recent logs and F3 reports */
 };
 

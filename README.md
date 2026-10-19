@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-19, Phase 89): playable from the menus into a
+**Disc build status (2026-10-19, Phase 90): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -83,6 +83,9 @@ its appearance is unchanged. The missing 1080p race-map outline is also fixed:
 MAIN texture uploads no longer sample overlapping LOCAL render targets
 (`RSX_RT_LOCATION=0` restores the old lookup). Driving freezes, missing replay
 controls and the reported dark tunnel remain under investigation.
+Runtime log Auto now stays quiet for IDE/redirected launches too, removing
+per-job logging that overloaded the sound job chain. Debug reports still work
+with this setting; Runtime log On explicitly enables expensive tracing.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 
