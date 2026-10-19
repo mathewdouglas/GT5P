@@ -21411,10 +21411,10 @@ index 9e58833..563c39b 100644
      return 0;
  }
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..4437852 100644
+index 4f82063..aac688d 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
-@@ -35,6 +35,87 @@ extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
+@@ -35,6 +35,100 @@ extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
  volatile unsigned g_spurs_pm_polls = 0;   /* selectWorkload calls this run */
  volatile unsigned g_spurs_pm_exited = 0;  /* set when exitToKernel was taken */
  volatile unsigned g_wws_batch_gets = 0;   /* loadCommands (LS 0xC00) fetch count, spu_dma.h */
@@ -21422,6 +21422,19 @@ index 4f82063..4437852 100644
 +
 +/* Every lane's persistent policy-module context, by workload and SPU. */
 +static spu_context* g_pm_ctx_tab[16][6];
++
++static void spurs_pm_set_arg(spu_context* ctx, uint64_t wkl_data)
++{
++    /* The WWS entry splits its u64 argument into a profiling-buffer pointer
++     * (high word) and the job-list pointer (low word). Duplicating the latter
++     * into both words makes profiling DMA target the live queue header. */
++    static int arg64 = -1;
++    if (arg64 < 0) { const char* e = getenv("SPURS_PM_ARG64"); arg64 = !(e && *e == '0'); }
++    ctx->gpr[4]._u32[0] = arg64 ? (uint32_t)(wkl_data >> 32) : (uint32_t)wkl_data;
++    ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;
++    ctx->gpr[4]._u32[2] = (uint32_t)(wkl_data >> 32);
++    ctx->gpr[4]._u32[3] = (uint32_t)(wkl_data >> 32);
++}
 +
 +/* Ring-allocation trace (diagnostic). A temporary hook in a lifted render
 + * job calls spurs_ring_trace at its ring-space check with the window it
@@ -21502,7 +21515,7 @@ index 4f82063..4437852 100644
  
  int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                            const uint8_t* pm_host, uint32_t pm_size,
-@@ -57,7 +138,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -57,7 +151,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * once; re-entries keep LS and only refresh the entry registers and the
       * (possibly game-updated) kernel-context fields. */
      enum { SPURS_PM_MAX_WKL = 16 };
@@ -21511,7 +21524,31 @@ index 4f82063..4437852 100644
      if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
      spu_context* ctx = s_pm_ctx[wid][spu_num];
      int first = 0;
-@@ -219,7 +300,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -149,22 +243,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+     ctx->gpr[0]._u32[0] = SPURS_PM_EXIT_TO_KERNEL_LS;  /* return-to-kernel link */
+     ctx->gpr[1]._u32[0] = 0x3FFB0;                     /* stack (PM reloads its own) */
+     ctx->gpr[3]._u32[0] = 0x100;                       /* context */
+-    /* r4 layout is LO-WORD-IN-PREFERRED, not a big-endian u64: verified
+-     * against the authentic wwsjob PM bytes (entry 0x2BF0 `stqa r4,0x14E0`,
+-     * attach 0x2720 `brz r4`/`wrch MFC_EAL, r4` -- it treats r4's PREFERRED
+-     * WORD as the 32-bit queue EA, and `shlqbyi r4,4`'s next word as the aux
+-     * half). Passing {hi,lo} put 0 in the preferred slot, so the queue attach
+-     * early-returned on every run: tickets got claimed via the shifted copy
+-     * but the job-list header never DMA'd in, and the PM wedged forever in
+-     * its staged-job wait (LBP's post-intro loading freeze). */
+-    /* ...and the CLAIM path reads the EA from the shlqbyi(r4,4) copy (LS
+-     * 0x13F0, via func_3038 -> 2418), i.e. r4's SECOND word. Both word 0
+-     * (attach) and word 1 (claim) must carry the 32-bit EA; the hi half
+-     * rides in words 2-3. */
+-    ctx->gpr[4]._u32[0] = (uint32_t)wkl_data;          /* attach reads word0  */
+-    ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;          /* claim reads word1   */
+-    ctx->gpr[4]._u32[2] = (uint32_t)(wkl_data >> 32);
+-    ctx->gpr[4]._u32[3] = (uint32_t)(wkl_data >> 32);
++    spurs_pm_set_arg(ctx, wkl_data);
+     ctx->gpr[5]._u32[0] = 0;                           /* poll status */
+ 
+     g_spurs_pm_polls  = 0;
+@@ -219,7 +298,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static volatile unsigned long long s_flow_arm_ms;
      extern unsigned long long ps3_ms_now(void);
      if (tracing) {
@@ -21521,10 +21558,22 @@ index 4f82063..4437852 100644
          s_flow_arm_ms = ps3_ms_now();
          { static int _a = 0; if (_a++ < 8) {
              fprintf(stderr, "[pm-flow] ARM wid=%u spu=%u (watch=0x%08X)\n",
-@@ -265,7 +347,38 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -265,18 +345,49 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
+-    const int pm_halted = spu_run_with_halt(entry, ctx);
+-    /* A lane's run should only end through exitToKernel. Anything else strands
+-     * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
+-    if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
+-        extern unsigned spu_recent_pcs(uint32_t*, unsigned);
+-        uint32_t r[32]; unsigned n = spu_recent_pcs(r, 32);
+-        static volatile long s_pe; if (__atomic_add_fetch(&s_pe, 1, __ATOMIC_RELAXED) <= 64) {
+-            fprintf(stderr, "[pm-end] lane %u ctx=%p halted=%d status=0x%X pc=0x%05X lr=0x%05X r3=0x%08X depth=%u recent:",
+-                    spu_num, (void*)ctx, pm_halted, ctx->status, (uint32_t)ctx->pc & SPU_LS_MASK,
+-                    ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[3]._u32[0], ctx->host_depth);
+-            for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
+-            fprintf(stderr, "\n"); fflush(stderr); } }
 +    /* SPURS_PM_ENDLOG=<wid>: every run of that workload's module, per virtual
 +     * SPU: how long it ran, where it ended and how many DMAs it issued. */
 +    static int s_endlog = -2;
@@ -21533,7 +21582,7 @@ index 4f82063..4437852 100644
 +    extern unsigned long long __stdcall GetTickCount64(void);
 +    unsigned el_putllc = g_spu_putllc_count;
 +    unsigned long long el_t0 = (s_endlog == (int)wid) ? GetTickCount64() : 0;
-     const int pm_halted = spu_run_with_halt(entry, ctx);
++    const int pm_halted = spu_run_with_halt(entry, ctx);
 +    if (s_endlog == (int)wid)
 +        fprintf(stderr, "[pm-run] wid=%u spu=%u first=%d %llu ms end pc=0x%05X r3=0x%08X halted=%d putllc=%u ready=%u%c",
 +                wid, spu_num, first, GetTickCount64() - el_t0, (uint32_t)ctx->pc & SPU_LS_MASK,
@@ -21557,10 +21606,21 @@ index 4f82063..4437852 100644
 +        fprintf(stderr, "%s%c", line, 10);
 +        (void)rp; (void)rn;
 +    }
-     /* A lane's run should only end through exitToKernel. Anything else strands
-      * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
-     if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-@@ -439,9 +552,25 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
++    /* A lane's run should only end through exitToKernel. Anything else strands
++     * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
++    if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
++        extern unsigned spu_recent_pcs(uint32_t*, unsigned);
++        uint32_t r[32]; unsigned n = spu_recent_pcs(r, 32);
++        static volatile long s_pe; if (__atomic_add_fetch(&s_pe, 1, __ATOMIC_RELAXED) <= 64) {
++            fprintf(stderr, "[pm-end] lane %u ctx=%p halted=%d status=0x%X pc=0x%05X lr=0x%05X r3=0x%08X depth=%u recent:",
++                    spu_num, (void*)ctx, pm_halted, ctx->status, (uint32_t)ctx->pc & SPU_LS_MASK,
++                    ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[3]._u32[0], ctx->host_depth);
++            for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
++            fprintf(stderr, "\n"); fflush(stderr); } }
+ 
+     if (s_claimlog) {
+         unsigned claims = g_spu_putllc_sync_hit - claim_before;
+@@ -439,9 +550,25 @@ static DWORD WINAPI spurs_pm_flow_watchdog(LPVOID p)
      (void)p;
      extern uint32_t g_pm_flow_buf[]; extern volatile unsigned g_pm_flow_n;
      extern void* volatile g_pm_flow_ctx;

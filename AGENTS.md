@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 91)
+## Start here: state of play (2026-10-20, Phase 92)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 91 is the latest).
+has the evidence, newest phase first (Phase 92 is the latest).
 
 ### What works now
 
@@ -99,11 +99,32 @@ has the evidence, newest phase first (Phase 91 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: loading freezes and core placement (Phase 91).** An inline graphics
+**Latest: captured render-queue corruption fixed (Phase 92).** The runtime
+duplicated the workload pointer into both halves of SPU r4, accidentally
+enabling WWS profiling against the live job queue. Lane 4's final profiling
+write clipped the first two job pointers from `2A...` to `0A...`; those jobs
+then left unfilled FIFO blocks. A retained pause capture identifies the exact
+missing block, descriptor, profiling writeback address and matching payload.
+Passing the actual argument high/low words disables profiling when its high
+word is zero, preserving the queue. `SPURS_PM_ARG64=0` restores the defect.
+`scripts/test/spurs_arg.py` reproduces both progress-row/first-job overwrites
+and clipped pointer bits with the real lifted routines and synthetic memory;
+corrected/default modes and a separate valid profiling buffer pass.
+Corrected 1080p/2x HSR reached ResultRoot after the driven two-lap race,
+with no 350-ms stall snapshot in 240 seconds of sampling. The user reports
+that it ran much better. A default-path Daytona run completed 180 seconds
+without the ring deadlock, with one brief caught-up-FIFO gap; the car ended
+stopped off-track, so its 60-FPS median is not a driving benchmark.
+Earlier Phase 64's "bookkeeping" interpretation
+was incomplete: those writes are optional profiling with a bad pointer.
+Read Phase 92 before revisiting ring-size/shared-ring theories. Race audio
+still saturates its sound worker and records underruns; stable 60 FPS is open.
+
+**Loading freezes and core placement before Phase 92 (Phase 91).** An inline graphics
 callback could signal before syscall 107 queued its waiter. It now pumps after
 queuing/releasing the mutex (`PS3_COND_DEFER_GCM=0` restores old ordering);
 `scripts/test/cond_callback.py` reproduces the old defect and passes the fix.
-Live loading freezes and the one/two/one-second driving pauses still occur.
+At that phase loading freezes and one/two/one-second driving pauses still occurred.
 The user reports driving freezes later in lap two and just before lap one's
 finish line; a fixed lap-transition trigger is unproven. `snapshot91`'s final
 shot reaches lap 2 at 0'23.088 without a stall snapshot, but not a full finish.

@@ -9,6 +9,104 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 92 - Render job pointers overwritten by accidental profiling (2026-10-20)
+
+Phase 91's longer High Speed Ring check (`long91`, 1080p/2x MSAA) reproduced
+the recoverable one/two/one-second pause sequence after 5279 presents. A light
+external reader retained guest command buffers, job headers and each render
+lane's registers/LS at the first wait, before it recovered. This establishes a
+more specific defect than the earlier callback-ordering fix.
+
+### Captured corruption and its writer
+
+`scratch/pv/long91-memory/2/` has FIFO IO `0951FD50`, EA `2941FD50`, with
+`FFFFFFFF` still at its first word. Workload 0's progress row says head=204,
+completed=204, all lane slots `FFFF`: no producer remains to fill that block.
+The first two job descriptors instead point to `0A17DFF0` / `0A17E160`;
+the other 202 retain their `2A...` addresses. Job 0's real descriptor still
+exists at `2A17DFF0`, and its output field at `2A17E040` names exactly the
+unfilled `2941FD50` block.
+
+Workload 0, lane 4's policy LS has its profiling writeback EA `20022100` at
+LS `DE0`: the start of that live job list. Its 16-byte scratch payload at
+`14E0` matches the corrupted first two entries byte for byte. Capture 3 catches
+the same overwrite in workload 1 instead (`2002A180`, pointers `0A03DF70` /
+`0A03E0E0`); the PPU has rebuilt workload 0's entries by then. Subsequent
+captures alternate the same condition. These are not merely stale ring labels.
+
+### Why the profiling path was enabled
+
+The runtime duplicated the workload's low 32-bit pointer into both preferred
+words of SPU r4. The lifted WWS entry splits those two words: the high word
+goes to optional profiling setup, the low word to job claiming. For this
+title, the workload argument's high word is zero. Duplicating the queue pointer
+made the profiling setup interpret the job queue as a profiling buffer.
+
+That path's per-SPU writeback at `base + 0x40 + 16*spuNum` consequently overlaps
+queue 3's progress row for SPU 3, and the first two jobs for SPU 4. Its final
+count-vector calculation shifts stale payload words, clipping the top three
+address bits (`2A...` becomes `0A...`). The old Phase 64 interpretation of
+these as ordinary required bookkeeping writes was incomplete: they belong to
+the optional profiling path enabled by a bad argument. Masking out SPU 3
+prevented one overwrite but left the SPU 4 case.
+
+`spurs_policy.c` now passes the argument's actual high/low words. The optional
+profiling buffer stays disabled when its pointer is zero; the job queue stays
+in the low word. Nonzero profiling pointers still work.
+`SPURS_PM_ARG64=0` restores the duplicated low-word layout for comparison.
+
+`scripts/test/spurs_arg.py` extracts the local lifted profiling setup/final
+writeback routines into ignored test output and exercises them with synthetic
+memory plus the actual runtime argument helper. Legacy mode reproduces the
+progress/first-job overwrite and clipped pointer bits. Explicit corrected mode
+and the corrected default leave the queue intact while preserving the claim
+pointer; a separate valid profiling buffer still receives its own writes.
+All modes pass. No lifted code/data is tracked in this test.
+
+The first corrected live HSR memory check (`arg64-91-normal`, about 92 s after
+launch) has zero profiling state and valid `2A...` first-job pointers. Earlier
+Phases 63/73's shared-output-ring hypothesis is not needed to explain this
+captured missing-block case; other independent defects remain possible.
+
+### Corrected High Speed Ring check
+
+`arg64-91` used the corrected layout explicitly, at 1080p/2x MSAA. It reached
+QuickArcadeRoot at 65.125 s and ResultRoot at 281.938 s after a driven two-lap
+race; the final window shot is replay. Across 240 seconds of sampling there
+were no 350-ms stall snapshots and no triggered stationary-FIFO capture.
+Median title FPS was 46.66 (the script's upper-middle sample prints 47).
+The user independently reported that this race ran much better.
+
+For comparison, old-layout `long91` had two groups of three short-threshold
+snapshots in 360 seconds, the captured queue corruption, and median 42 FPS.
+These changing scenes and different sampling lengths are not a precise
+throughput A/B. This is evidence against the captured pause/deadlock cause,
+not a claim of stable 60 FPS or exhaustive loading reliability.
+
+Race sound remains a separate performance limit: the corrected run still has
+30 cumulative audio underruns by its end, with some sound-chain intervals
+near 96% busy. No mixer arithmetic or timing workaround is included.
+
+### Default-path and exporter checks
+
+`argdefault92` rebuilt with the correction enabled by default and did not set
+`SPURS_PM_ARG64`. Daytona loaded and presented through 180 seconds of sampling
+without the unfilled-block/ring-space deadlock or a FIFO resync. One 360-ms
+threshold snapshot occurred with get=put=`00010080`, no parked block and all
+render groups idle; the renderer was running guest UI code rather than waiting
+on condition 106. It recovered. This separate brief gap remains unclassified.
+The final window shot has the racing HUD, but the car is stopped off-track:
+its median 60 title FPS is not a sustained-driving throughput claim. Ten audio
+underruns accumulated; no device loss was logged.
+
+The build, all three argument-test modes, and all 17 debug-export fixtures pass.
+Export fixtures also assert that the new argument switch and Phase 91's
+syscall/stall diagnostic settings appear in report metadata. The cumulative
+runtime patch passes its reverse-apply check. No instrumentation backup remains
+in generated sources. Further work is race-mixer cost and ordinary frame-time
+variation; fresh freeze reports should first be checked against this fix's
+source revision before reopening the older ring hypotheses.
+
 ## Phase 91 - Loading freezes and race core placement (2026-10-20)
 
 Two loading freezes were retained during this investigation. Neither counts as

@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-20, Phase 91): playable from the menus into a
+**Disc build status (2026-10-20, Phase 92): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -81,15 +81,19 @@ upper units now use the correct pixel coordinates (`RSX_UNNORM_HI=0` to compare)
 The reported dark High Speed Ring water matches RPCS3 in the user's comparison;
 its appearance is unchanged. The missing 1080p race-map outline is also fixed:
 MAIN texture uploads no longer sample overlapping LOCAL render targets
-(`RSX_RT_LOCATION=0` restores the old lookup). Driving freezes, missing replay
-controls and the reported dark tunnel remain under investigation.
+(`RSX_RT_LOCATION=0` restores the old lookup). Missing replay controls and the
+reported dark tunnel remain under investigation.
 Runtime log Auto now stays quiet for IDE/redirected launches too, removing
 per-job logging that overloaded the sound job chain. Debug reports still work
 with this setting; Runtime log On explicitly enables expensive tracing.
 Guest PPU threads now default to separate physical cores (`PS3_PPU_CORES=3`
 restores previous placement), improving measured High Speed Ring throughput.
-A callback/condition lost-wake defect also has a regression-tested fix; loading
-freezes and longer driving pauses still occur and remain under investigation.
+A callback/condition lost-wake defect also has a regression-tested fix.
+The captured loading/driving freeze has a further fix: an incorrect SPU
+argument enabled profiling writes over the render-job queue. Correcting it
+preserves job pointers; a driven two-lap High Speed Ring run reached results
+without the long pause sequence (`SPURS_PM_ARG64=0` restores the defect).
+Race audio throughput and stable 60 fps remain open.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 

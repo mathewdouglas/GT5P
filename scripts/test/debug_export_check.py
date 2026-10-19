@@ -37,6 +37,9 @@ for case in ("missing", "off", "force_on", "kill", "no_settings", "enabled", "hi
     for key in ('GT5P_DEBUG_EXPORT', 'GT5P_NO_SETTINGS', 'GT5P_HITCH_CAPTURE'):
         env.pop(key, None)
     env['GT5P_SETTINGS'] = str(settings)
+    diagnostics = {'SPURS_PM_ARG64': '0', 'PS3_SC_CONTEXT': '1',
+                   'GT5P_STALL_MS': '350', 'GT5P_STALL_STACKS': '1'}
+    env.update(diagnostics)
     if case == 'force_on': env['GT5P_DEBUG_EXPORT'] = '1'
     if case == 'kill': env['GT5P_DEBUG_EXPORT'] = '0'
     if case == 'no_settings': env['GT5P_NO_SETTINGS'] = '1'
@@ -59,6 +62,8 @@ for case in ("missing", "off", "force_on", "kill", "no_settings", "enabled", "hi
             assert names == {'README.txt', 'report.txt', 'hitches.txt', 'stdout.log', 'stderr.log'}
             report = z.read('report.txt')
             assert b'test snapshot marker' in report and b'test frame marker' in report
+            for key, value in diagnostics.items():
+                assert (key + '=' + value).encode() in report
             history = z.read('hitches.txt')
             assert history.count(b'=== frame 300 ') == (1 if case == 'enabled' and n < 2 else 0)
             if case == 'epoch': assert b'=== frame' not in history
