@@ -99,6 +99,12 @@ has the evidence, newest phase first (Phase 87 is the latest).
 
 ### Open work, in the order the user left it
 
+**Experimental Vulkan feasibility:** [docs/plan-vulkan.md](docs/plan-vulkan.md)
+assesses the existing Linux-only runtime backend, Windows integration, GT5P
+feature gaps and acceptance gates. This is a plan, not an enabled renderer.
+The next proposed task is isolated Windows bring-up; D3D12 remains the default.
+
+
 **Latest test reports (Phase 87):** the user reports stutters and a recoverable
 black/frozen image during ordinary driving while physics continues, missing
 replay controls even after input, and a dark High Speed Ring tunnel. These are

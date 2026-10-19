@@ -98,6 +98,10 @@ report after recovery can include the stall itself. A blocked renderer may
 prevent the screenshot; the rest of the report can still save. The intermittent
 High Speed Ring grid-preview corruption remains under investigation.
 
+Experimental Windows Vulkan support is assessed in
+[docs/plan-vulkan.md](docs/plan-vulkan.md). The runtime has a Linux Vulkan
+backend to build on; Vulkan is not currently available as a GT5P renderer.
+
 | Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
 |---|---|---|
 | Decrypt | RAP-derived key, `ps3sce` | RPCS3 `--decrypt`, no RAP needed |
