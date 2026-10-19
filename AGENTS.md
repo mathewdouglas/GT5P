@@ -104,6 +104,9 @@ callback could signal before syscall 107 queued its waiter. It now pumps after
 queuing/releasing the mutex (`PS3_COND_DEFER_GCM=0` restores old ordering);
 `scripts/test/cond_callback.py` reproduces the old defect and passes the fix.
 Live loading freezes and the one/two/one-second driving pauses still occur.
+The user reports driving freezes later in lap two and just before lap one's
+finish line; a fixed lap-transition trigger is unproven. `snapshot91`'s final
+shot reaches lap 2 at 0'23.088 without a stall snapshot, but not a full finish.
 Follow output-ring head/label ownership and the parked command's producer next;
 never skip unfilled FIFO commands. Default PPU placement is now
 `PS3_PPU_CORES=topo`; `=3` restores the previous shared-core placement.

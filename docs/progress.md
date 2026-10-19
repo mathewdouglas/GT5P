@@ -15,6 +15,10 @@ Two loading freezes were retained during this investigation. Neither counts as
 a successful race benchmark. **Loading freezes and recoverable driving pauses
 remain open.** The changes below address a reproducible callback defect and
 core placement; neither establishes a complete freeze fix.
+The user reports driving freezes both later in lap two and just before the
+finish line at the end of lap one. A fixed lap transition is not established.
+Acceptance needs sustained driving: a route check which merely reaches the HUD
+does not validate this report.
 
 ### Callback ordering fix
 
@@ -36,6 +40,31 @@ old ordering. POSIX deadlines, like Windows deadlines, include callback time.
 condition implementation, reproduces the legacy lost wake, and checks the
 corrected wake, a genuine timeout and recursive ownership. Both modes pass.
 `scripts/test/debug_export.ps1` passes all 17 cases. The Windows game builds.
+
+The final uninstrumented build check (`finalrace91`) froze after reaching
+QuickArcadeRoot, at unfilled FIFO EA `299218D0`. Workload 0 had one lane still
+working at `0462C`, head `2A3BDC00`, label `03000480` still at ring start
+`2A2BDF80`; pending/user/pumping callbacks were 0/0/0. This is a terminal
+ring-space case with the callback fix enabled. The script correctly rejected
+its stale title FPS. No resync was logged before these snapshots.
+
+A ring-allocation-hook run (`ring91`) subsequently completed 90 seconds; its
+heavy label trace perturbs timing, so its FPS is not a comparable benchmark.
+The hook was restored and the affected object rebuilt. A lighter external
+capture (`snapshot91`) sampled only the current FIFO offset during normal
+operation and would save command/ring/LS buffers if it stopped for two seconds.
+That run completed 120 seconds of sampling, median 46 FPS, without a
+350-ms stall snapshot or capture trigger. Its final window shot confirms
+lap 2/2 at 0'23.088, with first lap 1'35.012 (fifth position, 220 km/h).
+It covers part of lap two, not a full two-lap finish. These are individual outcomes,
+not evidence that the intermittent deadlock or second-lap report is resolved.
+
+`stay91`, a 120-second comparison using existing `SPURS_LANE_STAY=1`, also
+completed without a stall trigger, median 43.31 FPS. One live memory snapshot
+was deliberately taken during it; its timing is diagnostic, not a clean paired
+benchmark. The final shot is lap 1 at 1'04.316. No improvement is established;
+the lane-stay experiment remains off. External buffer/LS captures stay ignored
+under `scratch/pv/`, alongside the one-off capture helper.
 
 ### Scheduling measurements
 
