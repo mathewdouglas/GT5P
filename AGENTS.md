@@ -244,6 +244,10 @@ The PPU-inline experiment was not adopted; the normal exe is rebuilt with
 - **`shadercache/`**: never move or delete it. For a cold test, use
   `RSX_SHADER_CACHE=<empty dir>`.
 - **`scratch/`** is gitignored working space:
+  - Cleanup on 2026-10-19 sent 14.38 GiB of redundant output/backups to the
+    Recycle Bin. Some historical capture paths no longer exist; see
+    [docs/scratch-maintenance.md](docs/scratch-maintenance.md). Reusable RPCS3
+    references, recent race evidence and shader caches were preserved.
   - `scratch/pv/` holds run logs and shots.
   - It also holds the old copies of the scripts now in `scripts/test` and
     `scripts/diag`. **The tracked copies are canonical.**
