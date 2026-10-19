@@ -19408,7 +19408,7 @@ index 9cc3670..5ca4416 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d0..b117f39 100644
+index 0b235d0..276c38b 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,11 +21,12 @@
@@ -19604,7 +19604,30 @@ index 0b235d0..b117f39 100644
          return 1;
  
      default:
-@@ -1410,8 +1444,22 @@ static void spu_report_cross_image(uint32_t addr, int want, int got)
+@@ -1371,6 +1405,22 @@ void spu_register_function(uint32_t addr, spu_fn fn)
+     s_hash_tail[h] = i + 1;
+ }
+ 
++/* Bootstrap only, before any worker or lookup memo can run. NULL validates
++ * an exact image/address without changing it; never insert a duplicate or
++ * replace an id-0 wildcard. Used for CPU-specific copies of lifted images. */
++int spu_override_function(int image_id, uint32_t addr, spu_lifted_fn fn)
++{
++    if (image_id <= 0) return 0;
++    for (uint32_t n = s_hash_head[spu_fn_hash(addr)]; n; n = s_hash_next[n - 1]) {
++        spu_reg_entry* e = &s_registry[n - 1];
++        if (e->addr == addr && e->image_id == image_id) {
++            if (fn) e->fn = fn;
++            return 1;
++        }
++    }
++    return 0;
++}
++
+ /* Report a CROSS-IMAGE match: the registry served a function some other image
+  * registered at this address, because one side's image_id was the 0 wildcard.
+  *
+@@ -1410,8 +1460,22 @@ static void spu_report_cross_image(uint32_t addr, int want, int got)
              "issue #59.\n", addr, want, got);
  }
  
@@ -19627,7 +19650,7 @@ index 0b235d0..b117f39 100644
      /* Match the context's active image; image_id 0 (context or entry) matches
       * any, for back-compat with single-image contexts. */
      for (uint32_t n = s_hash_head[spu_fn_hash(addr)]; n; n = s_hash_next[n - 1]) {
-@@ -1421,12 +1469,24 @@ spu_fn spu_lookup(uint32_t addr, int image_id)   /* exported: clang-built fast-p
+@@ -1421,12 +1485,24 @@ spu_fn spu_lookup(uint32_t addr, int image_id)   /* exported: clang-built fast-p
              /* One compare on the return path; the report itself is rare. */
              if (e->image_id != image_id)
                  spu_report_cross_image(addr, image_id, e->image_id);
@@ -19652,7 +19675,7 @@ index 0b235d0..b117f39 100644
  /* Which image registered a function at this LS address, or -1 if none did.
   *
   * Deliberately NOT spu_lookup(addr, 0): that call means "dispatch here in a
-@@ -1495,11 +1555,13 @@ void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_i
+@@ -1495,11 +1571,13 @@ void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_i
   * unrelated overlays using the same address. Registration precedes execution. */
  static struct { uint32_t entry; int image_id; } s_stack_reset[16];
  static unsigned s_stack_reset_count;
@@ -19666,7 +19689,7 @@ index 0b235d0..b117f39 100644
      }
  }
  
-@@ -1622,6 +1684,33 @@ static void spu_ovl_dump(spu_context* ctx, uint32_t ea, uint32_t lsa, const uint
+@@ -1622,6 +1700,33 @@ static void spu_ovl_dump(spu_context* ctx, uint32_t ea, uint32_t lsa, const uint
   * new bytes for [ea, ea+size). */
  void spu_lockguard_check(spu_context* ctx, uint32_t ea, const uint8_t* src, uint32_t size, const char* what)
  {
@@ -19700,7 +19723,7 @@ index 0b235d0..b117f39 100644
      static int64_t s_g = -2;
      if (s_g == -2) { const char* e = getenv("SPU_LOCKGUARD"); s_g = e ? (int64_t)strtoul(e, 0, 16) : -1; }
      if (s_g < 0 || !vm_base) return;
-@@ -1963,7 +2052,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -1963,7 +2068,10 @@ static int spu_smc_microstep(spu_context* ctx)
              pc += 4; continue;
          }
          if (op9 == 0x041 || op9 == 0x061) {                   /* stqa / lqa (abs) */
@@ -19712,7 +19735,7 @@ index 0b235d0..b117f39 100644
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
              pc += 4; continue;
-@@ -2027,15 +2119,28 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2027,15 +2135,28 @@ static int spu_smc_microstep(spu_context* ctx)
           * ordinary instruction the interpreter handles -- and with it the
           * decompression job it was running never completes. */
          { static int _n = 0;
@@ -19747,7 +19770,7 @@ index 0b235d0..b117f39 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2049,14 +2154,61 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2049,14 +2170,61 @@ void spu_indirect_branch(spu_context* ctx)
       * of a computed pointer (e.g. a packed handle like 0x7a028803) are ignored.
       * Without this, any indirect branch through such a value fails the lookup
       * and falls into branch-to-0. All lifted funcs live below SPU_LS_SIZE, so
@@ -19812,7 +19835,7 @@ index 0b235d0..b117f39 100644
            static int s_it = -1; if (s_it < 0) s_it = getenv("SPU_IRQTRACE") ? 1 : 0;
            static int _r = 0;
            if (s_it && _r++ < 200)
-@@ -2084,10 +2236,21 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2084,10 +2252,21 @@ void spu_indirect_branch(spu_context* ctx)
              /* cellSpursModulePoll: report "no contention — keep running".
               * (One virtual SPU per workload here, so nothing ever preempts.) */
              unsigned n = ++g_spurs_pm_polls;
@@ -19836,7 +19859,7 @@ index 0b235d0..b117f39 100644
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
          }
-@@ -2502,7 +2665,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2502,7 +2681,7 @@ void spu_indirect_branch(spu_context* ctx)
                    s_dumped = 1; } } }
      }
      if (fn) {
@@ -21194,6 +21217,31 @@ index 0fca7f5..ea1471e 100644
  static inline u128 spu_shlqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x1F; u128 r=spu_zero(); if(sh>=16) return r; for(int i=0;i<16;i++){ int s=i+sh; if(s<16) r._u8[SPU_W(i)]=a._u8[SPU_W(s)]; } return r; }
  static inline u128 spu_rotqbybi(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x0F; u128 r; for(int i=0;i<16;i++) r._u8[SPU_W(i)]=a._u8[SPU_W((i+sh)&0x0F)]; return r; }
  
+diff --git a/runtime/spu/spu_interp.h b/runtime/spu/spu_interp.h
+index 0266d46..f820529 100644
+--- a/runtime/spu/spu_interp.h
++++ b/runtime/spu/spu_interp.h
+@@ -28,13 +28,17 @@ typedef void (*spu_lifted_fn)(spu_context*);
+  * overrides this so computed branches reach compiled code. */
+ spu_lifted_fn spu_lifted_lookup(const spu_context* ctx, uint32_t lsa);
+ 
++/* Bootstrap only, before any SPU worker/lookup cache runs. NULL validates an
++ * exact image/address; non-NULL replaces it in place. No wildcard matching. */
++int spu_override_function(int image_id, uint32_t lsa, spu_lifted_fn fn);
++
+ /* Interpret from `start_lsa` until the SPU stops (`stop`/`stopd`/halt) or a
+  * host-fatal decode. Handles all control flow internally. Returns the stop
+  * code (0 if none). ctx->pc holds the address that stopped execution. */
+ uint32_t spu_interp_run(spu_context* ctx, uint32_t start_lsa);
+-/* As spu_interp_run, but also hands back at stop_lsa (0 = no such point): the
+- * return point of the drain the caller goes back to (spu_smc_microstep). */
+-uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa);
++/* As spu_interp_run, but also hands back at stop_lsa (0 = no such point): the
++ * return point of the drain the caller goes back to (spu_smc_microstep). */
++uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa);
+ 
+ /* The single dispatch point every computed branch routes through. If `target`
+  * is a registered lifted entry, runs it; otherwise interprets from `target`.
 diff --git a/runtime/spu/spu_raw.c b/runtime/spu/spu_raw.c
 index f6dc8be..0063da1 100644
 --- a/runtime/spu/spu_raw.c

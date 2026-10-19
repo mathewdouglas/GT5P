@@ -9,6 +9,83 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 93 - Native audio DSP images and sound-worker headroom (2026-10-20)
+
+The user's Task Manager captures show 56% total CPU in-game, with two logical
+processors saturated, versus 12% with the game closed. RAM falls from about
+15/15.8 GB to 12/15.8 GB on exit. Aggregate CPU therefore hides individual
+thread limits, and the race has little memory headroom. A live native-race
+memory reading had 1118 MB available and zero page reads/input pages per
+second at that instant. Neither this reading nor the screenshots establish
+that paging caused a particular freeze. No background applications were closed.
+
+### Profile and implementation
+
+A short external sound-worker sample (`audio93-profile`, intrusive sampling
+excluded from clean comparisons) found most hot addresses in image 4's
+`j307E5DC7` DSP loops, then image 7 `j65DD2F53` and image 9 `j8AAB90A4`.
+This explains why Phase 91's image-7-only experiment was insufficient.
+
+Windows/Clang BCUS builds now compile private copies of these three complete
+images with SSE4.1/FMA, letting the compiler optimise their surrounding DSP
+loops rather than making an out-of-line native call per arithmetic operation.
+The original portable images remain in the executable. Generated alias wrappers
+stay under `build/`; no lifted code or game data is added to tracked files.
+Only these three translation units receive `-mfma`.
+
+The baseline bootstrap checks CPUID FMA/AVX/OSXSAVE and OS XCR0 state before
+selecting native entries. Unsupported machines keep portable code.
+`GT5P_AUDIO_NATIVE=0` disables the selection and is included in debug-export
+metadata. No flush-to-zero/denormal controls, sound buffer sizes, rates or
+thread priorities change.
+
+The runtime's bootstrap-only `spu_override_function` validates/replaces an
+existing exact image/address in place. It neither appends a duplicate (which
+would leave first-match dispatch on the old function) nor matches an image-0
+wildcard. Each image's complete registry is validated before replacement;
+identity/missing-entry mismatches retain that portable image. Selection occurs
+immediately after normal registration and before guest/SPU execution or lookup
+memoisation. The workload entry changes with its function registry.
+
+### Checks and measurements
+
+Quiet High Speed Ring runs used 1080p/2x MSAA, `PS3_VERBOSE=0`,
+`SPURS_JC_STATS=1`, `AUDIO_RATE=1`, raw final-mix capture and 120 seconds of
+race sampling. Both final window shots show the racing HUD and a moving car.
+
+| Reading | Portable (`audio93-portable`) | Native (`audio93-native-quiet`) |
+| --- | ---: | ---: |
+| Sound thread, actual CPU over a 25-second window | 92.0% of a core | 78.2% of a core |
+| Median chain busy time, final 24 five-second intervals | 91.5% | 84.5% |
+| Median job wall time over those intervals | 0.29 ms | 0.265 ms |
+| Median jobs/second | 3186.7 | 3187.1 |
+| Cumulative audio underruns at end | 37 | 2 |
+| Median sampled title FPS | 44.665 | 40.35 |
+
+CPU uses non-suspending thread CPU-time deltas; chain busy/job time includes
+scheduling delays and is not CPU utilisation. These are changing driving
+scenes, not deterministic replay benchmarks: the final native car is near the
+tunnel and the portable car farther around the lap. The figures support lower
+sound-worker load/fewer underruns in these runs, **not an FPS increase**.
+An earlier native run (`audio93-native`) also had lower median job cost
+(0.26 ms), four final underruns and 39 FPS.
+
+Raw stereo 48-kHz float captures contain no NaNs/infinities, peak at the
+mixer's existing 1.0 clamp, and have RMS 0.155 portable / 0.167 quiet-native.
+They are different race audio, not a sample-identical comparison or a listening
+test. Native arithmetic is separately checked against scalar `fmaf` across
+six million lanes covering FMA/FMS/FNMS and tiny/subnormal inputs; bit patterns
+match (NaNs by classification), and MXCSR controls remain unchanged.
+
+`scripts/test/audio_native.py` tests CPU/OS fallbacks, default/disabled dispatch,
+image identity, whole-image preflight and the actual runtime registry helper.
+`scripts/test/audio_math.py` checks the actual arithmetic helpers. Both pass,
+as do all 17 debug-export fixtures, including export of the rollback switch.
+The build passes; a real boot with no audio override selects all three native
+images by default. The cumulative runtime patch passes reverse application.
+Remaining work includes other CPU-bound race threads, occasional underruns,
+frame pacing and memory pressure; stable 60 FPS is still open.
+
 ## Phase 92 - Render job pointers overwritten by accidental profiling (2026-10-20)
 
 Phase 91's longer High Speed Ring check (`long91`, 1080p/2x MSAA) reproduced

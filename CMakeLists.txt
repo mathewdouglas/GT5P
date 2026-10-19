@@ -130,6 +130,7 @@ endif()
 add_executable(gt5p
     src/main.cpp
     src/gt5p_present.cpp
+    src/gt5p_audio_native.cpp
     src/gt5p_settings.cpp
     src/gt5p_profview.cpp
     src/gt5p_debug_export.cpp
@@ -185,6 +186,44 @@ set_source_files_properties(src/gt5p_settings.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/external/tomlplusplus")
 
 target_link_libraries(gt5p PRIVATE ps3recomp_runtime)
+
+# Private CPU-specific copies of the profiled audio images. Derived aliases and
+# lifted source stay under build/; baseline SSE images remain available.
+if(GT5P_ENABLE_SPU AND GT5P_TARGET STREQUAL "BCUS98158" AND WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set(GT5P_AUDIO_NATIVE_AVAILABLE TRUE)
+    foreach(image IN ITEMS j307E5DC7 j65DD2F53 j8AAB90A4)
+        set(image_dir "${CMAKE_SOURCE_DIR}/generated/spu_lifted/${image}")
+        if(NOT EXISTS "${image_dir}/spu_recomp.c")
+            set(GT5P_AUDIO_NATIVE_AVAILABLE FALSE)
+        endif()
+    endforeach()
+    if(GT5P_AUDIO_NATIVE_AVAILABLE)
+        foreach(image IN ITEMS j307E5DC7 j65DD2F53 j8AAB90A4)
+            set(image_dir "${CMAKE_SOURCE_DIR}/generated/spu_lifted/${image}")
+            file(READ "${image_dir}/spu_recomp.h" image_header)
+            string(REGEX MATCHALL "gt5p_${image}_[A-Za-z0-9_]+" image_symbols "${image_header}")
+            list(REMOVE_DUPLICATES image_symbols)
+            set(wrapper "#define spu_register_function gt5p_audio_register_function\n")
+            foreach(sym IN LISTS image_symbols)
+                string(REPLACE "gt5p_j" "gt5p_audio_j" alternate "${sym}")
+                string(APPEND wrapper "#define ${sym} ${alternate}\n")
+            endforeach()
+            string(APPEND wrapper "#include \"${image_dir}/spu_recomp.c\"\n")
+            set(native_source "${CMAKE_BINARY_DIR}/audio_native_${image}.c")
+            file(CONFIGURE OUTPUT "${native_source}" CONTENT "${wrapper}" @ONLY)
+            target_sources(gt5p PRIVATE "${native_source}")
+            set_source_files_properties("${native_source}" PROPERTIES
+                COMPILE_OPTIONS "-msse4.1;-mfma"
+                INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu")
+            if(NOT GT5P_SPU_PROBES)
+                set_source_files_properties("${native_source}" PROPERTIES COMPILE_DEFINITIONS "SPU_LS_NO_PROBES")
+            endif()
+        endforeach()
+        set_source_files_properties(src/gt5p_audio_native.cpp PROPERTIES
+            COMPILE_DEFINITIONS "GT5P_HAVE_AUDIO_NATIVE=1"
+            INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu")
+    endif()
+endif()
 
 if(WIN32)
     target_link_libraries(gt5p PRIVATE

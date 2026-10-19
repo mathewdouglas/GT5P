@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-20, Phase 92): playable from the menus into a
+**Disc build status (2026-10-20, Phase 93): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -93,7 +93,11 @@ The captured loading/driving freeze has a further fix: an incorrect SPU
 argument enabled profiling writes over the render-job queue. Correcting it
 preserves job pointers; a driven two-lap High Speed Ring run reached results
 without the long pause sequence (`SPURS_PM_ARG64=0` restores the defect).
-Race audio throughput and stable 60 fps remain open.
+On supported CPUs, three busy audio images now use native fused arithmetic,
+reducing measured sound-worker CPU from 92% to 78% of a core in a High Speed
+Ring check. CPU/OS detection keeps the portable path on other machines;
+`GT5P_AUDIO_NATIVE=0` restores it for comparison. Remaining audio underruns
+and stable 60 fps remain open.
 The rest of this section and
 [AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
 

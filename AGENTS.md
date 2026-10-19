@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 92)
+## Start here: state of play (2026-10-20, Phase 93)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 92 is the latest).
+has the evidence, newest phase first (Phase 93 is the latest).
 
 ### What works now
 
@@ -99,6 +99,19 @@ has the evidence, newest phase first (Phase 92 is the latest).
 
 ### Open work, in the order the user left it
 
+**Latest: audio worker headroom (Phase 93).** Profiling identifies three hot
+audio images, especially image 4's DSP loops. Windows/Clang builds compile
+private FMA copies of images 4/7/9, selected before SPU workers start only when
+CPU and OS support AVX/FMA. `GT5P_AUDIO_NATIVE=0` restores the portable images.
+A quiet HSR race measured 78.2% of a core on the sound worker against 92.0%
+portable in 25-second CPU windows. See Phase 93 for underrun and FPS limits.
+Native arithmetic matches scalar `fmaf` across six million tested lanes;
+dispatch/registry tests cover unsupported hardware and exact image matching.
+No generated source is tracked; wrappers live under `build/`.
+The user's screenshots show about 12 GB RAM in use without the game, 15 GB
+with it on this 16 GB system. Memory pressure may contribute to pauses, but
+the screenshots do not prove paging caused a particular freeze.
+
 **Latest: captured render-queue corruption fixed (Phase 92).** The runtime
 duplicated the workload pointer into both halves of SPU r4, accidentally
 enabling WWS profiling against the live job queue. Lane 4's final profiling
@@ -117,8 +130,8 @@ without the ring deadlock, with one brief caught-up-FIFO gap; the car ended
 stopped off-track, so its 60-FPS median is not a driving benchmark.
 Earlier Phase 64's "bookkeeping" interpretation
 was incomplete: those writes are optional profiling with a bad pointer.
-Read Phase 92 before revisiting ring-size/shared-ring theories. Race audio
-still saturates its sound worker and records underruns; stable 60 FPS is open.
+Read Phase 92 before revisiting ring-size/shared-ring theories. Phase 93 reduces
+sound-worker load; remaining audio underruns and stable 60 FPS are open.
 
 **Loading freezes and core placement before Phase 92 (Phase 91).** An inline graphics
 callback could signal before syscall 107 queued its waiter. It now pumps after

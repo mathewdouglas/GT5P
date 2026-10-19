@@ -79,6 +79,7 @@ void vm_write16(uint64_t a, uint16_t v);
 uint64_t vm_read64(uint64_t a);
 extern const char* g_hle_inflight[64];    /* per-thread: HLE currently executing */
 void gt5p_spu_register_all(void);         /* generated: src/gen/spu_workloads.c */
+void gt5p_audio_select_native(void);      /* CPU-dispatched audio images */
 void gt5p_start_present_thread(void);     /* src/gt5p_present.cpp */
 }
 
@@ -888,6 +889,7 @@ int main(int argc, char* argv[])
      * build's jobs send their own (config/targets.json). */
     spurs_set_synth_job_done(GT5P_SPURS_SYNTH_DONE);
     gt5p_spu_register_all();   /* after the ELF load: fingerprints the loaded image */
+    gt5p_audio_select_native(); /* before any SPU job or lookup cache can run */
 
     uint32_t entry_addr = (uint32_t)elf.func_addr;
     auto entry_func = dispatch_lookup(entry_addr);
