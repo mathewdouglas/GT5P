@@ -9,6 +9,88 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 91 - Loading freezes and race core placement (2026-10-20)
+
+Two loading freezes were retained during this investigation. Neither counts as
+a successful race benchmark. **Loading freezes and recoverable driving pauses
+remain open.** The changes below address a reproducible callback defect and
+core placement; neither establishes a complete freeze fix.
+
+### Callback ordering fix
+
+`lv2_syscall` pumped graphics callbacks before every syscall. A guest which had
+checked its condition predicate under a mutex could therefore run its callback
+recursively just before `sys_cond_wait` queued the waiter. The callback could
+recursively acquire that mutex and signal before a waiter existed. The later
+wait then timed out. This is a demonstrated runtime defect; its contribution
+to the particular live freezes has not been isolated.
+
+Syscall 107 now defers that pump until the waiter is queued and all native
+recursion levels of the guest mutex are released. The condition lock is also
+released across callback code to preserve lock ordering. The queued record
+retains a callback's signal before the host thread parks. Genuine timeouts and
+recursive ownership restoration remain. `PS3_COND_DEFER_GCM=0` restores the
+old ordering. POSIX deadlines, like Windows deadlines, include callback time.
+
+`.venv/Scripts/python.exe scripts/test/cond_callback.py` builds the actual
+condition implementation, reproduces the legacy lost wake, and checks the
+corrected wake, a genuine timeout and recursive ownership. Both modes pass.
+`scripts/test/debug_export.ps1` passes all 17 cases. The Windows game builds.
+
+### Scheduling measurements
+
+GT5P now defaults to the existing `PS3_PPU_CORES=topo` path: separate physical
+cores for PPU threads, with their siblings excluded from pinned render lanes.
+`PS3_PPU_CORES=3` restores the old shared-core placement. Priority mapping stays
+enabled: disabling it did not remove pauses and increased audio underruns.
+
+Individual quiet, warmed 1080p/2x-MSAA High Speed Ring runs:
+
+| Run | Placement / callback ordering | Median title FPS | Audio underruns at end |
+| --- | --- | --- | --- |
+| `usertrace91` (90 s) | legacy / old | 33.50 | 17 |
+| `topo91` (60 s) | topology / old | 46.50 | 4 |
+| `defer91` (90 s) | topology / corrected | 54.07 | 6 |
+| `schedfree91` (90 s) | priority scheduler disabled / corrected | 57.00 | 15 |
+
+These sample a changing race scene, not repeated identical frames. They support
+the topology change, not a precise percentage gain or stable 60 fps. The final
+`defer91` window capture has the driving HUD. Modern dealership checks with the
+callback fix measured 29.95 FPS (legacy) and 29.75 FPS (topology), each over
+four five-second present-counter blocks, with no stall. Phase 44 used an older
+renderer; its placement result does not describe the current race workload.
+
+### Remaining freeze evidence and next measurement
+
+`cond91`, with old callback ordering, recorded genuine one-second condition-106
+timeouts; its mutex was free at timeout, ruling out delayed reacquisition in
+that sample. Its FIFO later contained an invalid command and stopped.
+`writes91` froze before QuickArcadeRoot, with unfinished FIFO EA `29415AB0`
+containing `FFFFFFFF` and an active render lane polling output-ring space.
+Its milestone-gated write watch never armed: do not use it as negative evidence.
+The callback pending/user/pumping state was 0/0/0. A separate 90-second user
+notification probe found no overwrites. Neither supports replacing the pending
+callback queue as a fix.
+
+Corrected `defer91` and `schedfree91` runs still captured the known one/two/one
+second pause sequence. Follow output-ring head/label ownership and the producer
+which stops filling the parked block next. Never skip unfinished commands or
+force completion labels. The evidence does not identify shader compilation as
+the cause of these pauses.
+
+Stall/export diagnostics now use correct one-based thread IDs and include
+syscall numbers. `PS3_SC_CONTEXT=1` retains the actual syscall context,
+including callback scratch contexts, restoring the outer entry on nested exit.
+`GT5P_STALL_MS=350` lowers the first dump threshold (normal default 3000 ms;
+second dump 8000 ms). `GT5P_STALL_STACKS=1` adds bounded PPC64 backchains.
+An armed `PPU_WWATCH_TAIL` is included in stall dumps. Reports record these
+switches and pending callback state. Reads are guarded but racy, not coherent
+machine snapshots.
+
+Two experiments were removed: bounded waits on repeated RSX-label DMA polls
+did not remove stalls; native-FMA mixer variants did not establish a reliable
+whole-race gain. No additional label wait or FMA/FTZ arithmetic change ships.
+
 ## Phase 90 - Eiger report: accidental verbose logging and a separate render stall (2026-10-19)
 
 The user's Eiger Nordwand report (`40872`, source `24723b7a99f6`) is at

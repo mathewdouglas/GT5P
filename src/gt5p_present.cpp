@@ -39,6 +39,10 @@
  * anything" is exactly the shape a wedged worker produces, and nothing else
  * shows which thread is where. */
 extern "C" const char* g_hle_inflight[];
+extern "C" uint32_t g_sc_inflight[];
+extern "C" ppu_context* g_sc_context[];
+extern "C" uint64_t vm_read64(uint64_t);
+extern "C" void ppu_ww_dump_tail(void);
 extern "C" unsigned ppu_thread_prof_pc(unsigned tid);
 
 static void dump_threads_now(int regs);
@@ -63,17 +67,19 @@ static void dump_threads_now(int regs)
     for (int i = 0; i < PPU_THREAD_MAX; i++) {
         const ppu_thread_info* t = &g_ppu_threads[i];
         if (t->state == PPU_THREAD_STATE_FREE) continue;
-        fprintf(stderr, "   tid=%d %-9s entry=0x%08llX prof_pc=0x%08X hle=%-26s name=\"%s\"\n",
-                i, kState[t->state & 3],
+        fprintf(stderr, "   tid=%d %-9s entry=0x%08llX prof_pc=0x%08X hle=%-26s syscall=%u name=\"%s\"\n",
+                i + 1, kState[t->state & 3],
                 (unsigned long long)t->entry_addr, ppu_thread_prof_pc((unsigned)i + 1),
-                (i < 64 && g_hle_inflight[i]) ? g_hle_inflight[i] : "-",
+                (i + 1 < 64 && g_hle_inflight[i + 1]) ? g_hle_inflight[i + 1] : "-",
+                i + 1 < 64 ? g_sc_inflight[i + 1] : 0,
                 t->name);
         /* GT5P_THREADS=2: also some registers and the 16 bytes at r9, read
          * racily from the live context. A thread spinning in a loop with no
          * calls shows what it is comparing (func_00BA97B0: r9 = the job
          * queue's row of per-SPU counters, r5 = the target). */
         if (t->state == PPU_THREAD_STATE_RUNNING && regs) {
-            const ppu_context* c = &t->ctx;
+          __try {
+            const ppu_context* c = i + 1 < 64 && g_sc_context[i + 1] ? g_sc_context[i + 1] : &t->ctx;
             uint32_t r9 = (uint32_t)c->gpr[9];
             fprintf(stderr, "      r3=%08X r4=%08X r5=%08X r9=%08X r31=%08X lr=%08X",
                     (uint32_t)c->gpr[3], (uint32_t)c->gpr[4], (uint32_t)c->gpr[5], r9,
@@ -84,6 +90,20 @@ static void dump_threads_now(int regs)
                 for (int k = 0; k < 16; k += 2) fprintf(stderr, " %02X%02X", m[k], m[k + 1]);
             }
             fprintf(stderr, "\n");
+            if (getenv("GT5P_STALL_STACKS")) {
+                __try {
+                    uint32_t sp = (uint32_t)c->gpr[1];
+                    fprintf(stderr, "      callers:");
+                    for (int k = 0; k < 12; ++k) {
+                        uint32_t back = (uint32_t)vm_read64(sp);
+                        if (back <= sp || back - sp > 0x100000u || back >= 0xF0000000u) break;
+                        fprintf(stderr, " %08X", (uint32_t)vm_read64(back + 16));
+                        sp = back;
+                    }
+                    fprintf(stderr, "\n");
+                } __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(stderr, " unavailable\n"); }
+            }
+          } __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(stderr, "      registers unavailable\n"); }
         }
     }
     /* GT5P_PEEK=<ea>[,<ea>...] (hex): with each dump, follow the pointer
@@ -534,14 +554,16 @@ extern "C" void gt5p_debug_snapshot(FILE* out)
         __try {
             const ppu_thread_info* t = &g_ppu_threads[i];
             if (t->state == PPU_THREAD_STATE_FREE) continue;
-            fprintf(out, "PPU tid=%d host=%lu state=%d name=%.63s entry=%08llX pc=%08X hle=%s\n",
+            fprintf(out, "PPU tid=%d host=%lu state=%d name=%.63s entry=%08llX pc=%08X hle=%s syscall=%u\n",
                 i + 1, t->host_tid, t->state, t->name, (unsigned long long)t->entry_addr,
-                ppu_thread_prof_pc(i + 1), i + 1 < 64 && g_hle_inflight[i + 1] ? g_hle_inflight[i + 1] : "-");
+                ppu_thread_prof_pc(i + 1), i + 1 < 64 && g_hle_inflight[i + 1] ? g_hle_inflight[i + 1] : "-",
+                i + 1 < 64 ? g_sc_inflight[i + 1] : 0);
             if (i == 0) { fprintf(out, "Main registers are listed above (not stored in the thread table)\n"); continue; }
-            fprintf(out, "lr=%08llX ctr=%08llX stack=%08X+%X\n",
-                (unsigned long long)t->ctx.lr, (unsigned long long)t->ctx.ctr, t->stack_addr, t->stack_size);
+            const ppu_context* c = i + 1 < 64 && g_sc_context[i + 1] ? g_sc_context[i + 1] : &t->ctx;
+            fprintf(out, "lr=%08llX ctr=%08llX stack=%08X+%X syscall_context=%d\n",
+                (unsigned long long)c->lr, (unsigned long long)c->ctr, t->stack_addr, t->stack_size, c != &t->ctx);
             for (int r = 0; r < 32; r++) fprintf(out, "r%d=%016llX%s", r,
-                (unsigned long long)t->ctx.gpr[r], r % 4 == 3 ? "\n" : " ");
+                (unsigned long long)c->gpr[r], r % 4 == 3 ? "\n" : " ");
         } __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "PPU slot %d unavailable\n", i); }
     }
     __try { cellGcm_debug_dump_to(out); }
@@ -561,8 +583,16 @@ static void stall_dump_check(unsigned presents_total)
     static unsigned last_n = 0; static ULONGLONG last_ms = 0; static int dumped = 0;
     const ULONGLONG now = GetTickCount64();
     if (presents_total != last_n) { last_n = presents_total; last_ms = now; dumped = 0; return; }
-    /* At 3 s, and again at 8 s: whether the lanes' step counts moved. */
-    if (dumped >= 2 || presents_total < 200 || now - last_ms < (dumped ? 8000u : 3000u)) return;
+    /* GT5P_STALL_MS lowers the first snapshot threshold for short recoverable
+     * stalls in diagnostic runs. Normal play keeps the 3/8-second thresholds. */
+    static unsigned threshold = 0;
+    if (!threshold) {
+        const char* e = getenv("GT5P_STALL_MS");
+        threshold = e ? (unsigned)strtoul(e, nullptr, 10) : 3000u;
+        if (threshold < 100u) threshold = 100u;
+        if (threshold > 8000u) threshold = 8000u;
+    }
+    if (dumped >= 2 || presents_total < 200 || now - last_ms < (dumped ? 8000u : threshold)) return;
     dumped++;
     /* GT5P_STALL_LOG (on; =0 off): a game started by hand has its stderr on
      * a console or nowhere, so a freeze someone reports came with no dump.
@@ -591,6 +621,7 @@ static void stall_dump_check(unsigned presents_total)
     cellSpurs_debug_dump();
     spurs_pm_debug_dump();
     cellGcm_debug_dump();
+    if (getenv("PPU_WWATCH_TAIL")) ppu_ww_dump_tail();
     fflush(stderr);
     if (saved >= 0) { _dup2(saved, 2); _close(saved); }
     if (fd >= 0) {

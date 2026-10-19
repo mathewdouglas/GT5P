@@ -736,6 +736,11 @@ int main(int argc, char* argv[])
      * did (docs/progress.md, Phase 22). Set PS3_PPU_PRIO_SCHED=0 to turn it
      * off. Must be set before the runtime creates its first thread. */
     if (!getenv("PS3_PPU_PRIO_SCHED")) _putenv_s("PS3_PPU_PRIO_SCHED", "2");
+    /* The current race workload benefits from separate physical PPU cores;
+     * the older shared-SMT placement bottlenecks command production. The
+     * runtime's topology path also keeps render lanes off both sibling CPUs.
+     * PS3_PPU_CORES=3 restores the previous placement (Phase 91). */
+    if (!getenv("PS3_PPU_CORES")) _putenv_s("PS3_PPU_CORES", "topo");
 
     /* Run a SPURS workload only while its ready count is nonzero, on as many
      * virtual SPUs as the count asks for. This title fills a job list first

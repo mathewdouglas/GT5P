@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 90)
+## Start here: state of play (2026-10-20, Phase 91)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 90 is the latest).
+has the evidence, newest phase first (Phase 91 is the latest).
 
 ### What works now
 
@@ -99,7 +99,22 @@ has the evidence, newest phase first (Phase 90 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: Eiger lag, audio chopping and recurring freeze (Phase 90).** Report
+**Latest: loading freezes and core placement (Phase 91).** An inline graphics
+callback could signal before syscall 107 queued its waiter. It now pumps after
+queuing/releasing the mutex (`PS3_COND_DEFER_GCM=0` restores old ordering);
+`scripts/test/cond_callback.py` reproduces the old defect and passes the fix.
+Live loading freezes and the one/two/one-second driving pauses still occur.
+Follow output-ring head/label ownership and the parked command's producer next;
+never skip unfilled FIFO commands. Default PPU placement is now
+`PS3_PPU_CORES=topo`; `=3` restores the previous shared-core placement.
+Individual 1080p HSR medians: 33.50 FPS legacy, 46.50 topology, 54.07 topology
+plus callback fix; these sample changing scenes, not a precise A/B gain.
+Modern dealership checks remain about 30 FPS either way. Priority mapping stays
+enabled. Diagnostics: `GT5P_STALL_MS=350`, `GT5P_STALL_STACKS=1`,
+`PS3_SC_CONTEXT=1`, `PS3_COND_TRACE_ID=106`. Read Phase 91 before repeating
+experiments; failed FMA/label-wait experiments were removed.
+
+**Eiger lag, audio chopping and recurring freeze (Phase 90).** Report
 process 40872 reproduces London's 1/2/1-second command-production gaps with
 shader busy/pending both zero and no device loss. Its `spurs-jc` thread is
 97-99% of a core. This run also captured 156 MB of verbose per-job logging;
