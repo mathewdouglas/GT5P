@@ -9,6 +9,129 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 89 - File-based fragment shader preparation (2026-10-19)
+
+The user asked to reduce compilation by discovering shader programs in the game
+files, beyond Phase 88's recorded native pipelines. A working offline extractor
+and compiler now exist; see [shader-precompile.md](shader-precompile.md).
+This phase does not claim every possible shader/pipeline is prepared, or that
+it fixes London's separate command-production stalls.
+
+### Discovery and format checks
+
+The disc volume and installed PDIPFS files are encrypted on disk. A local
+GTToolsSharp 5.3.4 executable unpacked the user's GT.VOL into ignored scratch
+space (3643 files). The unpacker is external; none of its source, keys or
+game-derived output is tracked. Its wrapper runs with an ignored working
+directory so default third-party output stays out of the repository root.
+
+Programs are embedded in `SHDS` bundles, including the executable and models.
+The `0x40` table contains fragment-program offsets/sizes; offsets are relative
+to SHDS for the standalone executable bundles and the enclosing MDL3 for
+models. The layout was researched using PDTools' public MIT readers and
+checked against the local data. The extractor validates table counts, ranges
+and aligned code lengths; the native reader independently validates bounds,
+termination and constant slots before calling the existing translator.
+
+The inventory has 1115 bundles, 14465 records and 8142 distinct raw payloads.
+The executable contributes 52 records / 51 payloads. A second scan of 1684
+initially excluded image/audio/database files found no additional supported
+records; the final tool scans all extracted files. Raw-payload count is not
+unique shader-instruction count: constants and padding produce duplicates.
+The ordinary source-key cache deduplicates identical generated HLSL.
+
+An optional live corpus (`RSX_FP_CATALOG`) enabled comparisons using the
+production structural hash: 55 of 58 observed programs matched library code.
+Three had no structural match in this inventory. No assumption is made that
+all generated/fixed-up shaders are present as final programs in SHDS.
+An initial corpus recorder checked files on every lookup and severely slowed
+its diagnostic run; a bounded in-memory seen table removed that I/O before
+shipping. Corpus recording defaults Off.
+
+### Compile the exact runtime source
+
+`scripts/precompile_shaders.py` accepts unpacked assets or a local GTToolsSharp
+executable. It indexes payloads under ignored `shadercache/library-v1/<scope>/`
+and launches this build with a startup barrier and
+`GT5P_SHADER_PRECOMPILE_ONLY=1`. Guest entry is not called. The present owner
+reuses `vp_get_fp_pso`'s text generator, with a bounded offline input override,
+and returns after DXBC compilation without creating guest PSOs or drawing.
+This avoids a second translator drifting from the live code.
+
+Normal play records up to 256 distinct source-state profiles per run in
+`shadercache/fp-profiles-v2/`. These contain output precision, cube/gamma/MSAA
+flags, mask-pass behavior, texel-addressed sampling, sampler mapping, upper
+gamma/shadow/coordinate state, and the program's texture usage mask. Recording
+is bypassed by `RSX_SHADER_PROFILES=0` and when the shader cache is disabled.
+
+The offline pass always prepares base 16/32-bit export variants, then applies
+up to 64 learned profiles with matching texture usage. `--profile-limit 256`
+uses more; `--all-profile-combinations` removes the texture-mask filter for a
+slower cross-product. At most 16384 program files are visited per pass. A
+bounded queue holds about 64 pending compiler jobs, and the normal async
+worker setting applies. `--compile-only` reuses/resumes an extracted catalog.
+All completed cache files are preserved on interruption.
+
+The first full base-only pass processed 8069 programs / 16138 attempts in
+112703 ms, made 10084 compiler calls and saved 10030 DXBC entries in an
+isolated cache. There were 73 rejected inputs and 54 compiler failures.
+That large base inventory barely helped the cold dealership route (175 new
+DXBC files versus 174 with base preparation in short initial samples). Do not
+equate inventory size with useful runtime coverage. Learned profiles produced
+real reuse: an executable-only 66-state predecessor prepared 1269 sources;
+a 55-program scene-matched catalog with 78 observed states prepared 1813 in
+24703 ms, with no failures. A later route's early compiler counter was 52
+where the corresponding unprepared route had reached 155; final route timing
+was not equivalent, so this is evidence of reuse, not a speed benchmark.
+
+Some raw payloads fail bounded decoding; others generate register references
+rejected as array out-of-bounds by D3DCompile. Authored fixups, unsupported
+cases or format interpretation remain to investigate. Failed inputs/variants
+are skipped and reported as partial coverage. Async compiler errors now log
+up to 16 source hashes/error messages (`RSX_SHADER_ERRORS=0` suppresses).
+
+### Large compiler-job table
+
+The full learned-state pass reached the async compiler's old 16384-key table.
+At about 3328 programs its queue fell from 64 pending jobs to zero and new
+work compiled synchronously. This was an additional compilation bottleneck.
+The table now defaults to 65536 active slots, bounded at 131072 allocated
+slots; `RSX_SHADER_JOB_SLOTS=16384` restores the old capacity. Requested sizes
+round down to powers of two, clamped to 1024..131072. The interrupted local
+pass was resumed against its completed cache entries after this fix.
+
+The resumed full learned-state pass completed: 8069 valid program payloads,
+57515 attempts, 179 input/variant rejections, 16807 additional compiler calls
+in 355656 ms. Its first cached portion reused completed entries (only 38
+compiler calls by program 2496, versus thousands on the original pass).
+The player's normal cache now contains about 35000 newly created DXBC files
+across the interrupted and resumed preparation. Its separate native preload
+also loaded 384 known pipelines with no rejections. These are local derived
+files; no shadercache data is committed.
+
+`scripts/test/shader_job_table.py` compiles the actual production helpers and
+checks full insertion/lookup/exhaustion at 65536, 16384, 1024 and 131072 slots;
+all passed. Synthetic SHDS range/model/deduplication tests passed. Native build
+and the existing six settings / eleven exporter integration checks passed.
+`scripts/test/shader_library_runtime.py` passed real offline compilation,
+zero compiler calls on the valid repeated pass, invalid/oversized input
+rejection, and matching-profile versus broad-profile behavior. Every pass
+exited before guest entry, using an isolated scratch cache.
+
+Final paired `winshot` routes used the same 1080p/2x-MSAA settings and 15 s
+settle after the dealer draw threshold. The empty cache generated 294 new
+successful DXBC entries. A separate cache seeded with only the 1813 offline
+scene-library entries generated 191 more (103 / 35% fewer). Neither received
+guest PSO recipes or prior gameplay DXBC entries. Both reached a rendered
+Acura showroom at about 30 fps; the shots have normal scene/car materials.
+This is one scene-matched comparison of new shader artifacts, not an FPS
+benchmark, a London driving result, or a measurement of all native PSO work.
+
+Remaining scope: vertex-program extraction, generated/modified programs,
+unsupported payloads, unobserved shader states and native driver pipelines.
+The last still uses Phase 88's separate learned-pipeline preload. No complete
+renderer-independent shader database has been derived.
+
 ## Phase 88 - London hitch evidence and startup pipeline preload (2026-10-19)
 
 The user reported London pauses and saved two exports from process 13712,

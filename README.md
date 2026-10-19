@@ -60,7 +60,7 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status (2026-10-19, Phase 88): playable from the menus into a
+**Disc build status (2026-10-19, Phase 89): playable from the menus into a
 race.** It boots to the main menu, the dealerships draw, and Arcade reaches
 Daytona's Race Mode page with an animated pit crew. A Single Race loads and
 drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
@@ -109,6 +109,12 @@ The existing asynchronous option is now named **Background shader compilation**.
 The London exports also show separate 1–2-second waits for guest command
 production with no shader compile work active; startup preload does not fix
 that unresolved stall.
+
+An [offline game-shader compiler](docs/shader-precompile.md) can now extract
+fragment programs from the executable and unpacked assets, then prepare their
+base and learned render-state variants before play. It uses the normal cache
+and compiler. This is broader than replaying known pipelines; vertex programs,
+generated programs, unsupported records and unseen states remain open.
 
 Experimental Windows Vulkan support is assessed in
 [docs/plan-vulkan.md](docs/plan-vulkan.md). The runtime has a Linux Vulkan

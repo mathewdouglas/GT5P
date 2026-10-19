@@ -967,6 +967,11 @@ int main(int argc, char* argv[])
 
     gt5p_start_present_thread();
 
+    if (const char* only = getenv("GT5P_SHADER_PRECOMPILE_ONLY"); only && !strcmp(only, "1")) {
+        printf("[shader-library] offline preparation returned; guest entry was not executed\n");
+        return 0;
+    }
+
     printf("[GT5P] Executing 0x%08X (TOC 0x%08X)...\n\n",
            entry_addr, (uint32_t)elf.toc);
     fflush(stdout);

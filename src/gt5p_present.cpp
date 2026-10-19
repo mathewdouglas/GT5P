@@ -610,6 +610,7 @@ extern "C" volatile double g_rsx_gpu_ms_last, g_rsx_gpu_ms_sum, g_rsx_gpu_ms_max
 extern "C" volatile long g_rsx_gpu_n;
 
 extern "C" void rsx_d3d12_backend_prewarm(void);
+extern "C" void rsx_d3d12_backend_prepare_library(void);
 static HANDLE s_startup_ready;
 
 static DWORD WINAPI present_thread(LPVOID)
@@ -646,7 +647,10 @@ static DWORD WINAPI present_thread(LPVOID)
 #define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_;     if (g_tl_on && (&acc == &p_pres || &acc == &p_fifo)) ps3_tl_rec(&acc == &p_pres ? 'P' : 'R', 0, (uint32_t)(d_ * 1e6)); } while (0)
     if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); gt5p_start_shader_indicator(); }
     if (s_startup_ready) {
-        if (rsx_ok && !s_rsx_live) rsx_d3d12_backend_prewarm();
+        if (rsx_ok && !s_rsx_live) {
+            rsx_d3d12_backend_prepare_library();
+            rsx_d3d12_backend_prewarm();
+        }
         else fprintf(stderr, "[shader-warmup] skipped: standard windowed D3D12 backend required\n");
         SetEvent(s_startup_ready);
     }

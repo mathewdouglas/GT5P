@@ -225,7 +225,10 @@ std::string report(HWND game) {
         s.sdl_controllers, s.keyboard, s.vblank_hz100, s.lane_cores, s.shader_warmup, gt5p_settings_path().c_str());
     /* Explicit allowlist: never dump the process environment, keys or game files. */
     static const char* names[] = {"GT5P_RESOLUTION", "RSX_MSAA", "RSX_SSAA", "RSX_PRESENT_SYNC",
-        "RSX_SHADER_CACHE", "RSX_SHADER_ASYNC", "RSX_SHADER_WARMUP", "RSX_PSO_RECIPES", "RSX_TEX_SLOTS", "RSX_DEPTH_KEEP", "RSX_TEX_EXPAND",
+        "RSX_SHADER_CACHE", "RSX_SHADER_ASYNC", "RSX_SHADER_WARMUP", "RSX_PSO_RECIPES",
+        "RSX_SHADER_LIBRARY", "RSX_SHADER_LIBRARY_LIMIT", "RSX_SHADER_LIBRARY_PROFILES", "RSX_SHADER_PROFILES",
+        "RSX_SHADER_LIBRARY_PROFILE_LIMIT", "RSX_SHADER_LIBRARY_BROAD", "RSX_SHADER_ERRORS", "RSX_SHADER_JOB_SLOTS",
+        "RSX_TEX_SLOTS", "RSX_DEPTH_KEEP", "RSX_TEX_EXPAND",
         "RSX_RT_LOCATION", "RSX_BC_MIP_LIMIT", "RSX_TEX_MIP_VIEWS", "RSX_UNNORM_HI", "RSX_MASK_STATE_RESET",
         "GT5P_VBLANK_HZ", "GT5P_PRESENT_SLEEP", "GT5P_STALL_DUMP", "GT5P_PROFVIEW",
         "GT5P_DEBUG_EXPORT", "SPURS_LANE_PIN", "SPURS_LANE_PRUNE", "SPURS_READY_GATE",

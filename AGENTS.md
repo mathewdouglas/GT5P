@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-19, Phase 88)
+## Start here: state of play (2026-10-19, Phase 89)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 88 is the latest).
+has the evidence, newest phase first (Phase 89 is the latest).
 
 ### What works now
 
@@ -111,7 +111,39 @@ feature gaps and acceptance gates. This is a plan, not an enabled renderer.
 The next proposed task is isolated Windows bring-up; D3D12 remains the default.
 
 
-**Latest: London pauses and startup preload (Phase 88).** Two exports from
+**Latest: offline game-shader preparation (Phase 89).**
+`scripts/precompile_shaders.py` and [docs/shader-precompile.md](docs/shader-precompile.md)
+are the workflow. SHDS fragment tables were located in the ELF and unpacked
+MDL3 assets. The disc inventory has 14465 records / 8142 distinct raw payloads
+in 1115 bundles; the executable alone has 52 records / 51 payloads. Do not
+track catalogs, bytecode, external unpacker source/keys or the source index.
+GTToolsSharp is an external local unpacker, not a source dependency.
+
+Preparation uses the real backend text generator/async compiler before guest
+entry and exits (`GT5P_SHADER_PRECOMPILE_ONLY=1`). Normal play learns source-state
+profiles in `shadercache/fp-profiles-v2/` (`RSX_SHADER_PROFILES=0` disables).
+The default offline pass applies up to 64 learned profiles with matching
+texture-unit usage; `--profile-limit 256` increases coverage and
+`--all-profile-combinations` is a slower broad cross-product. Base-only
+preparation barely helped the dealership test: do not claim that inventory
+size proves useful cache coverage. The same decoded programs with observed
+states avoided compiler work: a paired 1080p dealership route with an offline
+scene catalog produced 191 new DXBC entries versus 294 without it (35% fewer).
+Both used 15 s settle; this is not an FPS benchmark or London verification.
+The player's normal cache now has about 35000 newly prepared DXBC entries.
+Native PSOs,
+vertex programs, runtime-generated/fixed-up programs and unseen states remain
+open. Some raw payloads fail validation or have out-of-bounds register
+references; these are logged/skipped, not complete coverage.
+
+`RSX_FP_CATALOG` optionally records live raw programs for local matching. Its
+hot-path seen cache is essential; an initial filesystem lookup on every draw
+dropped throughput badly and was fixed before shipping. It defaults off.
+Tests: `scripts/test/shader_library.py` (synthetic) and
+`scripts/test/shader_library_runtime.py` (real compiler, isolated scratch cache).
+`--compile-only` resumes an existing catalog, preserving completed entries.
+
+**London pauses and startup preload (Phase 88).** Two exports from
 process 13712 (`27320247aa00`) overlap the same stall sequence. Early hitch
 samples often have shader compilation active; the later 1/2/1-second gaps
 have busy=0/pending=0, almost all time in idle waiting, and a FIFO parked on
