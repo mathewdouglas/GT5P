@@ -8,11 +8,13 @@
 # -PitIdleSeconds / -GridIdleSeconds delay the first Enter on those pages,
 # saving a window shot every ten seconds while waiting. Use -IntroShots to
 # inspect whether the subsequent race actually starts (a live title is not proof).
+# -Cpu also reports per-thread CPU over the sampling window, named from the log
+# (guest thread names, host thread names), in scratch/pv/<tag>.cpu.txt.
 [CmdletBinding(PositionalBinding = $false)]
 param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
       [string]$Tag = "race", [int]$Seconds = 60, [switch]$IntroShots, [switch]$LoadingShots,
       [ValidateRange(0,3600)][int]$PitIdleSeconds = 0,
-      [ValidateRange(0,3600)][int]$GridIdleSeconds = 0,
+      [ValidateRange(0,3600)][int]$GridIdleSeconds = 0, [switch]$Cpu,
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -107,6 +109,10 @@ try {
     Read-LogTail $profTail | Out-Null
     $sampleLog = ""
     $rows = @()
+    if ($Cpu) {
+        $cpuA = @{}; foreach ($t in (Get-Process -Id $p.Id).Threads) { $cpuA[$t.Id] = $t.TotalProcessorTime.TotalSeconds }
+        $cpuP = (Get-Process -Id $p.Id).TotalProcessorTime.TotalSeconds
+    }
     for ($s = 0; $s -lt $Seconds; $s++) {
         $p.Refresh()
         if ($p.HasExited) { throw "Game exited during the race" }
@@ -115,6 +121,29 @@ try {
             $rows += [pscustomobject]@{ Second = $s; Fps = [double]$Matches[1]; Draws = [int]$Matches[2] }
         }
         Start-Sleep -Seconds 1
+    }
+    if ($Cpu) {
+        $cpuB = @{}; foreach ($t in (Get-Process -Id $p.Id).Threads) { $cpuB[$t.Id] = $t.TotalProcessorTime.TotalSeconds }
+        $cpuTotal = (Get-Process -Id $p.Id).TotalProcessorTime.TotalSeconds - $cpuP
+        $hostNames = @{}; $guestNames = @{}
+        foreach ($f in "$dir/$Tag.out", "$dir/$Tag.err") {
+            foreach ($l in (Select-String -Path $f -Pattern 'hosttid=(\d+)|sys_ppu_thread_create tid=')) {
+                if ($l.Line -match '\[THREAD (\d+)\].*hosttid=(\d+)') { $hostNames[[int]$Matches[2]] = "g" + $Matches[1] }
+                elseif ($l.Line -match '\[(?:hostthread\]|pso-worker\]) ?(\S*) ?hosttid=(\d+)') { $hostNames[[int]$Matches[2]] = $(if ($Matches[1]) { $Matches[1] } else { "pso-worker" }) }
+                if ($l.Line -match 'sys_ppu_thread_create tid=(\d+) name="([^"]*)"') { $guestNames["g" + $Matches[1]] = $Matches[2] }
+            }
+        }
+        $cpuRows = foreach ($id in $cpuB.Keys) {
+            $d = $cpuB[$id] - [double]$cpuA[$id]
+            if ($d -gt 0.05 * $Seconds / 10) {
+                $n = $hostNames[$id]; if ($n -and $guestNames[$n]) { $n = "$n $($guestNames[$n])" }
+                [pscustomobject]@{ Host = $id; CpuS = [Math]::Round($d, 2); PctCore = [int](100 * $d / $Seconds); Thread = $n }
+            }
+        }
+        $cpuReport = "process CPU {0:N1} s over $Seconds s ({1:N2} cores)`n" -f $cpuTotal, ($cpuTotal / $Seconds)
+        $cpuReport += ($cpuRows | Sort-Object CpuS -Descending | Select-Object -First 24 | Format-Table -AutoSize | Out-String -Width 160)
+        $cpuReport | Set-Content "$dir/$Tag.cpu.txt"
+        $cpuReport
     }
     $rows | Export-Csv "$dir/$Tag.fps.csv" -NoTypeInformation
     Save-RaceWindowShot $p (Join-Path $dir "$Tag.win.png")

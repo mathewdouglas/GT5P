@@ -9,6 +9,86 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 101 - Toward 60 FPS in races: SPURS dispatch, guest spin waits, frame buffers in VRAM (2026-10-20)
+
+The user asked for a consistent, smooth 60 FPS in races. Not reached yet; this
+phase removes three measured limits. All tests are 1080p/2x HSR with preload on,
+`race.ps1` (scripted: the car stops against a wall, so 40-s FPS medians are
+noisy and not driving benchmarks). The timeline windows (`PS3_TIMELINE`, same
+start each run) are the comparable numbers.
+
+The user's latest F8 exports (process 1592) already showed the shape: in
+33-ms frames the renderer was idle 20-23 ms waiting for guest commands, so the
+guest side, not the renderer, set the pace there. `race.ps1 -Cpu` now reports
+per-thread CPU named from the log; `scripts/diag/rdoc_gputime.py` sums
+RenderDoc per-event GPU time by target and kind.
+
+### 1. One-SPU workloads ran on the SPURS kernel thread
+
+The kernel ran any workload that wanted one SPU inline, synchronously. GT5P's
+race workloads 5/6 (one SPU, 13-15 ms a pass) therefore held the kernel: the
+render list (wid0), kicked meanwhile, waited until wid5 ended (one frame:
+kicked at 4.35 ms, dispatched at 12.25 ms). Mean kick-to-dispatch was 1.4 ms
+for the render lists and 4.6 ms for wid2/3. One-SPU workloads now go to their
+lane pool like the others (`SPURS_SINGLE_ASYNC=0` restores inline). After:
+kick-to-dispatch about 0.01 ms for every workload; timeline mean frame 25.8 ->
+19.1 ms.
+
+### 2. Guest spin waits starved the main thread
+
+Every guest PPU thread runs on two host CPUs (`PS3_PPU_PRIO_SCHED=2`) with
+guest priority mapped to host priority. Main Thread is guest priority 2048,
+host IDLE. The render thread (PDI:1:200c3b40, 640, NORMAL) waits for the render
+list in `func_00BAB5C8`: a bare loop over `func_00BA8838`, which returns
+whether queue 3's minimum per-SPU progress reached a target, with no syscall.
+`func_00BA97B0` contains the same wait inline. On the console the SPUs finish
+in a few ms; here the spin held a guest CPU for most of a frame, and Main
+showed 10-11 ms per frame "blocked" in `sys_mutex_unlock` (syscall 104, which
+cannot block: it was waiting for CPU). Three guest cores
+(`PS3_PPU_PRIO_SCHED=3`) cured Main (0.74 ms/frame) but left lanes three spare
+cores and slowed them (wid0 9.7 ms, wid5 18 ms), so it was not adopted.
+
+`scripts/spin_patch.py` (new required post-lift step, after `setjmp_patch.py`;
+`--check`, `--restore`, idempotent) adds a call to `gt5p_spin_pause`
+(`src/gt5p_spin.cpp`) on the back edge of each loop listed under `spin_waits`
+in `config/targets.json`: 32 pauses, 32 yields, then 100-us high-resolution
+sleeps (`GT5P_SPIN_SLEEP_US`, `GT5P_SPIN_YIELD=0` pauses only). After: Main's
+unlock stall 4.05 -> 0.83 ms/frame, Main 77% of a core; wid0 passes 7.5 -> 5.1
+ms, wid5 12.2 -> 4.2 ms; the render worker g21 57% -> 28% CPU; process CPU
+4.96 -> 4.74 cores; timeline mean frame 19.1 -> 17.5 ms (about 57 FPS). In the
+introduction all four render lanes now share each pass (before, three were
+left out of most passes).
+
+### 3. Per-frame buffers were read from system memory
+
+GPU time in the rolling-start introduction was 12-15 ms per frame and did not
+change at 720p without MSAA (`fps60-720`) or with per-pixel MSAA shading
+(`RSX_SSAA=0`, `fps60-nossaa`). A RenderDoc capture of an introduction frame
+(`scratch/rdoc/fps60-intro_frame3139.rdc`, `fps60-intro.gputime.txt`) puts
+13.6 of 17.7 ms on the scene target: 1710 draws of about 400 indices, about
+8 us each, no expensive draw. The per-frame vertex, index and constant buffers
+and the cross-frame vertex cache were upload heaps (system memory), fetched
+across PCIe by every draw. This machine reports no GPU upload heap support
+(`RSX_GPU_UPLOAD=1`, opt-in, falls back), so the backend now keeps
+video-memory mirrors with the same layout (1240 MB) and fills exactly what each
+frame wrote with one copy-only command list submitted before the frame
+(`RSX_VRAM_FRAME=0` restores system memory). After: introduction GPU time
+5.8-10.4 ms per frame, later windows 3-5 ms (from about 6). Shots of the
+introduction, HSR race, Daytona race and dealership render correctly.
+
+### Where it stands
+
+- The introduction still presents exactly 150 frames per 5 s (30 FPS lock)
+  even at 5.8 ms GPU time. Its render list passes are 13.6-14.6 ms (four lanes
+  of 10-14 ms work), the FIFO walk is 16.9 ms per frame, and Main again shows
+  5.7 ms unlock + 2.4 ms mutex stalls. That is the next target.
+- Later race windows run 47-58 FPS. The audio job chain is the heaviest single
+  thread (about 80% of a core); then the render thread, FIFO walker, Main and
+  the replay thread. About 4.8 of 6 physical cores are busy.
+- The frame start still drains the GPU before replay (no CPU/GPU overlap).
+- `PS3_PPU_PRIO_SCHED=3` and `GT5P_VM_INLINE` remain unadopted; the latter was
+  measured when SPU dispatch set the pace and may deserve a new measurement.
+
 ## Phase 100 - Review fixes: bounded preparation, recipe pruning, staging memory, audio notifications (2026-10-20)
 
 A review of the commits since Phase 74 found problems in the shader-preparation

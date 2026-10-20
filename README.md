@@ -200,6 +200,7 @@ python -c "import json; f=json.load(open('analysis/functions.json')); json.dump(
 PYTHONPATH=$T python scripts/gen_hle_stubs.py input/EMAIN.ELF analysis/hle_stubs.json
 python $T/ppu_lifter.py input/EMAIN.ELF --functions analysis/functions_code.json --output generated --code-end 0xE3EC24 --header-name ppu_recomp.h --source-name ppu_recomp.c --hle-stubs analysis/hle_stubs.json
 python scripts/setjmp_patch.py
+python scripts/spin_patch.py
 python $T/gen_hle_nids.py --all --out src/gen/ppu_hle_nids.cpp
 scripts/build.cmd -DGT5P_TARGET=BCUS98158
 ```

@@ -99,7 +99,18 @@ has the evidence, newest phase first (Phase 99 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: review fixes (Phase 100).** Startup preload now prepares the learned
+**Latest: toward 60 FPS in races (Phase 101), not reached yet.** One-SPU SPURS
+workloads now run on lane threads instead of blocking the kernel
+(`SPURS_SINGLE_ASYNC=0`). Guest spin waits on SPU progress yield via a new
+required post-lift step, `scripts/spin_patch.py` (`GT5P_SPIN_YIELD=0`); they
+had starved Main Thread (host IDLE priority) on the two guest CPUs. Per-frame
+vertex/index/constant buffers are mirrored in video memory by a copy list each
+frame (`RSX_VRAM_FRAME=0`). Timeline frames 25.8 -> 17.5 ms in a race window;
+introduction GPU time 12-15 -> 6-10 ms. The introduction still locks to 30 FPS
+(render list passes ~14 ms, FIFO walk ~17 ms/frame). `race.ps1 -Cpu` and
+`scripts/diag/rdoc_gputime.py` are the new measurement tools. See Phase 101.
+
+**Review fixes (Phase 100).** Startup preload now prepares the learned
 menu set, then the race set, and stops; race loading cancels it
 (`RSX_SHADER_WARMUP_SCAN=1` restores the full directory scan). Draw-miss
 pipelines no longer stay in the resident set (`RSX_PSO_RETAIN_DEMAND=1`);
@@ -441,7 +452,8 @@ The PPU-inline experiment was not adopted; the normal exe is rebuilt with
 - **`generated/` is current.** It was lifted with the PPU lifter of
   Phase 69 and the SPU lifter of Phase 72, and `build/gt5p.exe` is built
   from it. A ps3recomp lifter change needs a re-lift:
-  - PPU: the README steps, then `scripts/setjmp_patch.py`;
+  - PPU: the README steps, then `scripts/setjmp_patch.py` and
+    `scripts/spin_patch.py` (both required; `--check` reports);
   - SPU: `.venv\Scripts\python scripts\lift_spu_jobs.py`, which takes
     about 20 s and rewrites `src/gen/spu_workloads_bcus98158.c` (diff it).
 
@@ -1220,6 +1232,7 @@ Run Python through the repo's virtual environment: `.venv\Scripts\python`.
 | `scripts/build.cmd` | Configure and build Release with clang-cl and Ninja |
 | `scripts/self_metainfo.py`, `scripts/decrypt_self.py` | SELF decryption helpers; need a `data/keys` file that is not in the repo |
 | `scripts/setjmp_patch.py` | Post-lift patch, required after every lift |
+| `scripts/spin_patch.py` | Post-lift patch, required after every lift: guest spin waits on SPU progress yield (`spin_waits` in `config/targets.json`) |
 | `scripts/lift_spu_jobs.py` | Lift the policy module, the captured job images and the job bodies; writes `src/gen/spu_workloads_bcus98158.c` |
 | `scripts/soak.sh`, `soak.py`, `boot.py` | Repeated or single headless boots with a summary |
 | `scripts/test/*.ps1` | Drive the game to a page and measure or shoot it (table under "Start here") |
