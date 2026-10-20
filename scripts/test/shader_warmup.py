@@ -36,6 +36,10 @@ for case in ('valid', 'damaged', 'background-valid', 'background-damaged'):
     if background:
         pipeline = struct.unpack('<QIIQQQII', recipes[0].read_bytes()[:48])[3]
         (records / 'menu-v1.txt').write_text(f'{pipeline:016x}\n')
+        # Background startup prepares the menu set, then the race set; the
+        # first race entry reuses the menu pipeline. No directory scan.
+        race = [struct.unpack('<QIIQQQII', r.read_bytes()[:48])[3] for r in recipes]
+        (records / 'race-v1.txt').write_text(''.join(f'{h:016x}\n' for h in race))
     if damaged:
         (records / 'pso_invalid.recipe').write_bytes(b'invalid recipe')
         next(records.glob('code_*.dxbc')).write_bytes(b'truncated bytecode')
@@ -60,9 +64,13 @@ for case in ('valid', 'damaged', 'background-valid', 'background-damaged'):
             else: raise AssertionError('Startup preload or guest execution timed out')
             loaded, rejected = map(int, re.search(r'finished: loaded=(\d+) rejected=(\d+)', log).groups())
             if not damaged: assert (loaded, rejected) == (4 if background else 3, 0), log[:4000]
-            else: assert loaded < (4 if background else 3) and rejected >= 2, log[:4000]
+            elif background:   # without a directory scan only the truncated bytecode is reached
+                assert loaded < 4 and rejected >= 1, log[:4000]
+                assert (records / 'pso_invalid.recipe').exists(), 'background startup scanned the directory'
+            else: assert loaded < 3 and rejected >= 2, log[:4000]
             if background:
                 assert 'queued background preparation' in log and 'menu priority learned' in log
+                assert 'recipes: 3 kept, 0 pruned' in log and 'race_ready=' in log, log[:4000]
             print(f'{case}: loaded={loaded}, rejected={rejected}; guest started')
         finally:
             if proc.poll() is None: proc.terminate()

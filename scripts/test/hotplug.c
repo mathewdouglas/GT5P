@@ -121,7 +121,7 @@ static void test_pad_worker(void)
 static IMMDevice* real_device;
 static IAudioClient* real_client;
 static IAudioRenderClient* real_render;
-static int no_device, fail_open, endpoint = 1, opens, fail_stage;
+static int no_device, fail_open, endpoint = 1, opens, fail_stage, default_calls;
 static HRESULT STDMETHODCALLTYPE test_activate(IMMDevice* self, REFIID iid, DWORD ctx,
                                                PROPVARIANT* params, void** out)
 {
@@ -147,6 +147,7 @@ static HRESULT STDMETHODCALLTYPE test_default(IMMDeviceEnumerator* self, EDataFl
                                               ERole role, IMMDevice** out)
 {
     (void)self; CHECK(flow == eRender && role == eConsole);
+    default_calls++;
     *out = no_device ? NULL : &test_device;
     return no_device ? E_NOTFOUND : S_OK;
 }
@@ -227,6 +228,19 @@ static void test_audio(void)
     for (int cycle = 0; cycle < 10; cycle++) {
         endpoint++; refresh_now(); check_audio_live();
     }
+    /* Notifications: no endpoint query while streaming until a change is
+     * reported; the reported change then switches outputs. */
+    s_wasapi_notify = 1; s_wasapi_change = 0;
+    before = default_calls;
+    for (int i = 0; i < 5; i++) { s_wasapi_next_check = 1; audio_backend_refresh(); }
+    CHECK(default_calls == before);
+    endpoint++; before = opens; int queries = default_calls;
+    s_audio_notify.lpVtbl->OnDefaultDeviceChanged(&s_audio_notify, eRender, eConsole, L"x");
+    s_wasapi_next_check = 1; audio_backend_refresh();
+    CHECK(default_calls == queries + 1 && opens == before + 1); check_audio_live();
+    s_audio_notify.lpVtbl->OnDefaultDeviceChanged(&s_audio_notify, eCapture, eConsole, L"x");
+    before = default_calls; s_wasapi_next_check = 1; audio_backend_refresh(); CHECK(default_calls == before);
+    s_wasapi_notify = 0;
     s_audio_hotplug = 0; before = opens; endpoint++;
     s_wasapi_next_check = 1; audio_backend_refresh(); CHECK(opens == before);
     audio_backend_shutdown();
@@ -240,7 +254,7 @@ static void test_audio(void)
         CHECK(cellAudioQuit() == CELL_OK);
         CHECK(!s_mix_thread && !s_wasapi_enumerator && !s_wasapi_client);
     }
-    puts("PASS: WASAPI endpoint changes, absent device, failed open, three stream errors, backoff and cleanup");
+    puts("PASS: WASAPI endpoint changes, notifications, absent device, failed open, three stream errors, backoff and cleanup");
 }
 
 int main(int argc, char** argv)

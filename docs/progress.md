@@ -9,6 +9,96 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 100 - Review fixes: bounded preparation, recipe pruning, staging memory, audio notifications (2026-10-20)
+
+A review of the commits since Phase 74 found problems in the shader-preparation
+work and two memory/latency costs. The user asked for those fixed and for the
+open rendering bugs (source ranges, depth ownership, tunnel, road streaks,
+rims) to be left alone; none of those changed.
+
+### Startup preparation crowded out the race set
+
+With **Preload known shaders** on, the Phase 99 background pass loaded the menu
+set and then every recipe on disk in directory (hash) order until the 4096
+resident cap was full. The user's cache held 6029 recipes, so the cap filled
+with an arbitrary subset; race loading then rejected race recipes that were not
+already resident, and the paused startup pass resumed during the race.
+Phase 98's clean result (1059 ready, 0 rejected) was measured with startup
+preload off, so the user's combination had not been re-tested.
+
+- Startup now prepares the learned menu set, then the learned race set, and
+  stops. `RSX_SHADER_WARMUP_SCAN=1` restores the directory scan as a last phase.
+- Race loading cancels an active startup pass instead of pausing it.
+- Demand (draw-miss) pipelines no longer enter the resident prepared set; the
+  renderer's own cache already holds them. Long sessions used to fill the set
+  with them too. `RSX_PSO_RETAIN_DEMAND=1` restores retention.
+- `RSX_PSO_RESIDENT_MAX` (64..4096, default 4096) lowers the resident cap.
+
+### Recipes were never pruned
+
+Recipes from older shader generators can never match again but were kept and
+counted. The worker now marks each recipe used once per run (refreshing the
+modified time of the recipe and its two bytecode files); reused bytecode is
+touched when a new recipe shares it. At worker start, recipes and bytecode not
+used within `RSX_PSO_RECIPE_KEEP_DAYS` (default 14) of the newest recipe are
+deleted. The window is measured from the newest recipe, so a break from
+playing deletes nothing. Both indexes are then compacted: entries without a
+recipe and duplicates go, the rest are ordered newest use first, capped at 4096.
+A damaged recipe, or one whose bytecode is gone, is deleted when read, so the
+next creation records it again (recording skips an existing recipe). `=0`
+disables pruning and use marks. On this cache nothing was old enough to prune
+(oldest recipe 2026-10-19); the index backup from before the first run is in
+`scratch/index-backup-20261020/`.
+
+### Texture staging kept a second copy of every texture
+
+Every texture slot kept its upload-heap buffer (system memory) for life. Phase
+76 doubled the slots to 1024 and Phase 78 made buffers hold mip chains. A slot's
+staging buffer is now freed at frame start (after the existing full GPU wait)
+once it has not uploaded for `RSX_TEX_UPLOAD_KEEP` frames (default 120);
+animated and streamed textures keep theirs while they change, and a later
+re-upload recreates it. `RSX_TEX_UPLOAD_KEEP=0` keeps every buffer. F8 reports
+live staging MiB, resident count/cap and recipe use marks.
+
+### Audio thread polled the default device
+
+Since Phase 77 the mixer thread asked Windows for the default endpoint every
+500 ms, a cross-process call on the pacing thread. It now registers an
+`IMMNotificationClient`; with a stream open it queries only after a reported
+default/state/add/remove change. With no stream (no device, failed open) it
+still retries every 500 ms, and it polls as before if registration fails.
+`AUDIO_HOTPLUG_POLL=1` restores polling. Underrun counts were not re-measured.
+
+### Smaller items
+
+- The SPURS argument comment now records the conflicting LittleBigPlanet note
+  the Phase 92 change deleted (the new layout is the hardware one).
+- AGENTS.md's ps3recomp file counts were stale (62 and 58; 63 now).
+- The review's "unused `by_hand`" was wrong: it still gates the missing-root
+  message box. Left unchanged.
+
+### Validation
+
+- `scripts/test/pso_async.py` (WARP): the five existing checks plus two new
+  ones, race loading cancelling an active startup pass, and maintenance pruning
+  a 20-day-unused recipe and bytecode, dropping dangling/duplicate index entries
+  and ordering newest-first. All seven pass.
+- `scripts/test/shader_warmup.py` (real exe, copied records): blocking 3/0 and
+  2/2; background 4/0 (menu, then race set with one reuse) and 3/1; the
+  background damaged case asserts the invalid recipe was never scanned.
+- `scripts/test/hotplug.ps1`: controller cases, plus WASAPI cases with new
+  notification checks (no endpoint query while streaming until a change; a
+  capture-side change is ignored). The real mixer thread registered without
+  falling back to polling. `debug_export.ps1` (all cases) and the F1 page pass.
+- 1080p/2x HSR races with preload on, private memory sampled every 2 s
+  (`scratch/pv/fix100-*`). Old behaviour restored by switches (`fix100-old`):
+  startup 36.7 s, 880 rejected over the cap; mean/peak private 3589/3907 MB.
+  New defaults repeated after the cache caught up (`fix100-new2`): startup
+  9.3 s, 0 rejected, race gate 2586 ready; mean/peak 3324/3541 MB. Both 51 FPS
+  medians. The first new run (`fix100-new`, 37 FPS) learned 665 new 1080p race
+  states mid-race, which the later runs then had prepared; those FPS medians
+  are not controlled benchmarks. The race shots render normally.
+
 ## Phase 99 - Prepare the cache alongside opening screens and movie (2026-10-20)
 
 The user reports a white window while startup shader preloading completes and

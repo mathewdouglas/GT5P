@@ -64,7 +64,8 @@ for case in ("missing", "off", "force_on", "kill", "no_settings", "enabled", "hi
         env.pop(key, None)
     env['GT5P_SETTINGS'] = str(settings)
     diagnostics = {'SPURS_PM_ARG64': '0', 'PS3_SC_CONTEXT': '1', 'GT5P_AUDIO_NATIVE': '0', 'RSX_FP_SOURCE_RANGE': '0', 'RSX_DEPTH_CLEAR_REUSE': '0', 'RSX_TEX3D': '0', 'RSX_PSO_HITCH_MS': '75', 'RSX_PSO_ASYNC': '1', 'RSX_SHADER_WARMUP_BACKGROUND': '1', 'RSX_RACE_PREWARM': '1', 'RSX_RACE_PREWARM_WAIT_MS': '2500',
-                   'GT5P_STALL_MS': '350', 'GT5P_STALL_STACKS': '1'}
+                   'GT5P_STALL_MS': '350', 'GT5P_STALL_STACKS': '1', 'RSX_TEX_UPLOAD_KEEP': '240',
+                   'RSX_PSO_RESIDENT_MAX': '2048', 'RSX_PSO_RECIPE_KEEP_DAYS': '21', 'AUDIO_HOTPLUG_POLL': '1'}
     env.update(diagnostics)
     if case == 'force_on': env['GT5P_DEBUG_EXPORT'] = '1'
     if case == 'kill': env['GT5P_DEBUG_EXPORT'] = '0'

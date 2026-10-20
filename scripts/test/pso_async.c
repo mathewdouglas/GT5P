@@ -54,6 +54,12 @@ static HRESULT create_guest_pso_cached(const D3D12_GRAPHICS_PIPELINE_STATE_DESC*
     }
     return result;
 }
+/* Demand jobs share the stub; the production one only differs in retention. */
+static HRESULT create_guest_pso_job(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd,ID3D12PipelineState** out){
+    return create_guest_pso_cached(pd,out);
+}
+static u32 pso_resident_max(void){return PSO_WARM_MAX;}
+static void pso_touch_file(const char* path){(void)path;}
 static int pso_warm_read_recipe(const char* path,PsoWarmRecipe* r){
     if(!strstr(path,"0000000000000222.recipe"))return 0;
     memset(r,0,sizeof *r);r->hash=0x222;r->vs_hash=1;r->ps_hash=2;
@@ -159,6 +165,46 @@ int main(int argc,char** argv){
     CHECK(trace[start_trace]==~0u && trace[start_trace+1]==123);
     CHECK(s_pso_warm_loaded>=2 && s_pso_warm_rejected==1 && g_rsx_shader_busy==0);
     puts("PASS: startup returns immediately; menu recipes lead; live draws preempt the remaining scan; damaged records are rejected");
+    /* Race loading cancels startup: its race-set phase never runs (its
+     * rejection count stays put) while the loading gate prepares the set. */
+    AcquireSRWLockExclusive(&warm_lock);if(warm)warm->lpVtbl->Release(warm);warm=NULL;ReleaseSRWLockExclusive(&warm_lock);
+    ResetEvent(allow_driver);u32 startup_rejected=s_pso_warm_rejected;LONG race_rejected=s_race_rejected;
+    start_trace=trace_count;began=GetTickCount64();pso_startup_begin();
+    while(trace_count==start_trace) {CHECK(GetTickCount64()-began<3000);Sleep(1);}
+    _putenv_s("RSX_RACE_PREWARM_WAIT_MS","5");pso_race_notify("PitSceneRoot.gpb");pso_race_notify("LoadingRoot.gpb");
+    SetEvent(allow_driver);
+    while(s_startup_active) {CHECK(GetTickCount64()-began<5000);Sleep(1);}
+    CHECK(WaitForSingleObject(s_race_ready,5000)==WAIT_OBJECT_0);
+    CHECK(s_pso_warm_rejected==startup_rejected && s_race_rejected==race_rejected+1);
+    puts("PASS: race loading cancels the startup pass; the loading gate prepares the race set");
+    /* Maintenance: a recipe unused for 20 days and its bytecode go; index
+     * entries without a recipe and duplicates go; newest use comes first. */
+    {
+        char m[1100],p[1200];snprintf(m,sizeof m,"%s/maint",folder);CreateDirectoryA(m,NULL);
+        FILETIME now;GetSystemTimeAsFileTime(&now);u64 t=(u64)now.dwHighDateTime<<32|now.dwLowDateTime;
+        const char* names[]={"pso_000000000000000a.recipe","pso_000000000000000b.recipe","pso_000000000000000d.recipe",
+                             "code_0000000000000001.dxbc","code_0000000000000002.dxbc"};
+        const u64 age_days[]={0,20,1,20,0};
+        for(int i=0;i<5;i++){
+            snprintf(p,sizeof p,"%s/%s",m,names[i]);f=fopen(p,"w");CHECK(f);fputs("x",f);fclose(f);
+            u64 v=t-age_days[i]*864000000000ull;FILETIME ft={(DWORD)v,(DWORD)(v>>32)};
+            HANDLE h=CreateFileA(p,FILE_WRITE_ATTRIBUTES,0,NULL,OPEN_EXISTING,0,NULL);CHECK(h!=INVALID_HANDLE_VALUE);
+            CHECK(SetFileTime(h,NULL,NULL,&ft));CloseHandle(h);
+        }
+        char race[1200],menu[1200];snprintf(race,sizeof race,"%s/race-v1.txt",m);snprintf(menu,sizeof menu,"%s/menu-v1.txt",m);
+        f=fopen(race,"w");CHECK(f);fputs("000000000000000b\n000000000000000d\n000000000000000a\n000000000000000a\n000000000000000c\n",f);fclose(f);
+        f=fopen(menu,"w");CHECK(f);fputs("000000000000000a\n",f);fclose(f);
+        pso_recipe_maintain(m,race,menu);
+        snprintf(p,sizeof p,"%s/%s",m,names[1]);CHECK(GetFileAttributesA(p)==INVALID_FILE_ATTRIBUTES);
+        snprintf(p,sizeof p,"%s/%s",m,names[3]);CHECK(GetFileAttributesA(p)==INVALID_FILE_ATTRIBUTES);
+        for(int i=0;i<5;i++) if(i!=1 && i!=3){snprintf(p,sizeof p,"%s/%s",m,names[i]);CHECK(GetFileAttributesA(p)!=INVALID_FILE_ATTRIBUTES);}
+        char text[256]={0};f=fopen(race,"r");CHECK(f);fread(text,1,sizeof text-1,f);fclose(f);
+        CHECK(!strcmp(text,"000000000000000a\n000000000000000d\n"));
+        memset(text,0,sizeof text);f=fopen(menu,"r");CHECK(f);fread(text,1,sizeof text-1,f);fclose(f);
+        CHECK(!strcmp(text,"000000000000000a\n"));
+        _putenv_s("RSX_RACE_PREWARM_WAIT_MS","30000");
+    }
+    puts("PASS: recipe maintenance prunes unused recipes/bytecode and compacts indexes newest-first");
     /* Saturation must never fall back to driver creation on the caller. */
     delay_ms=0;ResetEvent(allow_driver);
     for(u64 i=1000;i<1000+PSO_ASYNC_MAX+2;i++)CHECK(pso_queue_get(i,&template,&pso)==E_PENDING);

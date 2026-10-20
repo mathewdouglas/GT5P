@@ -99,7 +99,20 @@ has the evidence, newest phase first (Phase 99 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: background startup warmup (Phase 99).** With startup warmup and async
+**Latest: review fixes (Phase 100).** Startup preload now prepares the learned
+menu set, then the race set, and stops; race loading cancels it
+(`RSX_SHADER_WARMUP_SCAN=1` restores the full directory scan). Draw-miss
+pipelines no longer stay in the resident set (`RSX_PSO_RETAIN_DEMAND=1`);
+`RSX_PSO_RESIDENT_MAX` lowers the cap. Recipes unused for 14 days of play are
+pruned and both indexes compacted newest-first at worker start
+(`RSX_PSO_RECIPE_KEEP_DAYS=0` disables). Texture staging buffers are freed
+after 120 idle frames (`RSX_TEX_UPLOAD_KEEP=0` keeps them). Audio uses device
+notifications instead of 500-ms polling (`AUDIO_HOTPLUG_POLL=1`). Measured at
+1080p/2x HSR with preload on: about 265 MB less mean private memory, startup
+preparation 9.3 s instead of 36.7 s, no race recipes rejected. The open
+rendering bugs below were deliberately left alone. See Phase 100.
+
+**Background startup warmup (Phase 99).** With startup warmup and async
 pipelines enabled, the present owner queues the preparation pass and releases
 startup immediately. The existing below-normal worker services live draws
 first, learned opening/menu recipes next, then the remaining recipes. Race
@@ -416,7 +429,7 @@ The PPU-inline experiment was not adopted; the normal exe is rebuilt with
 ### Local state of this machine
 
 - **ps3recomp** is at `../ps3recomp-gt5p-master`, based on `5244db9`, with
-  local changes in 62 files. `patches/ps3recomp-5244db9-local.patch` is
+  local changes in 63 files. `patches/ps3recomp-5244db9-local.patch` is
   their backup. After every change there, refresh it with bash, not
   PowerShell, whose `>` re-encodes the file:
 
@@ -1120,7 +1133,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in 58 files under `include/`, `libs/`, `runtime/` and `tools/` (2026-10-18). The disc build does not
+changes in 63 files under `include/`, `libs/`, `runtime/` and `tools/` (2026-10-20). The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
