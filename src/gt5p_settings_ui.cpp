@@ -112,6 +112,19 @@ const std::vector<Item>& items()
           "RSX_SHADER_WARMUP", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_warmup ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_warmup = v != 0; }, nullptr },
+        { L"VIDEO", L"Background pipeline creation",
+          L"Build driver pipelines on a background worker to reduce render stalls. "
+          L"First-seen details can appear a moment later while preparation finishes.",
+          "RSX_PSO_ASYNC", kOnOff,
+          [](const Gt5pSettings& s) { return s.pipeline_async ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.pipeline_async = v != 0; }, nullptr },
+        { L"VIDEO", L"Prepare race pipelines",
+          L"Prepare the race pipelines learned on earlier visits during loading. "
+          L"First visits can still compile new states. Needs background pipeline creation "
+          L"and shader cache; may extend loading and use more memory.",
+          "RSX_RACE_PREWARM", kOnOff,
+          [](const Gt5pSettings& s) { return s.race_preload ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.race_preload = v != 0; }, nullptr },
         { L"INPUT", L"PlayStation / other controllers",
           L"Read DualSense, DualShock, Switch and other controllers through SDL2.dll. Xbox "
           L"controllers work either way.",

@@ -38,7 +38,7 @@ bool         g_enabled = false;
 const char* const kEnvNames[] = {
     "GT5P_RESOLUTION", "RSX_MSAA", "RSX_PRESENT_SYNC", "RSX_SHADER_CACHE", "GT5P_SHADER_INDICATOR",
     "PAD_NO_SDL", "PAD_NO_KEYBOARD", "PS3_VERBOSE",
-    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3", "RSX_SHADER_ASYNC", "RSX_SHADER_WARMUP", "PAD_SKIP_MOVIE",
+    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3", "RSX_SHADER_ASYNC", "RSX_SHADER_WARMUP", "RSX_PSO_ASYNC", "RSX_RACE_PREWARM", "PAD_SKIP_MOVIE",
 };
 bool g_env_set[sizeof kEnvNames / sizeof kEnvNames[0]];
 
@@ -186,7 +186,7 @@ bool known_key(std::string_view section, std::string_view key)
     static const struct { const char* section; const char* key; } kKnown[] = {
         {"video", "resolution"},     {"video", "msaa"},
         {"video", "vsync"},          {"video", "shader_cache"},
-        {"video", "shader_indicator"}, {"video", "shader_precompile"}, {"video", "shader_warmup"},
+        {"video", "shader_indicator"}, {"video", "shader_precompile"}, {"video", "shader_warmup"}, {"video", "pipeline_async"}, {"video", "race_preload"},
         {"input", "sdl_controllers"}, {"input", "keyboard"},
         {"game", "skip_movie"},
         {"performance", "vblank_hz"}, {"performance", "lane_pinning"},
@@ -226,6 +226,8 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
     read_bool(tbl["video"]["shader_cache"], "video.shader_cache", s.shader_cache);
     read_bool(tbl["video"]["shader_indicator"], "video.shader_indicator", s.shader_indicator);
     read_bool(tbl["video"]["shader_warmup"], "video.shader_warmup", s.shader_warmup);
+    read_bool(tbl["video"]["pipeline_async"], "video.pipeline_async", s.pipeline_async);
+    read_bool(tbl["video"]["race_preload"], "video.race_preload", s.race_preload);
     read_bool(tbl["video"]["shader_precompile"], "video.shader_precompile", s.shader_precompile);
     read_bool(tbl["input"]["sdl_controllers"], "input.sdl_controllers", s.sdl_controllers);
     read_bool(tbl["input"]["keyboard"], "input.keyboard", s.keyboard);
@@ -250,6 +252,8 @@ void apply_env(const Gt5pSettings& s)
     if (!s.shader_indicator) set_default_env("GT5P_SHADER_INDICATOR", "0");
     set_default_env("RSX_SHADER_WARMUP", s.shader_warmup ? "1" : "0");
     set_default_env("RSX_SHADER_ASYNC", s.shader_precompile ? "1" : "0");
+    set_default_env("RSX_PSO_ASYNC", s.pipeline_async ? "1" : "0");
+    set_default_env("RSX_RACE_PREWARM", s.race_preload ? "1" : "0");
     /* The pad switches test for presence, so only the "off" case sets one. */
     if (!s.sdl_controllers) set_default_env("PAD_NO_SDL", "1");
     if (!s.keyboard)        set_default_env("PAD_NO_KEYBOARD", "1");
@@ -275,6 +279,8 @@ void reflect_env(Gt5pSettings& s)
     if (const char* e = getenv("RSX_SHADER_CACHE")) s.shader_cache = !(e[0] == '0' && !e[1]);
     if (const char* e = getenv("GT5P_SHADER_INDICATOR")) s.shader_indicator = e[0] != '0';
     if (const char* e = getenv("RSX_SHADER_WARMUP")) s.shader_warmup = e[0] == '1';
+    if (const char* e = getenv("RSX_PSO_ASYNC")) s.pipeline_async = e[0] != '0';
+    if (const char* e = getenv("RSX_RACE_PREWARM")) s.race_preload = e[0] != '0';
     if (const char* e = getenv("RSX_SHADER_ASYNC")) s.shader_precompile = e[0] == '1';
     s.sdl_controllers = getenv("PAD_NO_SDL") == nullptr;
     s.keyboard        = getenv("PAD_NO_KEYBOARD") == nullptr;
@@ -345,6 +351,11 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "# New tracks/cars/effects may still compile later; first run learns records.\n"
          "# Needs shader cache. [RSX_SHADER_WARMUP]\n"
          "shader_warmup = " << (s.shader_warmup ? "true" : "false") << "\n"
+         "# Build unexpected driver pipelines in the background. [RSX_PSO_ASYNC]\n"
+         "pipeline_async = " << (s.pipeline_async ? "true" : "false") << "\n"
+         "# Prepare learned race pipelines during loading; needs background pipelines\n"
+         "# and shader cache. First visits still learn new states. [RSX_RACE_PREWARM]\n"
+         "race_preload = " << (s.race_preload ? "true" : "false") << "\n"
          "\n"
          "[input]\n"
          "# PlayStation, Switch and other controllers through SDL2.dll beside the exe.\n"

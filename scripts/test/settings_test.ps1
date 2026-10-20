@@ -49,7 +49,17 @@ try {
     if (-not (Select-String -LiteralPath $toml -Pattern '^shader_warmup = true$' -Quiet)) {
         throw 'Startup shader preload setting was not saved'
     }
-    "--- file:"; Get-Content $toml | Select-String "^(resolution|msaa|vsync|shader_cache|shader_warmup|sdl_controllers|keyboard|verbose_log) ="
+    key 0x28; key 0x27          # background pipelines: on -> off
+    if (-not (Select-String -LiteralPath $toml -Pattern '^pipeline_async = false$' -Quiet)) {
+        throw 'Background pipeline setting was not saved'
+    }
+    cap "pipeline_off"; key 0x27 # restore on
+    key 0x28; key 0x27          # race preparation: on -> off
+    if (-not (Select-String -LiteralPath $toml -Pattern '^race_preload = false$' -Quiet)) {
+        throw 'Race preparation setting was not saved'
+    }
+    cap "race_preload_off"; key 0x27 # restore on
+    "--- file:"; Get-Content $toml | Select-String "^(resolution|msaa|vsync|shader_cache|shader_warmup|pipeline_async|race_preload|sdl_controllers|keyboard|verbose_log) ="
     key 0x1B                      # Esc: close
     Start-Sleep -Milliseconds 500; cap "closed"
 } finally {

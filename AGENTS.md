@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 97)
+## Start here: state of play (2026-10-20, Phase 98)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 97 is the latest).
+has the evidence, newest phase first (Phase 98 is the latest).
 
 ### What works now
 
@@ -99,13 +99,32 @@ has the evidence, newest phase first (Phase 97 is the latest).
 
 ### Open work, in the order the user left it
 
+**Latest: race loading preparation / async pipelines (Phase 98).** F1 now has
+Background pipeline creation (`video.pipeline_async`, `RSX_PSO_ASYNC`) and
+Prepare race pipelines (`video.race_preload`, `RSX_RACE_PREWARM`), both default
+On. Guest native pipeline creation uses one bounded worker; pending draws use
+the existing asynchronous-shader policy. Limits: 256 queue jobs, 64 MiB copied
+sources, 4096 resident pipelines. Both switches accept 0 for rollback.
+The loading script waits up to 30 s for the learned race set while render/audio
+continue (`RSX_RACE_PREWARM_WAIT_MS=0` disables waiting). This is a shared set
+of observed race states, not per-track exhaustive discovery; first visits can
+still show late details. Index: `shadercache/warmup-v1/race-v1.txt`; preserve it.
+The learn run records 1059 recipes; `pso98-warm2` makes all ready with zero
+rejections during loading, reaches gameplay at 1080p/2x. The user accidentally
+closed the preceding warm run; do not diagnose it as a crash. FPS samples are
+not controlled benchmarks. Synthetic production-queue WARP, settings/export,
+F1/restart, startup-preload and texture/mirror regressions pass. F8 now reports
+queue state and copied-source memory; pipeline counts include cached driver
+creations. See Phase 98 for ownership, timeout, shutdown and validation limits.
+
 **Latest: rolling-start reports and saturation (Phase 97).** Five F8 ZIPs
 from process 1592 are in `logs/debug/` (19:23:58-19:25:32). Intro submission
 gaps reach 852 ms; the final report has a 704 ms gap and 118 new pipelines
 without additional completed bytecode. `scripts/diag/debug_pacing.py` reads
 the ZIPs directly. Cached driver calls now enter busy/timing diagnostics;
-`RSX_PSO_HITCH_MS` defaults to 50 ms (0 disables log lines). This is diagnosis,
-not an asynchronous-pipeline fix. User warmup is on; measurement scripts
+`RSX_PSO_HITCH_MS` defaults to 50 ms (0 disables log lines). Phase 98 adds
+asynchronous driver creation; this earlier phase was diagnosis. User warmup is
+on; measurement scripts
 normally disable settings and must explicitly enable it for comparisons.
 Source saturation can now be tested independently: `RSX_FP_SOURCE_RANGE=0`
 or unset is legacy, `1` full experimental ranges, `2` saturation only. The

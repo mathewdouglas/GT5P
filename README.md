@@ -53,19 +53,16 @@ comes next is in [ROADMAP.md](ROADMAP.md); versions in [CHANGELOG.md](CHANGELOG.
 
 ## This fork: the disc build
 
-The rear-view mirror now preserves its protective depth clear when a font
-surface reuses the scene's depth allocation. Tunnel lighting, black barriers
-and racing-line issues remain open. Spinning-wheel volume textures now upload
-and sample in 3D; close Golf rim verification remains pending. The material experiment
-`RSX_FP_SOURCE_RANGE=1` stays opt-in; road streaks have also occurred with it off.
-See [Phase 95](docs/progress.md#phase-95---restore-mirror-depth-clears-after-glyph-surface-reuse-2026-10-20)
-for the mirror fix and [Phase 96](docs/progress.md#phase-96---restore-volume-textures-used-by-spinning-wheels-2026-10-20)
-for volume-texture support and remaining verification.
+F1 now offers **Background pipeline creation** and **Prepare race pipelines**,
+both enabled by default after restart. Race loading prepares previously learned
+states; unexpected driver pipelines build in the background. First visits can
+still introduce new states. See [shader preparation](docs/shader-precompile.md#race-loading-and-background-pipelines)
+and [Phase 98](docs/progress.md#phase-98---loading-time-race-preparation-and-asynchronous-driver-pipelines-2026-10-20)
+for validation and limits.
 
-[Phase 97](docs/progress.md#phase-97---rolling-start-pacing-reports-and-isolated-saturation-handling-2026-10-20)
-analyses rolling-start hitches, adds driver-pipeline timing to debug exports,
-and separates operand saturation from experimental fixed ranges. Tunnel
-lighting and exact pre-tunnel barrier verification remain open.
+The rear-view depth-clear fix remains enabled. Tunnel lighting, black barriers,
+road/racing-line issues and close Golf rim verification remain open. Material
+source-range experiments stay opt-in because they can streak the road.
 
 This is a fork of [sp00nznet/GT5P](https://github.com/sp00nznet/GT5P). Upstream
 targets the US PSN release, NPUA80075 v02.00. This fork adds a second target,

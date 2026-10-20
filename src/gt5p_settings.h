@@ -26,6 +26,8 @@ struct Gt5pSettings {
     bool shader_cache = true;   /* keep compiled shaders in shadercache/ between runs */
     bool shader_indicator = true;   /* "Compiling shaders" over the game while it is busy */
     bool shader_warmup = false;     /* prepare previously recorded pipelines before guest execution */
+    bool pipeline_async = true;    /* build driver pipelines on one background worker */
+    bool race_preload = true;      /* prepare learned race pipelines during loading */
     bool shader_precompile = true;  /* compile new shaders on background threads, all at once */
 
     /* [input] */

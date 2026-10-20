@@ -27,6 +27,32 @@ for case, value, override, disabled, file_value, effective in (
         assert ('shader_warmup = ' + str(not file_value).lower()) in settings.read_text()
     print('warmup_' + case + ': passed')
 
+for case, text, override, disabled, file_value, effective in (
+    ('default', '', None, False, True, True),
+    ('off', 'false', None, False, False, False),
+    ('override_on', 'false', '1', False, False, True),
+    ('override_off', 'true', '0', False, True, False),
+    ('invalid', '"yes"', None, False, True, True),
+    ('no_settings', 'false', None, True, True, True),
+):
+    folder = root / ('pipeline_' + case); folder.mkdir()
+    settings = folder / 'settings.toml'
+    settings.write_text('[video]\n' + (f'pipeline_async = {text}\nrace_preload = {text}\n' if text else ''))
+    env = os.environ.copy()
+    for key in ('RSX_PSO_ASYNC', 'RSX_RACE_PREWARM', 'GT5P_NO_SETTINGS'):
+        env.pop(key, None)
+    env.update(GT5P_SETTINGS=str(settings), TEST_PIPELINE_FILE=str(int(file_value)), TEST_PIPELINE_EFFECTIVE=str(int(effective)))
+    if override is not None:
+        env['RSX_PSO_ASYNC'] = env['RSX_RACE_PREWARM'] = override
+    if disabled:
+        env['GT5P_NO_SETTINGS'] = '1'
+    subprocess.run([str(exe), 'pipeline-settings'], cwd=folder, env=env, timeout=10, check=True)
+    if not disabled:
+        saved = settings.read_text()
+        assert ('pipeline_async = ' + str(not file_value).lower()) in saved
+        assert ('race_preload = ' + str(not file_value).lower()) in saved
+    print('pipeline_' + case + ': passed')
+
 for case in ("missing", "off", "force_on", "kill", "no_settings", "enabled", "hitch_off", "epoch", "fault", "hung", "failure"):
     folder = root / case
     folder.mkdir()
@@ -37,7 +63,7 @@ for case in ("missing", "off", "force_on", "kill", "no_settings", "enabled", "hi
     for key in ('GT5P_DEBUG_EXPORT', 'GT5P_NO_SETTINGS', 'GT5P_HITCH_CAPTURE'):
         env.pop(key, None)
     env['GT5P_SETTINGS'] = str(settings)
-    diagnostics = {'SPURS_PM_ARG64': '0', 'PS3_SC_CONTEXT': '1', 'GT5P_AUDIO_NATIVE': '0', 'RSX_FP_SOURCE_RANGE': '0', 'RSX_DEPTH_CLEAR_REUSE': '0', 'RSX_TEX3D': '0', 'RSX_PSO_HITCH_MS': '75',
+    diagnostics = {'SPURS_PM_ARG64': '0', 'PS3_SC_CONTEXT': '1', 'GT5P_AUDIO_NATIVE': '0', 'RSX_FP_SOURCE_RANGE': '0', 'RSX_DEPTH_CLEAR_REUSE': '0', 'RSX_TEX3D': '0', 'RSX_PSO_HITCH_MS': '75', 'RSX_PSO_ASYNC': '1', 'RSX_RACE_PREWARM': '1', 'RSX_RACE_PREWARM_WAIT_MS': '2500',
                    'GT5P_STALL_MS': '350', 'GT5P_STALL_STACKS': '1'}
     env.update(diagnostics)
     if case == 'force_on': env['GT5P_DEBUG_EXPORT'] = '1'

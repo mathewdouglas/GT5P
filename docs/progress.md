@@ -9,6 +9,113 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 98 - Loading-time race preparation and asynchronous driver pipelines (2026-10-20)
+
+The user requested the first two stutter mitigations: prepare race pipelines
+before entry, and create unexpected pipelines without blocking rendering.
+Both are implemented, with independent F1 options and environment rollback.
+This does not fix the separate tunnel/barrier/material reports.
+
+### Driver creation moves off the renderer
+
+Guest pipeline misses now enter one below-normal-priority worker. Both driver
+cache-blob loads and cold driver creation run there. The renderer receives a
+pending result, uses its existing skip-until-ready policy, and retries later.
+It does not wait for that driver call or fall back synchronously when the queue
+is full. Pending keys are memoised so each waiting draw does not regenerate its
+HLSL every frame. Native failures are cached rather than compiled endlessly.
+
+The queue deduplicates by the complete native pipeline hash. Each job owns its
+vertex/pixel bytecode, copied input elements and semantic strings, and a root
+signature reference. Limits are 256 queue entries and 64 MiB of in-flight
+source data. Completed entries can be retired; referenced pipelines have their
+own COM ownership in the normal caches. Allocation pressure retries pending
+work rather than forcing a synchronous driver build. Shutdown stops rendering,
+releases waiting loaders, joins the worker and frees pending ownership before
+the device is released. Resident-cache access is synchronised.
+
+`video.pipeline_async` / **Background pipeline creation** defaults to On.
+`RSX_PSO_ASYNC=0` restores synchronous guest pipeline creation. Direct native
+use without a settings file inherits the shader-async switch unless explicitly
+overridden. F8 reports include queue completions, failures, saturation and
+source-memory use. The pipeline counter now includes cached-blob driver
+creations too; do not compare its absolute values with older reports as if
+the definitions were identical. Slow-call logs include the host thread ID.
+
+This targets guest render pipelines. Fixed backend helper pipelines and shader
+bytecode preparation retain their existing paths. On a first-ever state,
+geometry or effects can appear late while preparation finishes, as with the
+existing asynchronous shader path. No whole-frame hold was enabled: holding
+the picture while the simulation keeps driving would reproduce another of the
+user's complaints. Known-state preparation below reduces this exposure.
+
+### Prepare the learned race set before entry
+
+A lightweight filesystem milestone hook observes each LoadingRoot load,
+including revisits; it is independent of the first-load-only milestone log.
+Course/pit/menu transitions reset race scope. Pipelines used during the race
+phase, including introduction, mirror, shadows and encountered replay states,
+are associated with their existing local recipes. Membership writes run on
+the worker, not the render thread. The native hashes live in
+`shadercache/warmup-v1/race-v1.txt`; no game assets or guest pointers are added.
+
+On a later race load the worker reconstitutes these validated recipes while
+the loading caller waits for readiness. Vblank/FIFO rendering, the window and
+audio continue independently. Concurrent loaders share the same readiness
+event. Demand jobs take precedence over preload work. The gate has a 30-second
+budget (`RSX_RACE_PREWARM_WAIT_MS`, clamped to 0..60000); on timeout loading
+continues and preparation remains asynchronous. Shutdown releases the gate.
+
+`video.race_preload` / **Prepare race pipelines** defaults to On and requires
+background pipeline creation and the shader cache. `RSX_RACE_PREWARM=0` disables
+learning/preparation. Existing startup-wide `shader_warmup` remains separate;
+it can already have made much of the race set resident, in which case this
+loading pass reuses it.
+
+The current set is a **conservative shared set of observed race states**, not
+a reverse-engineered track/car-selection database. It covers previously seen
+states from multiple tracks and lineups. First visits and unobserved cameras
+can still introduce new states. Membership and reads are bounded; the resident
+cache retains at most 4096 pipelines. An unretained/corrupt/missing recipe is
+reported as unprepared and falls back to normal background demand creation.
+This is not an exhaustive precompile of every possible game pipeline.
+
+### Validation
+
+- `scripts/test/pso_async.py` extracts and compiles the production queue with
+  a real D3D12 WARP device. Delayed driver calls stay off the caller; duplicate
+  requests coalesce; freed/overwritten caller bytecode, semantic storage and
+  root-signature ownership survive deferred creation. Failed native creation
+  is retained. Valid/missing preload recipes, resident reuse, loading timeout,
+  queue capacity, 64-MiB source bound, resident capacity, concurrent loaders,
+  and shutdown/cancellation ownership pass. Fixtures are synthetic.
+- Settings default/off/override/invalid/no-settings and save-roundtrip cases
+  pass for both new options, along with the existing export cases: 23 cases
+  total. F1 window screenshots confirm both rows fit, toggle, save and show
+  restart requirements. The restart test exits the old process and starts a
+  new one. Existing texture/sampler, volume GPU and mirror-clear tests pass.
+- Real startup preload still accepts three valid local recipes and rejects
+  damaged records correctly (`shader_warmup.py`). The production build passes;
+  no generated-source instrumentation was used.
+- `pso98-learn` reaches a visible 1080p/2x HSR race at 0:07.200 and records
+  1059 race recipes. The initial warm follow-up prepares all 1059 with zero
+  rejections, but the user accidentally closes it during the introduction;
+  this is not a crash or completed race test. `pso98-warm2` repeats preparation
+  with startup-wide warmup explicitly **off**, makes all 1059 ready (zero
+  rejected), passes the gate and reaches gameplay. Window shots and logs are
+  under `scratch/pv/pso98-*`. In that run the gate preparation takes 1422 ms;
+  the interrupted run took 12984 ms under different cache/system conditions.
+- The warm follow-up samples a 55-FPS median over 15 seconds, versus 29.1 on
+  the learning run, but changing cameras, game-clock progress and cache state
+  make those **functional observations, not a controlled speed-up benchmark**.
+  The live result does not establish smooth 60 FPS, absence of all stutters,
+  or completed-lap stability. The driver-off-caller test and loading readiness
+  logs establish the implemented behaviour independently of those FPS values.
+
+Next useful evidence is a normal driven run with F8 exports if pauses remain:
+compare submission gaps, worker queue state and driver timings. CPU/FIFO,
+resource upload, audio and other frame-pacing limits can still stall play.
+
 ## Phase 97 - Rolling-start pacing reports and isolated saturation handling (2026-10-20)
 
 The user supplied five F8 exports from process 1592, source `cf6a808`, at

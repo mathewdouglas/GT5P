@@ -130,3 +130,44 @@ in the upper half of the existing `ghi` field. Offline warmup uses those
 bindings to compile Texture3D variants; older profiles remain readable and
 represent 2D/cube-only states. Visiting wheel materials once learns their new
 variants. `RSX_TEX3D=0` selects the older 2D interpretation for diagnostics.
+
+## Race loading and background pipelines
+
+The F1 settings page now offers **Background pipeline creation** and
+**Prepare race pipelines**. Both default to On and apply after restart. Their
+keys belong under the existing `[video]` table:
+
+```toml
+pipeline_async = true
+race_preload = true
+```
+
+Driver pipelines are built by one background worker, including loads from
+native driver cache blobs. The renderer retries pending draws instead of
+waiting for that build. A new effect can appear late on its first encounter.
+The queue owns its input data and is bounded to 256 jobs / 64 MiB of copied
+shader data.
+
+Race loading prepares the pipelines learned during earlier race visits before
+entry, with a default 30-second waiting budget. The learned set includes
+observed mirror, shadow and replay states across races. It is a conservative
+shared race set, not an exhaustive list for the selected track or every camera.
+First visits still learn; later visits reuse those recipes. Startup-wide
+**Preload known shaders** remains a separate option and can be left enabled.
+
+Membership is stored beside local recipes in
+`shadercache/warmup-v1/race-v1.txt`. Preserve it with the rest of the cache.
+Loading and the runtime queue share up to 4096 resident pipelines; invalid,
+missing or unretained recipes remain eligible for background demand creation.
+The window, audio and renderer continue while the loading caller waits. A
+loading timeout releases the caller and lets preparation continue in the
+background.
+
+Direct controls: `RSX_PSO_ASYNC=0` restores synchronous driver creation;
+`RSX_RACE_PREWARM=0` disables race-set learning/preparation;
+`RSX_RACE_PREWARM_WAIT_MS=0` keeps preparation but removes the loading wait.
+The waiting budget is clamped to 0..60000 ms. Race preparation requires the
+shader cache and background pipeline creation. F8 reports include queue and
+preparation counters. Tests: `scripts/test/pso_async.py`,
+`scripts/test/shader_warmup.py`, `scripts/test/settings_test.ps1` and
+`scripts/test/debug_export.ps1`.

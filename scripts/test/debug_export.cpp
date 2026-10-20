@@ -47,6 +47,21 @@ int main(int argc, char** argv) {
     std::string mode = argv[1];
     s_fault = mode == "fault";
     gt5p_settings_load();
+    if (mode == "pipeline-settings") {
+        const bool file = std::string(getenv("TEST_PIPELINE_FILE")) == "1";
+        const bool effective = std::string(getenv("TEST_PIPELINE_EFFECTIVE")) == "1";
+        assert(gt5p_settings_file().pipeline_async == file);
+        assert(gt5p_settings_file().race_preload == file);
+        assert(gt5p_settings().pipeline_async == effective);
+        assert(gt5p_settings().race_preload == effective);
+        if (gt5p_settings_enabled()) {
+            auto saved = gt5p_settings_file(); saved.pipeline_async = saved.race_preload = !file;
+            assert(gt5p_settings_store(saved));
+            assert(gt5p_settings_file().pipeline_async == !file);
+            assert(gt5p_settings_file().race_preload == !file);
+        }
+        return 0;
+    }
     if (mode == "warmup-settings") {
         const bool file = std::string(getenv("TEST_WARMUP_FILE")) == "1";
         const bool effective = std::string(getenv("TEST_WARMUP_EFFECTIVE")) == "1";
