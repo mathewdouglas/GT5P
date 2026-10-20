@@ -9,6 +9,90 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 94 - High Speed Ring captures and road-regression rollback (2026-10-20)
+
+The user reported black barriers, missing tunnel lighting, incorrect rims,
+racing-line corruption and a rear-view sky that breaks under a bridge. An
+experimental shader change during this investigation also stretched the road
+into long streaks. **The normal build now leaves that experiment off.** The
+original five reports are not all fixed.
+
+### Material experiment: not ready for normal play
+
+`scratch/rdoc/hsrwater_frame4113.rdc` proves that the black guardrail is drawn,
+with valid textures. Draw 276/event 3565 outputs zero RGB. A pixel trace shows
+a negative lighting component (about -0.895) entering a multiply without the
+operand saturation requested by its instruction. Three source precision
+fields occupy DWORD2 bits 19..21, 22..24 and 25..27, independently of destination
+saturation. Their layout and modifier order were checked against the
+[RSX format definitions](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/Program/RSXFragmentProgram.h)
+and decompiler as references; no implementation was copied.
+
+An independently written experiment applies those source ranges, saturation
+before ABS, then negation. `RSX_FP_SOURCE_RANGE=1` opts in; unset or `=0`
+retains stable behaviour. Debug exports include the switch. Shader text is
+already part of cache identity, so cache deletion is unnecessary.
+
+The experiment reveals guardrail ribs and concrete, but two 1080p/2x runs
+(`graphics94-clip`, `graphics94-range-only`) also show stretched road sampling.
+Removing a separate attempted source-2 ABS change did not cure it; that ABS
+change was removed. `graphics94-rollback` with ranges off has normal asphalt.
+Therefore the material fix remains **experimental and off by default**.
+The interaction causing the road regression remains open. A final rebuilt
+default-path 1080p/2x run (`graphics94-stable`, ten seconds of sampling)
+also shows normal asphalt; its changing scene is not an A/B FPS benchmark.
+
+`scripts/test/fp_source_range.ps1` renders synthetic fragment streams into a
+float target on D3D11 WARP. It checks 240 output lanes per mode across the
+three operand slots, signed inputs and ABS/negation ordering, in opt-in,
+explicit-off and unset-default modes. These test the implemented arithmetic,
+not PS3 hardware conformance or the complete game's rendering. Texture-helper
+and 17 debug-export integration cases also pass. No title programs or assets
+are tracked.
+
+### Retained captures and next checks
+
+The first interactive launch inherited `PAD_HOLD`, which forces keyboard
+input for the entire process, even after timed presses finish. It was replaced
+with a launch without that override; SDL detected the user's DualSense.
+This was the test setup, not a demonstrated controller hotplug fault. The
+user deliberately closed the game after taking multiple tunnel captures.
+No repeat tunnel drive is needed: ignored `scratch/rdoc/` retains:
+
+- `graphics94-manual_frame6819.rdc`: bridge/rear-view, race 0:34.
+- `graphics94-manual_frame10164.rdc`: tunnel interior, race 1:03.866.
+- `graphics94-manual_frame10650.rdc`: tunnel exit, race 1:10.500.
+
+In frame 6819, mirror and main scene share colour resource 1920 and depth
+resource 1919. Mirror viewport (416,97,448,129) is in the 1280-wide scene,
+stretched horizontally for 1080p display. Mirror sky (draw 502/event 6867)
+writes depth 1; the main bridge (draw 687/event 8530) overwrites it at depth
+0.99389. Nearby mirror cars survive because they have nearer depth. This is
+scene overlap, not a missing sky texture. A fresh native manifest
+(`cap-graphics94-range/frame_00`) records a scissored depth-zero clear
+protecting the mirror before the main scene. The corresponding clear is
+absent from the failing RenderDoc frame. Follow its recording/replay next.
+Window-clip tracing found no writes over a boot or race interval; it did not
+support that hypothesis and was removed. Small 512x128 targets are crowd
+atlases, not mirror copies.
+
+Tunnel road draw 386/event 4812 and wall draw 489/event 5739 have valid
+textures. A sampled wall pixel gets nonzero vertex lighting (about
+1.69,0.89,0.26), but a material constant scales it by 0.01 and later exposure
+by 0.4, leaving near-black output. Lamps draw. Incorrect constants, exposure
+feedback or lighting interpretation remain hypotheses; no brightness hack
+was added.
+
+Racing-line draw 581/event 6552 samples a rippled 512x512 BC3 texture and
+multiplies it by blue vertex/material colour. Wrong binding/data is unproven.
+A separate `RSX_TEXREJ=1` race reported only the supported unit-13 depth bind;
+it did not establish an unsupported racing-line format. Other-car rims still
+need a specifically identified bad draw. Neither issue is marked fixed.
+
+Local evidence is under `scratch/pv/graphics94-*`: pixel histories, shader
+traces, texture exports and A/B window shots. RenderDoc capture pauses are
+intrusive; those runs are not clean performance benchmarks.
+
 ## Phase 93 - Native audio DSP images and sound-worker headroom (2026-10-20)
 
 The user's Task Manager captures show 56% total CPU in-game, with two logical

@@ -17613,7 +17613,7 @@ index 67a3db3..9a7be71 100644
  /* Force a present (useful for debugging). */
  void rsx_d3d12_backend_present(void);
 diff --git a/libs/video/rsx_fp_decompiler.c b/libs/video/rsx_fp_decompiler.c
-index 545670f..b8ada0a 100644
+index 545670f..c0c7da7 100644
 --- a/libs/video/rsx_fp_decompiler.c
 +++ b/libs/video/rsx_fp_decompiler.c
 @@ -25,6 +25,7 @@
@@ -17693,7 +17693,7 @@ index 545670f..b8ada0a 100644
  static const char* input_expr(u32 input_src)
  {
      static const char* tc[8] = {
-@@ -341,7 +397,9 @@ static const char* input_expr(u32 input_src)
+@@ -341,13 +397,16 @@ static const char* input_expr(u32 input_src)
      case 0x3: return "input.fog";      /* FOGC */
      default:
          if (input_src >= 0x4 && input_src <= 0xB) return tc[input_src - 0x4]; /* TC0..7 */
@@ -17704,7 +17704,41 @@ index 545670f..b8ada0a 100644
      }
  }
  
-@@ -420,6 +478,7 @@ static int rsx_fp_decompile_internal(
+ /* Build the swizzled/negated/abs'd HLSL for one source into `buf`. */
+ static void emit_src(const Src* s, u32 input_src, const float* k, int has_k,
+-                     int buffered, u32 constant_slot, char* buf, u32 bufsz)
++                     int buffered, u32 constant_slot, u32 precision,
++                     char* buf, u32 bufsz)
+ {
+     char base[96];
+     if (s->type == FP_REG_TYPE_TEMP) {
+@@ -368,6 +427,25 @@ static void emit_src(const Src* s, u32 input_src, const float* k, int has_k,
+     char swz[160];
+     snprintf(swz, sizeof(swz), "(%s).%s", base, s->swz);
+ 
++    /* Source ranges are separate from destination saturation. In particular,
++     * a saturated negative lighting operand must become zero BEFORE MUL/MAD.
++     * SRC1 bits 19..27 contain three independent 3-bit source modifiers.
++     * Saturation precedes ABS; the signed ranges follow ABS. Negation is last.
++     * This preserves the old spelling when no range modifier is present. */
++    if (precision >= 1 && precision <= 4) {
++        char value[240], absolute[256];
++        if (precision == 4) snprintf(value, sizeof value, "saturate(%s)", swz);
++        else snprintf(value, sizeof value, "%s", swz);
++        if (s->abs) snprintf(absolute, sizeof absolute, "abs(%s)", value);
++        else snprintf(absolute, sizeof absolute, "%s", value);
++        if (precision == 4) snprintf(value, sizeof value, "%s", absolute);
++        else {
++            const char* bound = precision == 1 ? "65504.0" : precision == 2 ? "2.0" : "1.0";
++            snprintf(value, sizeof value, "clamp(%s, -%s, %s)", absolute, bound, bound);
++        }
++        snprintf(buf, bufsz, s->negate ? "-(%s)" : "%s", value);
++        return;
++    }
+     const char* pre = "";
+     const char* post = "";
+     if (s->abs)    { pre = "abs("; post = ")"; }
+@@ -420,6 +498,7 @@ static int rsx_fp_decompile_internal(
      int buffered, char* out, u32 out_size, u32* out_constant_count)
  {
      if (!ucode || !out || out_size == 0) return -1;
@@ -17712,7 +17746,7 @@ index 545670f..b8ada0a 100644
  
      u32 buffered_constant_count = 0;
      if (buffered) {
-@@ -456,6 +515,7 @@ static int rsx_fp_decompile_internal(
+@@ -456,6 +535,7 @@ static int rsx_fp_decompile_internal(
      int wrote[2][FP_MAX_COLOR_TARGETS];
      memset(wrote, 0, sizeof wrote);
      int count = 0;
@@ -17720,7 +17754,44 @@ index 545670f..b8ada0a 100644
      u32 off = 0;
      u32 constant_slot = 0;
  
-@@ -634,7 +694,16 @@ static int rsx_fp_decompile_internal(
+@@ -539,15 +619,26 @@ static int rsx_fp_decompile_internal(
+             has_k = 1;
+         }
+ 
+-        char a[200], b[200], c[200];
++        static int source_ranges = -1;
++        if (source_ranges < 0) {
++            const char* e = getenv("RSX_FP_SOURCE_RANGE");
++            /* Experimental: full source-range handling improves barriers, but
++             * currently regresses road sampling in HSR. Keep it opt-in until
++             * that interaction is understood. */
++            source_ranges = e && !strcmp(e, "1");
++        }
++        char a[256], b[256], c[256];
+         emit_src(
+             &s0, input_src, k, has_k, buffered, constant_slot,
++            source_ranges ? (w2 >> 19) & 7u : 0u,
+             a, sizeof(a));
+         emit_src(
+             &s1, input_src, k, has_k, buffered, constant_slot,
++            source_ranges ? (w2 >> 22) & 7u : 0u,
+             b, sizeof(b));
+         emit_src(
+             &s2, input_src, k, has_k, buffered, constant_slot,
++            source_ranges ? (w2 >> 25) & 7u : 0u,
+             c, sizeof(c));
+         if (has_k)
+             constant_slot++;
+@@ -610,7 +701,7 @@ static int rsx_fp_decompile_internal(
+         }
+ 
+         /* Build the RHS expression for this opcode. */
+-        char rhs[640];
++        char rhs[1024];
+         int handled = 1;
+         switch (opcode) {
+         case OP_NOP: rhs[0] = '\0'; handled = 0; break;
+@@ -634,7 +725,16 @@ static int rsx_fp_decompile_internal(
           * part 4; two independent shader pairs confirmed). */
          case OP_RSQ: snprintf(rhs, sizeof(rhs), "rsqrt(abs((%s).x))", a); break;
          case OP_EX2: snprintf(rhs, sizeof(rhs), "exp2((%s).x)", a); break;
@@ -17738,7 +17809,7 @@ index 545670f..b8ada0a 100644
          case OP_COS: snprintf(rhs, sizeof(rhs), "cos((%s).x)", a); break;
          case OP_SIN: snprintf(rhs, sizeof(rhs), "sin((%s).x)", a); break;
          case OP_POW: snprintf(rhs, sizeof(rhs), "pow((%s).x, (%s).x)", a, b); break;
-@@ -739,6 +808,23 @@ static int rsx_fp_decompile_internal(
+@@ -739,6 +839,23 @@ static int rsx_fp_decompile_internal(
          }
  
          int has_dest = !(w0 & FP_OUT_NONE);
@@ -17762,7 +17833,33 @@ index 545670f..b8ada0a 100644
          if (handled && (has_dest || set_cond)) {
              u32 dst_idx = (w0 & FP_OUT_REG_MASK) >> FP_OUT_REG_SHIFT;
              int dst_half = (w0 & FP_OUT_HALF) ? 1 : 0;
-@@ -877,7 +963,7 @@ static int rsx_fp_decompile_internal(
+@@ -748,7 +865,7 @@ static int rsx_fp_decompile_internal(
+ 
+             const char* sat = (w0 & FP_OUT_SAT) ? " _v = saturate(_v);" : "";
+             /* NV40 per-instruction result-scale modifier (SRC1 word bits
+-             * 28-30): 1/2/3 = *2/*4/*8, 5/6/7 = /2//4//8; applied to the
++             * 28-30): 1/2/3 multiply by 2/4/8; 5/6/7 divide by 2/4/8. Applied to the
+              * result BEFORE saturate (RPCS3 FragmentProgramDecompiler.cpp
+              * SetDst, RSXFragmentProgram.h SRC1.scale:3). Dropped entirely
+              * until s32: draw 1625's two-tap box filter (÷2 on the final
+@@ -766,14 +883,14 @@ static int rsx_fp_decompile_internal(
+             if (has_dest && is_uncond && !set_cond) {
+                 /* Common unconditional path — kept byte-identical so the 39
+                  * non-predicated programs in this capture emit unchanged. */
+-                char line[800];
++                char line[1600];
+                 snprintf(line, sizeof(line),
+                          "    { float4 _v = (float4)(%s)%s;%s %s[%u].%s = _v.%s; }\n",
+                          rhs, scale_txt[res_scale], sat, reg, dst_idx, m, m);
+                 out_puts(&o, line);
+             } else {
+                 /* Predicated and/or CC-writing instruction. */
+-                char buf[1200];
++                char buf[2048];
+                 snprintf(buf, sizeof(buf),
+                          "    { float4 _v = (float4)(%s)%s;%s\n",
+                          rhs, scale_txt[res_scale], sat);
+@@ -877,7 +994,7 @@ static int rsx_fp_decompile_internal(
      /* Preamble: PSInput matches the backend's placeholder layout; temp/half
       * register files; texture+sampler banks for TEX. Built here, in front of
       * the body, now that the return type is known. */
@@ -17771,7 +17868,7 @@ index 545670f..b8ada0a 100644
      Out p = { preamble, sizeof(preamble), 0, 1 };
      preamble[0] = '\0';
      out_puts(&p,
-@@ -885,8 +971,10 @@ static int rsx_fp_decompile_internal(
+@@ -885,8 +1002,10 @@ static int rsx_fp_decompile_internal(
          "    float4 position : SV_POSITION; float4 col0 : COLOR0; float4 col1 : COLOR1;\n"
          "    float4 fog : FOG;\n"
          "    float4 tc0:TEXCOORD0; float4 tc1:TEXCOORD1; float4 tc2:TEXCOORD2; float4 tc3:TEXCOORD3;\n"
@@ -17784,7 +17881,7 @@ index 545670f..b8ada0a 100644
      /* Texture bank. With no cube units (the default) emit the exact legacy
       * array declaration so 2D-only programs are byte-identical. When any unit
       * is a cubemap, declare each unit individually at its t-register so the
-@@ -915,6 +1003,8 @@ static int rsx_fp_decompile_internal(
+@@ -915,6 +1034,8 @@ static int rsx_fp_decompile_internal(
              buffered_constant_count ? buffered_constant_count : 1u);
          out_puts(&p, constants_decl);
      }
@@ -17793,7 +17890,7 @@ index 545670f..b8ada0a 100644
      if (targets == 1) {
          out_puts(&p, "float4 main(PSInput input) : SV_TARGET {\n");
      } else {
-@@ -1157,6 +1247,92 @@ int rsx_fp_extract_consts(const u8* ucode, u32 max_bytes, float* out, int max_ou
+@@ -1157,6 +1278,92 @@ int rsx_fp_extract_consts(const u8* ucode, u32 max_bytes, float* out, int max_ou
   * on their values, so including them in the pipeline key made it change every
   * time the title re-patched a constant -- which is exactly what thrashed the
   * cache. */
