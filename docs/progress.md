@@ -9,6 +9,53 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 103 - Race-start stalls: cold shader reads, race shader pack (2026-10-21)
+
+Two F8 exports from process 13624 (10:07:42 and 10:09:00; build with Phase
+102). The first covers the grid and race start: present gaps of 1292, 1235,
+1013, 689 and 655 ms, almost all of each in the walker's wait for the replay
+thread ("submit"). Only 377 MB of RAM was available, private memory was
+4.05 GB, and there were 3.5M page faults (4.4M at the second export). The
+second export is mid-race: median 16.7 ms, a few 50-100 ms gaps whose time is
+mostly guest idle.
+
+- During the race start the replay thread's time per frame went 2-3 ms ->
+  22 ms -> 97 ms, with its pipeline cache growing from 448 to 1496 entries in
+  about 15 s. Its CPU use was only 28% of a core in the snapshots: it was
+  blocked, not busy.
+- **Race preparation was turned away by the resident cap.** The menu set
+  (1449) and race set (3922) are 5371 pipelines against a 4096 cap; startup
+  prepares the menu set first, so `[race-prewarm] finished: ready=2715
+  rejected=1207`. `RSX_PSO_RACE_EVICT=1` releases resident pipelines outside
+  the race set at race loading: ready=4020, rejected=0, but the extra recipes
+  cost 12.6 s of loading in file reads, and the race was not smoother than
+  the control. It is off by default.
+- **The stall was cold shader reads on the replay thread.** Each first
+  sighting of a pipeline hashes the generated HLSL and reads its DXBC from
+  `shadercache/<key>.dxbc`, one file per shader (53,881 files). Cold reads cost
+  4.9 ms each, warm ones 0.06 ms. `[pso-time]` in a bad window: "260 misses:
+  hlsl 48 ms, dxbc 1042 ms". With a few hundred MB free, nothing stays in the
+  OS file cache. The rejected pipelines themselves were built on the worker
+  and only delay individual draws.
+- **New: race shader pack (`RSX_SHADER_PACK`, default on; `=0` off).** While a
+  race runs, every shader looked up is kept in memory with its bytecode. When
+  the race ends, or after 10 s without a new shader (so a killed or crashed
+  process keeps it), it is written to `shadercache/race-shaders-v1.pack` on a
+  separate thread, and shutdown also writes it. The next race loading reads it in one
+  sequential read and lookups check it first. This race's shaders are kept
+  first, older ones up to `RSX_SHADER_PACK_MB` (default 64). Memory: about
+  20 MB during a race, freed when it ends.
+- Measured (High Speed Ring, 1080p/2x, warmup on): learning run 9113 ms of
+  shader reads on the replay thread over the run, pack of 1571 shaders /
+  20.6 MiB; next run read it in 15 ms and spent 790 ms. The learning run's
+  worst race-start window (58 presents in 5 s) did not recur. This machine
+  had more free RAM than the user's, so cold reads there cost more.
+- F8 reports add a "Race shader pack" line (shaders, hits, new).
+
+Open: menus and dealerships still read shaders per file (same cost, smaller
+sets); a combined pack or pipeline-key cache could cover them. The 1207
+turned-away race recipes still build on the worker at the race start.
+
 ## Phase 102 - Race slow motion, vblank clock, upload memory (2026-10-21)
 
 The user drove a race at 1080p/2x and exported five F8 reports (process 1236,

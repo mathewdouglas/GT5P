@@ -99,7 +99,16 @@ has the evidence, newest phase first (Phase 99 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: race slow motion fixed (Phase 102).** The race clock ran at
+**Latest: race-start stalls (Phase 103).** The user's 0.6-1.3 s race-start
+stalls were the replay thread reading shader bytecode one file at a time from
+a 54,000-file cache: 4.9 ms per cold read, with little RAM free to keep them
+warm. Races now record their shaders into `shadercache/race-shaders-v1.pack`
+and read it back in one read at loading (`RSX_SHADER_PACK=0` off): replay
+shader reads 9.1 s -> 0.8 s per run. Race preparation was also turned away by
+the 4096 resident cap (menu 1449 + race 3922); `RSX_PSO_RACE_EVICT=1` makes room
+but adds 12.6 s of loading, so it is opt-in. See Phase 103.
+
+**Race slow motion fixed (Phase 102).** The race clock ran at
 0.38-0.55 of real time: the title advances its simulation from a timer that
 its IDLE-priority timer service ("Main Thread", loop at `0x913270`) fires, and
 two guest CPUs left it too little time. Guest threads now get both hardware
