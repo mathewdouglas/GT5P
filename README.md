@@ -53,12 +53,12 @@ comes next is in [ROADMAP.md](ROADMAP.md); versions in [CHANGELOG.md](CHANGELOG.
 
 ## This fork: the disc build
 
-The latest High Speed Ring road-stretching regression is avoided by leaving
-the material experiment off (the default). `RSX_FP_SOURCE_RANGE=1` is for
-investigation only. Black barriers, rear-view sky overlap, tunnel lighting
-and racing-line/rim issues remain open. See
-[Phase 94](docs/progress.md#phase-94---high-speed-ring-captures-and-road-regression-rollback-2026-10-20)
-for retained capture evidence and next checks.
+The rear-view mirror now preserves its protective depth clear when a font
+surface reuses the scene's depth allocation. Tunnel lighting, black barriers
+and racing-line/rim issues remain open. The material experiment
+`RSX_FP_SOURCE_RANGE=1` stays opt-in; road streaks have also occurred with it off.
+See [Phase 95](docs/progress.md#phase-95---restore-mirror-depth-clears-after-glyph-surface-reuse-2026-10-20)
+for the fix, validation and remaining capture work.
 
 This is a fork of [sp00nznet/GT5P](https://github.com/sp00nznet/GT5P). Upstream
 targets the US PSN release, NPUA80075 v02.00. This fork adds a second target,

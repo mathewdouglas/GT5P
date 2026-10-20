@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 94)
+## Start here: state of play (2026-10-20, Phase 95)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 94 is the latest).
+has the evidence, newest phase first (Phase 95 is the latest).
 
 ### What works now
 
@@ -99,19 +99,20 @@ has the evidence, newest phase first (Phase 94 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: High Speed Ring graphics (Phase 94).** A source-range shader
-experiment reveals black barriers but stretches the road, so it is now
-opt-in only (`RSX_FP_SOURCE_RANGE=1`). Leave it unset for normal play.
-Range-off asphalt is normal. Read Phase 94 before enabling the experiment.
-The user's bridge/tunnel captures are retained as
-`scratch/rdoc/graphics94-manual_frame{6819,10164,10650}.rdc`; do not ask for
-another tunnel drive. The main scene overwrites the rear-view sky. A
-mirror-protecting depth-zero clear is absent from the failing capture but
-present in a fresh native manifest: follow its recording/replay next.
-Tunnel textures are valid, but material/exposure terms leave near-black
-lighting. Racing-line binding/data and other-car rims remain unverified.
-`PAD_HOLD` disables controller input for the whole process; omit it from
-interactive launches. Test: `scripts/test/fp_source_range.ps1`.
+**Latest: mirror depth-clear reuse (Phase 95).** The speed-hint glyph mask
+reuses scene depth at `02420000`; stale cached mask ownership discarded the
+mirror-protecting depth-zero clear. Real scene depth clears now survive that
+reuse (`RSX_DEPTH_CLEAR_REUSE=0` rolls back). Helper regression and all 17
+export cases pass; a live post-bridge shot retains the mirror sky. Bounded
+trace: `RSX_CLEAR_TRACE=1`. Tunnel lighting and blue Golf rims remain open.
+Retained tunnel captures are `scratch/rdoc/graphics94-manual_frame{10164,10650}.rdc`;
+do not ask for another tunnel drive. The exit capture's wheel shader uses
+procedural spinning-wheel coverage and is a different material from the Golf.
+The user offered a Golf capture. Omit `PAD_HOLD` from interactive launches:
+it disables controllers for the entire process.
+`RSX_FP_SOURCE_RANGE=1` remains experimental. A default-off run also showed
+road streaks, so Phase 94's apparent correlation was not exclusive evidence.
+Tests: `scripts/test/depth_clear_reuse.ps1`, `scripts/test/debug_export.ps1`.
 
 **Latest: audio worker headroom (Phase 93).** Profiling identifies three hot
 audio images, especially image 4's DSP loops. Windows/Clang builds compile

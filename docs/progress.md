@@ -9,6 +9,58 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 95 - Restore mirror depth clears after glyph-surface reuse (2026-10-20)
+
+The rear-view sky report now has a confirmed cause and a targeted fix. Tunnel
+lighting and the blue Golf's solid rims are still open; neither is marked fixed.
+
+### Mirror clear discarded by stale glyph ownership
+
+The speed-hint font mask reuses local allocation `0x02420000`, also used for the
+scene's depth buffer. The backend remembered that address in `s_mask_zeta_off`
+and discarded all subsequent real depth/stencil clears there, even after the
+current render state stopped being a glyph-mask pass. This explains the missing
+mirror-protecting clear in Phase 94's bridge capture: the main scene can then
+overwrite the mirror's far-away sky while nearer mirror cars survive.
+
+`graphics95-live.err` confirms the reuse during an actual 1080p/2x race: frames
+6962 onward request depth-zero clears with zeta and cached mask both
+`02420000`, `maskpass=0`, colour writes enabled, and scissor
+`416,97,448,129` (the mirror). The backend now retains the depth plane of these
+clears. Actual glyph-mask passes and their stencil-to-colour substitute retain
+their existing behaviour. `RSX_DEPTH_CLEAR_REUSE=0` restores the old decision;
+`RSX_CLEAR_TRACE=1` prints a bounded diagnostic trace. Both appear in exports.
+
+`scripts/test/depth_clear_reuse.ps1` extracts the actual backend decision helpers
+and checks ordinary clears, address reuse, mask drawing, independent planes,
+and rollback. Default and rollback cases pass. All 17 debug-export integration
+cases pass. A live race reached and passed the first bridge; the later window
+shot `graphics95-drive1.png` retains the reflected sky and bridge after the font
+hint appeared. `graphics95-live_frame5501.rdc` retains an earlier race frame with
+ordered depth clears. A matching post-hint failing/fixed GPU-frame pair is still
+useful for broader validation. The run ended with `window closed; exiting`,
+not a recorded crash. Capture runs are not performance benchmarks.
+
+### Remaining material evidence
+
+The retained tunnel frame still has valid textures and very low computed
+lighting, as recorded in Phase 94. There is no demonstrated texture-load fault
+or justified brightness multiplier yet. No repeat tunnel drive is needed.
+
+Tunnel-exit draw 481/event 6600 is a different wheel material from the user's
+blue Golf screenshot. It has a real spoked normal texture and a procedural
+spinning-wheel coverage shader, with blending enabled. That does not establish
+whether the Golf's solid discs are faulty coverage, lighting, or authored motion
+blur. The user offered to capture the Golf; use a normal controller-enabled
+RenderDoc launch without `PAD_HOLD` and capture while the wheel is visible.
+
+A default-path run also showed road streaks (`graphics95-drive0.png`) with the
+source-range experiment unset. Therefore Phase 94's apparent range-on/off
+correlation does **not** establish that experiment as the sole cause. Keep it
+opt-in while investigating the road separately; do not promise range-off always
+prevents streaking. The later frame 5501 has mostly normal asphalt with some
+streaked patches. No shader cache was deleted or moved.
+
 ## Phase 94 - High Speed Ring captures and road-regression rollback (2026-10-20)
 
 The user reported black barriers, missing tunnel lighting, incorrect rims,
