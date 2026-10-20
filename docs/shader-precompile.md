@@ -124,3 +124,9 @@ to the CLI controls. `RSX_SHADER_PROFILES=0` disables profile learning and
 `RSX_SHADER_ERRORS=0` silences new bounded async compiler diagnostics.
 `RSX_FP_CATALOG=<existing parent/dir>` is an optional raw-program diagnostic;
 it is not needed for normal preparation.
+
+Volume textures (Phase 96): learned profiles also record volume-unit bindings
+in the upper half of the existing `ghi` field. Offline warmup uses those
+bindings to compile Texture3D variants; older profiles remain readable and
+represent 2D/cube-only states. Visiting wheel materials once learns their new
+variants. `RSX_TEX3D=0` selects the older 2D interpretation for diagnostics.

@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 95)
+## Start here: state of play (2026-10-20, Phase 96)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 95 is the latest).
+has the evidence, newest phase first (Phase 96 is the latest).
 
 ### What works now
 
@@ -99,6 +99,16 @@ has the evidence, newest phase first (Phase 95 is the latest).
 
 ### Open work, in the order the user left it
 
+**Latest: wheel volume textures (Phase 96).** The Golf's spinning-wheel
+material uses 32x16x8 and 64x64x8 textures. The backend previously uploaded
+only their first plane and sampled XY. It now decodes/uploads full volumes,
+uses Texture3D/XYZ and keys profiles by volume units (`RSX_TEX3D=0` rollback;
+`RSX_TEX_DIMDBG=1` traces dimensions). CPU and WARP tests pass; a live race
+capture confirms full resources and wheel bindings. Close Golf side-view
+acceptance is still required; a fully covered wheel-centre pixel is not proof
+of correct gaps. See Phase 96 and `scripts/test/volume_textures.ps1`.
+Tunnel lighting remains open; keep the existing tunnel captures.
+
 **Latest: mirror depth-clear reuse (Phase 95).** The speed-hint glyph mask
 reuses scene depth at `02420000`; stale cached mask ownership discarded the
 mirror-protecting depth-zero clear. Real scene depth clears now survive that
@@ -108,7 +118,7 @@ trace: `RSX_CLEAR_TRACE=1`. Tunnel lighting and blue Golf rims remain open.
 Retained tunnel captures are `scratch/rdoc/graphics94-manual_frame{10164,10650}.rdc`;
 do not ask for another tunnel drive. The exit capture's wheel shader uses
 procedural spinning-wheel coverage and is a different material from the Golf.
-The user offered a Golf capture. Omit `PAD_HOLD` from interactive launches:
+The user supplied two Golf captures (`graphics95-golf_frame{7330,8018}.rdc`). Omit `PAD_HOLD` from interactive launches:
 it disables controllers for the entire process.
 `RSX_FP_SOURCE_RANGE=1` remains experimental. A default-off run also showed
 road streaks, so Phase 94's apparent correlation was not exclusive evidence.

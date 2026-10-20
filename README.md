@@ -55,10 +55,12 @@ comes next is in [ROADMAP.md](ROADMAP.md); versions in [CHANGELOG.md](CHANGELOG.
 
 The rear-view mirror now preserves its protective depth clear when a font
 surface reuses the scene's depth allocation. Tunnel lighting, black barriers
-and racing-line/rim issues remain open. The material experiment
+and racing-line issues remain open. Spinning-wheel volume textures now upload
+and sample in 3D; close Golf rim verification remains pending. The material experiment
 `RSX_FP_SOURCE_RANGE=1` stays opt-in; road streaks have also occurred with it off.
 See [Phase 95](docs/progress.md#phase-95---restore-mirror-depth-clears-after-glyph-surface-reuse-2026-10-20)
-for the fix, validation and remaining capture work.
+for the mirror fix and [Phase 96](docs/progress.md#phase-96---restore-volume-textures-used-by-spinning-wheels-2026-10-20)
+for volume-texture support and remaining verification.
 
 This is a fork of [sp00nznet/GT5P](https://github.com/sp00nznet/GT5P). Upstream
 targets the US PSN release, NPUA80075 v02.00. This fork adds a second target,

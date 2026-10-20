@@ -9,6 +9,70 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 96 - Restore volume textures used by spinning wheels (2026-10-20)
+
+The user's Golf captures (`graphics95-golf_frame7330.rdc` and
+`graphics95-golf_frame8018.rdc`) expose a missing renderer feature: wheel
+coverage, normals and colour use **3D textures**, but the backend uploaded one
+2D slice and the fragment decompiler discarded the third coordinate. The user
+confirmed the solid rims occur only in this build. This is a port defect;
+calling it the game's authored blur was premature.
+
+### Evidence and implementation
+
+In frame 8018, the rear rim is draw 1149/event 12658. Its two 32x16 coverage
+textures contain one uniform slice each; the resulting coverage at pixel
+1053,600 is 1.0039. Live register tracing (`RSX_TEX_DIMDBG=1`) identifies these
+as **32x16x8** textures: dimension 3, CONTROL3 `00800000`. Normal data also uses
+a 32x16x8 BC3 volume, and colour uses a 64x64x8 BC1 volume. The first plane
+cannot describe their full material.
+
+The shared texture-layout helper now decodes rectangular 3D Morton layouts
+and BC1/2/3 VTC depth groups into pitched volume slices. Compressed volumes
+expand to RGBA8 because D3D12 does not provide block-compressed Texture3D
+resources. The VTC block arrangement follows the published
+[NVIDIA extension specification](https://registry.khronos.org/OpenGL/extensions/NV/NV_texture_compression_vtc.txt);
+the decoder is independently written. D3D12 creates Texture3D resources and
+views, includes depth in texture-cache identity, and avoids 2D render-target
+substitutions for volumes. TEX/TXP/TXL/TXB retain XYZ coordinates.
+
+Volume-unit bits occupy the upper 16 bits of the existing `ghi` PSO/profile
+field; its lower bits retain gamma state. This separates shader variants while
+preserving old profile files and the existing offline warmup path. Old profiles
+have a zero volume mask. `RSX_TEX3D=0` restores the previous 2D path without
+removing any cache. Both new switches appear in debug exports, and native
+capture manifests now include texture depth.
+
+### Validation and remaining work
+
+- `scripts/test/volume_textures.ps1`: rectangular Morton addressing, row/slice
+  padding, BC1/2/3 four-plane groups and short tails, RGB565/interpolation,
+  transparent BC1 and BC3 alpha; 32 actual WARP-rendered lookups across the
+  four texture opcodes, including projected XYZ.
+- Existing sampled-unit/sampler tests, mirror depth-clear tests and all 17
+  debug-export cases pass. Production build passes; no generated-source
+  instrumentation backups were present.
+- A live 1080p/2x-MSAA race reached 0:21.716 and produced
+  `golf96-volume_frame5350.rdc` without shader compile/PSO errors. The capture
+  contains the expected 32x16x8 and 64x64x8 resources. Wheel draw 465/event
+  7298 binds all four volumes: its coverage tables contain 888 and 633 distinct
+  four-byte values across 16 KB instead of a single uniform 2 KB plane.
+  Reports and the game-window image are under `scratch/pv/golf96-volume*`.
+
+This confirms full-volume upload and sampling, **not final visual acceptance
+of the Golf spokes**: the new shot has the Golf farther ahead, and the close
+wheel views are in the mirror. A sampled mirror-wheel centre remains fully
+covered, which alone neither proves nor disproves correct spoke gaps. Compare
+a close Golf side view before marking the rim report closed. Base-level
+volumes are supported; all observed wheel volumes have one mip. Volume mip
+chains and TXD remain outside this change.
+
+The mirror fix from Phase 95 remains enabled. **Tunnel lighting, black barriers
+and intermittent racing-line/road defects remain open.** No brightness override
+was added and this volume change is not evidence that tunnel lighting is fixed.
+Retain the existing tunnel captures; do not request another drive solely to
+replace them.
+
 ## Phase 95 - Restore mirror depth clears after glyph-surface reuse (2026-10-20)
 
 The rear-view sky report now has a confirmed cause and a targeted fix. Tunnel
