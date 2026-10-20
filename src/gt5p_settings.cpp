@@ -347,7 +347,7 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "# screen appears at once and its last details a moment later. Needs the\n"
          "# shader cache. [RSX_SHADER_ASYNC]\n"
          "shader_precompile = " << (s.shader_precompile ? "true" : "false") << "\n"
-         "# Prepare pipelines recorded by earlier runs before the game starts.\n"
+         "# Prepare recorded pipelines while the game starts, with menu states first.\n"
          "# New tracks/cars/effects may still compile later; first run learns records.\n"
          "# Needs shader cache. [RSX_SHADER_WARMUP]\n"
          "shader_warmup = " << (s.shader_warmup ? "true" : "false") << "\n"

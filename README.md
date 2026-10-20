@@ -55,9 +55,11 @@ comes next is in [ROADMAP.md](ROADMAP.md); versions in [CHANGELOG.md](CHANGELOG.
 
 F1 now offers **Background pipeline creation** and **Prepare race pipelines**,
 both enabled by default after restart. Race loading prepares previously learned
-states; unexpected driver pipelines build in the background. First visits can
-still introduce new states. See [shader preparation](docs/shader-precompile.md#race-loading-and-background-pipelines)
-and [Phase 98](docs/progress.md#phase-98---loading-time-race-preparation-and-asynchronous-driver-pipelines-2026-10-20)
+states; unexpected driver pipelines build in the background. With **Preload known
+shaders** enabled, startup preparation runs alongside the opening movie,
+prioritizing live draws and learned menu states. First visits
+can still introduce new states. See [shader preparation](docs/shader-precompile.md#race-loading-and-background-pipelines)
+and [Phase 99](docs/progress.md#phase-99---prepare-the-cache-alongside-opening-screens-and-movie-2026-10-20)
 for validation and limits.
 
 The rear-view depth-clear fix remains enabled. Tunnel lighting, black barriers,

@@ -106,9 +106,9 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.shader_precompile ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_precompile = v != 0; }, nullptr },
         { L"VIDEO", L"Preload known shaders",
-          L"Prepare pipelines recorded by previous runs before starting the game. The first "
-          L"run learns them; unseen tracks, cars or effects can still compile later. Needs "
-          L"the shader cache. Adds startup time and uses more memory.",
+          L"Prepare recorded pipelines while the game starts and the movie plays. Live draws "
+          L"and learned opening/menu states take priority. First visits still learn. Needs "
+          L"shader cache and background pipelines; uses more memory.",
           "RSX_SHADER_WARMUP", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_warmup ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_warmup = v != 0; }, nullptr },

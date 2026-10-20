@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 98)
+## Start here: state of play (2026-10-20, Phase 99)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 98 is the latest).
+has the evidence, newest phase first (Phase 99 is the latest).
 
 ### What works now
 
@@ -98,6 +98,21 @@ has the evidence, newest phase first (Phase 98 is the latest).
   `scripts/test/unnorm_hi.ps1` checks the actual backend helpers without a GPU.
 
 ### Open work, in the order the user left it
+
+**Latest: background startup warmup (Phase 99).** With startup warmup and async
+pipelines enabled, the present owner queues the preparation pass and releases
+startup immediately. The existing below-normal worker services live draws
+first, learned opening/menu recipes next, then the remaining recipes. Race
+loading interrupts the remaining startup pass. Membership:
+`shadercache/warmup-v1/menu-v1.txt`, learned during boot/menu visits; preserve it.
+`RSX_SHADER_WARMUP_BACKGROUND=0` or `RSX_PSO_ASYNC=0` selects legacy blocking
+startup. Precompile-only completion remains blocking. No new F1 toggle: existing
+Preload known shaders help now describes background behavior. One native call
+cannot be preempted; first visits still learn and may show late details.
+`pso99-movie` shows copyright and movie frames while preparation runs for 27 s;
+`pso99-menu-priority`/`pso99-menu-ui` prepare 132 menu records first, then reach
+visible Kyoto/menu UI. WARP scheduler/shutdown, four real preload fixtures and
+23 settings/export checks pass. See Phase 99 for limits and evidence.
 
 **Latest: race loading preparation / async pipelines (Phase 98).** F1 now has
 Background pipeline creation (`video.pipeline_async`, `RSX_PSO_ASYNC`) and

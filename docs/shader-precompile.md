@@ -4,7 +4,7 @@
 the local executable and unpacked game assets, then runs the production
 translator/compiler before guest entry. It writes ordinary DXBC entries to
 the same shadercache used during play. It is separate from F1's **Preload
-known shaders**, which prepares previously recorded native pipelines.
+known shaders**, which prepares previously recorded native pipelines during startup.
 
 Keep the shader cache enabled. Close the game before compiling. All extracted
 programs, bytecode, source indexes and logs remain local and must not be
@@ -171,3 +171,32 @@ shader cache and background pipeline creation. F8 reports include queue and
 preparation counters. Tests: `scripts/test/pso_async.py`,
 `scripts/test/shader_warmup.py`, `scripts/test/settings_test.ps1` and
 `scripts/test/debug_export.ps1`.
+
+## Background startup preparation
+
+With **Preload known shaders** and **Background pipeline creation** enabled,
+normal startup now queues preparation and starts the game immediately after
+backend initialization. Opening screens, the movie, audio and menus run while
+the existing below-normal-priority pipeline worker prepares the cache.
+
+Live draw requests take priority at each worker turn. The worker first prepares
+previously observed opening/menu recipes from `warmup-v1/menu-v1.txt`, then scans
+the remaining recipes. Race-loading preparation can interrupt that scan too.
+Only one native driver creation runs on the worker at a time; an active driver
+call cannot be interrupted. The priority list is learned during opening screens
+and main-menu visits, and stops collecting when entering dealerships or races.
+It requires a visit to learn a new menu scene; unseen states can still appear
+late. Preserve this index along with the shader cache.
+
+Startup scans remain bounded to 4096 menu entries and 4096 directory records,
+sharing the existing 4096-resident-pipeline limit. Progress and active startup
+state appear in logs/F8 exports without replacing the movie's window title.
+The `loaded` counter includes reuse in both passes, so it is not a unique
+pipeline count. Unprepared records include invalid/missing recipes and recipes
+that exceed the resident limit; they retain normal demand creation.
+
+`RSX_SHADER_WARMUP_BACKGROUND=0` restores blocking startup for comparison.
+Disabling **Background pipeline creation** also selects the blocking path.
+The offline precompile-only command keeps its existing blocking completion
+semantics. Explicit offline library compilation is still separate from this
+normal-play startup preparation. No cache files are removed or invalidated.

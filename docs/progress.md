@@ -9,6 +9,79 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 99 - Prepare the cache alongside opening screens and movie (2026-10-20)
+
+The user reports a white window while startup shader preloading completes and
+requests background preparation, with the opening/menu shaders taking priority.
+The previous startup barrier called the entire native-pipeline warmup loop on
+the presentation owner before releasing guest entry. Even with asynchronous
+pipeline misses enabled, that explicit loop still blocked the game.
+
+### Startup and scheduling
+
+`rsx_d3d12_backend_prewarm()` now queues startup preparation onto the Phase 98
+worker and returns immediately in normal asynchronous mode. The existing
+startup event still waits for backend initialization and this queue operation;
+it no longer waits for the recipe scan. The present thread drains the FIFO and
+services the window normally while the guest loads/plays the movie. No additional
+compiler thread pool is created. Explicit shader-library/offline work retains
+its existing semantics.
+
+At each worker turn, demand pipeline jobs take precedence. The background
+startup pass prepares `warmup-v1/menu-v1.txt` before its general directory scan;
+race-loading preparation can also interrupt startup work. The pass yields
+between recipes and runs on the existing below-normal-priority worker. An
+already-running driver call is not preemptible, so this does not guarantee
+zero delay on a previously unseen screen.
+
+Opening and main-menu pipeline usage is learned in a separate bounded membership
+table, with writes on the worker, using the existing filesystem milestone hook.
+Boot begins in menu scope; TopMenuTemplate restores it on return. Course, pit,
+driving-options, race loading and dealership selection end menu scope. It
+records observed menu scenes, not every possible scene or asset. Race membership
+and menu membership remain separate, and neither index contains guest addresses
+or game assets. The cache is preserved. The index can be learned with startup
+preloading off as long as pipeline async/cache recording are enabled.
+
+Limits remain 256 demand jobs, 64 MiB copied demand source, 4096 resident
+pipelines. Startup reads at most 4096 menu entries and 4096 directory records.
+It validates recipes and code through the same reader as race preparation,
+reuses resident pipelines and declines unretained work when the cache is full.
+The loaded counter includes recipe reuse across both passes; it is not a unique
+resident count. Rejected/unprepared counts include both invalid records and
+resident-capacity limits. These states remain eligible for demand creation.
+Shutdown closes enumeration/file handles, cancels startup and balances the busy
+indicator before releasing the device.
+
+F1's existing **Preload known shaders** help and saved-settings comments now
+explain the background behavior and dependency on **Background pipeline
+creation**. `RSX_SHADER_WARMUP_BACKGROUND=0` restores the old blocking path;
+`RSX_PSO_ASYNC=0` also selects it. `GT5P_SHADER_PRECOMPILE_ONLY=1` still waits
+for completion. The new environment control and startup/menu counters are in
+F8 diagnostics. No worker window-title updates overwrite the playing movie.
+
+### Validation
+
+- Production-queue WARP test: a startup request returns before a blocked driver
+  call, the learned menu recipe runs before the general scan, a live draw queued
+  during that call wins the next turn, and missing records are rejected.
+  Shutdown during an active startup build releases two concurrent loading
+  waiters, cancels queued source and balances all busy/pending ownership. Earlier
+  deduplication, source-lifetime and capacity tests still pass.
+- `shader_warmup.py` now checks both blocking and background startup with isolated
+  valid/damaged local records. Blocking: 3/0 and 2/2 loaded/rejected; background:
+  4/0 and 3/2, including a priority-menu reuse. All four enter guest execution.
+  Settings/debug-export checks pass (23 cases), including the new env allowlist.
+- `pso99-movie`, 1080p/2x MSAA, with TV content visible: copyright at 6 s and movie
+  at 22 s are visible in window-only shots while startup preparation continues.
+  The initial scan finishes after 27266 ms; it did not hold guest startup for
+  that duration. Subsequent `pso99-menu-priority` and `pso99-menu-ui` runs prepare
+  132 observed opening/menu records first. Kyoto renders, and the latter's 28 s
+  shot shows the menu icons and readable Confirmation dialog. Logs/shots are in
+  `scratch/pv/pso99-*`. These are startup acceptance checks, not race FPS tests.
+- Production build passes. No generated source or game data is tracked. The
+  separate tunnel/barrier/material reports remain open.
+
 ## Phase 98 - Loading-time race preparation and asynchronous driver pipelines (2026-10-20)
 
 The user requested the first two stutter mitigations: prepare race pipelines

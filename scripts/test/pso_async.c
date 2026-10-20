@@ -19,7 +19,10 @@ typedef uint32_t u32; typedef uint64_t u64;
 typedef struct {D3D12_INPUT_ELEMENT_DESC desc;char name[32];} PsoWarmInput;
 typedef struct {u64 hash,vs_hash,ps_hash;u32 vs_bytes,ps_bytes;D3D12_GRAPHICS_PIPELINE_STATE_DESC desc;PsoWarmInput input[32];} PsoWarmRecipe;
 static struct {ID3D12Device* device;ID3D12RootSignature* vp_root_sig;} s_d3d;
-static volatile LONG g_rsx_shaders_pending, calls;
+static volatile LONG g_rsx_shaders_pending, g_rsx_shader_busy, calls;
+static u32 s_pso_warm_loaded,s_pso_warm_rejected;
+static volatile LONG trace_count;
+static u32 trace[1024];
 static DWORD caller,driver;
 static DWORD delay_ms=100;
 static HANDLE allow_driver;
@@ -40,6 +43,7 @@ static int pso_warm_get(u64 hash,ID3D12PipelineState** out){
 }
 static u64 guest_pso_hash(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd){(void)pd;return 0x222;}
 static HRESULT create_guest_pso_cached(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd,ID3D12PipelineState** out){
+    LONG t=InterlockedIncrement(&trace_count)-1;if(t<1024)trace[t]=pd->SampleMask;
     InterlockedIncrement(&calls);driver=GetCurrentThreadId();CHECK(driver!=caller);
     CHECK(WaitForSingleObject(allow_driver,5000)==WAIT_OBJECT_0);Sleep(delay_ms);
     HRESULT result=s_d3d.device->lpVtbl->CreateGraphicsPipelineState(s_d3d.device,pd,&IID_ID3D12PipelineState,(void**)out);
@@ -73,6 +77,10 @@ static HRESULT poll(u64 hash,ID3D12PipelineState** pso){
     while((hr=pso_queue_get(hash,&template,pso))==E_PENDING){CHECK(GetTickCount64()-began<5000);Sleep(1);}return hr;
 }
 int main(int argc,char** argv){
+    _putenv_s("RSX_SHADER_WARMUP_BACKGROUND","0");CHECK(!pso_startup_background());
+    _putenv_s("RSX_SHADER_WARMUP_BACKGROUND","1");CHECK(pso_startup_background());
+    _putenv_s("GT5P_SHADER_PRECOMPILE_ONLY","1");CHECK(!pso_startup_background());
+    _putenv_s("GT5P_SHADER_PRECOMPILE_ONLY","");
     CHECK(argc==2);snprintf(folder,sizeof folder,"%s",argv[1]);caller=GetCurrentThreadId();
     IDXGIFactory4* factory=NULL;IDXGIAdapter* adapter=NULL;
     CHECK(SUCCEEDED(CreateDXGIFactory1(&IID_IDXGIFactory4,(void**)&factory)));
@@ -135,6 +143,22 @@ int main(int argc,char** argv){
     puts("PASS: loading timeout releases the caller while background preparation finishes");
     AcquireSRWLockExclusive(&warm_lock);warm->lpVtbl->Release(warm);warm=NULL;ReleaseSRWLockExclusive(&warm_lock);
     s_pso_warm_n=PSO_WARM_MAX;before=calls;CHECK(!pso_race_recipe(0x222));CHECK(calls==before);s_pso_warm_n=0;
+    /* Startup request returns before slow driver work. Learned menu recipes
+     * lead the scan; a draw queued during one build wins the next worker turn. */
+    snprintf(path,sizeof path,"%s/menu-v1.txt",folder);f=fopen(path,"w");CHECK(f);fputs("0000000000000222\n",f);fclose(f);
+    snprintf(path,sizeof path,"%s/pso_0000000000000222.recipe",folder);f=fopen(path,"w");CHECK(f);fputs("synthetic",f);fclose(f);
+    snprintf(path,sizeof path,"%s/pso_0000000000000999.recipe",folder);f=fopen(path,"w");CHECK(f);fputs("missing",f);fclose(f);
+    ResetEvent(allow_driver);LONG start_trace=trace_count;began=GetTickCount64();pso_startup_begin();
+    CHECK(GetTickCount64()-began<80);
+    while(trace_count==start_trace) {CHECK(GetTickCount64()-began<3000);Sleep(1);}
+    CHECK(s_startup_active && g_rsx_shader_busy==1);
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC urgent=template;urgent.SampleMask=123;
+    CHECK(pso_queue_get(3,&urgent,&pso)==E_PENDING);SetEvent(allow_driver);
+    CHECK(SUCCEEDED(poll(3,&pso)));pso->lpVtbl->Release(pso);
+    while(s_startup_active) {CHECK(GetTickCount64()-began<5000);Sleep(1);}
+    CHECK(trace[start_trace]==~0u && trace[start_trace+1]==123);
+    CHECK(s_pso_warm_loaded>=2 && s_pso_warm_rejected==1 && g_rsx_shader_busy==0);
+    puts("PASS: startup returns immediately; menu recipes lead; live draws preempt the remaining scan; damaged records are rejected");
     /* Saturation must never fall back to driver creation on the caller. */
     delay_ms=0;ResetEvent(allow_driver);
     for(u64 i=1000;i<1000+PSO_ASYNC_MAX+2;i++)CHECK(pso_queue_get(i,&template,&pso)==E_PENDING);
@@ -142,6 +166,10 @@ int main(int argc,char** argv){
     while(g_rsx_shaders_pending) {CHECK(GetTickCount64()-began<15000);Sleep(1);}
     CHECK(s_pso_source_bytes==0);
     ResetEvent(allow_driver);
+    AcquireSRWLockExclusive(&warm_lock);if(warm)warm->lpVtbl->Release(warm);warm=NULL;ReleaseSRWLockExclusive(&warm_lock);
+    start_trace=trace_count;began=GetTickCount64();pso_startup_begin();
+    while(trace_count==start_trace) {CHECK(GetTickCount64()-began<3000);Sleep(1);}
+    CHECK(s_startup_active);
     void* bigvs=calloc(1,PSO_WARM_CODE_MAX);void* bigps=calloc(1,PSO_WARM_CODE_MAX);CHECK(bigvs && bigps);
     memcpy(bigvs,vertex,template.VS.BytecodeLength);memcpy(bigps,pixel,template.PS.BytecodeLength);
     D3D12_GRAPHICS_PIPELINE_STATE_DESC big=template;
@@ -158,7 +186,7 @@ int main(int argc,char** argv){
     SetEvent(allow_driver);pso_queue_stop();
     CHECK(WaitForMultipleObjects(2,loaders,TRUE,3000)==WAIT_OBJECT_0 && loaders_returned==2);
     CloseHandle(loaders[0]);CloseHandle(loaders[1]);
-    CHECK(g_rsx_shaders_pending==0 && s_pso_source_bytes==0 && s_race_waiters==0);
+    CHECK(g_rsx_shaders_pending==0 && g_rsx_shader_busy==0 && s_pso_source_bytes==0 && s_race_waiters==0);
     puts("PASS: queue/source/resident budgets stay bounded; shutdown releases concurrent loading gates and pending ownership");
     if(warm)warm->lpVtbl->Release(warm);CloseHandle(allow_driver);
     vs->lpVtbl->Release(vs);ps->lpVtbl->Release(ps);s_d3d.vp_root_sig->lpVtbl->Release(s_d3d.vp_root_sig);
