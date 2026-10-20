@@ -99,7 +99,14 @@ has the evidence, newest phase first (Phase 99 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: race-start stalls (Phase 103).** The user's 0.6-1.3 s race-start
+**Latest: memory (Phase 104).** Private bytes overstate RAM: the NVIDIA
+driver backs every GPU allocation with equal page-file commit that is never
+resident, so read the working set (F8 now leads with it). Per-frame buffers
+follow measured peaks: `RSX_DRAW_CAP` 6144 (was 12288) and raw vertices 48 MB
+(`RSX_VTXGPU_MB`, was 96). Race working set 2.84 -> 2.59 GB, FPS unchanged.
+The 1 GB mapped view in the process is NVIDIA's own shader cache file.
+
+**Race-start stalls (Phase 103).** The user's 0.6-1.3 s race-start
 stalls were the replay thread reading shader bytecode one file at a time from
 a 54,000-file cache: 4.9 ms per cold read, with little RAM free to keep them
 warm. Races now record their shaders into `shadercache/race-shaders-v1.pack`

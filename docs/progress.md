@@ -9,6 +9,47 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 104 - What the memory really is; per-frame buffers sized to use (2026-10-21)
+
+The user asked why the port needs about 5 GB when the PS3 has 512 MB.
+A committed-memory map of the process in a High Speed Ring race (1080p/2x,
+private 3.86 GB, working set 2.84 GB) shows:
+
+| Allocation | Committed | Notes |
+| --- | --- | --- |
+| Guest address space | 948 MB of a 4 GB reservation | PS3 main/RSX memory plus emulator regions |
+| Per-frame upload buffers | ~730 MB | Constants 198 MB, raw vertices 256 MB, vertices 128, fragment constants 102, indices 32, descriptors 12 |
+| Their Phase 101 GPU copies | ~730 MB | Same sizes again; see below |
+| ~40-55 allocations of 15 MB | ~0.6-0.8 GB | 1080p 2x MSAA surfaces: GPU resources |
+| Lifted code image | 202 MB | Image-backed |
+| One 1 GB mapped view | 1024 MB | NVIDIA's own on-disk shader cache (`AppData\Local\NVIDIA\DXCache\*.nvph`), file-backed |
+
+**Private bytes overstate RAM.** A standalone D3D12 probe on this machine
+(RTX 4060): every default-heap allocation adds its size to process private
+bytes but nothing to the working set. This held for committed buffers, ones
+created without zeroing, explicit heaps and render targets. A 512 MB
+upload buffer adds 512 MB to both. The driver reserves page-file backing for
+GPU allocations. So the GPU copies and render targets cost commit charge, not
+RAM; `RSX_VRAM_FRAME=0` drops private by about 700 MB but frees no RAM worth
+the GPU time. The working set is the figure that matters. F8's memory line now
+leads with it.
+
+**Per-frame buffers sized to measured peaks (step 1):**
+
+- `RSX_DRAW_CAP` (default 6144, up to 12288): constant slots are draw indices,
+  so the constant, fragment-constant and descriptor buffers follow the draw
+  cap. Peaks: race 2627-3484 draws, Ferrari 3077-3336. Record arrays keep
+  12288 entries.
+- Raw vertex bytes per half: 48 MB (was 96; `RSX_VTXGPU_MB`). Peaks 11-28 MB;
+  a full region falls back to CPU conversion.
+- Race: working set 2842 -> 2592 MB, private 3.86 -> 3.33 GB, GPU copies 1240 ->
+  476 MB. Median 56 FPS, unchanged; Ferrari 25 FPS. 3 of 3 boots then reached
+  the dealer page; one earlier boot hung just after the opening dialog (the
+  rare start-up hang of Phase 22's kind; not reproduced).
+
+What is left is mostly irreducible here: the emulated PS3 memory (948 MB),
+the remaining upload buffers (~480 MB), code, the driver and caches.
+
 ## Phase 103 - Race-start stalls: cold shader reads, race shader pack (2026-10-21)
 
 Two F8 exports from process 13624 (10:07:42 and 10:09:00; build with Phase

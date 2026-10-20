@@ -224,10 +224,13 @@ std::string report(HWND game) {
      * any thread touching them waits on the disk. */
     PROCESS_MEMORY_COUNTERS_EX pmc{}; pmc.cb = sizeof pmc;
     if (K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof pmc))
-        fprintf(f, "Process memory: private %llu MB, working set %llu MB (peak %llu MB), "
-            "page faults %lu; system commit %llu of %llu MB\n\n",
-            (unsigned long long)(pmc.PrivateUsage >> 20), (unsigned long long)(pmc.WorkingSetSize >> 20),
-            (unsigned long long)(pmc.PeakWorkingSetSize >> 20), pmc.PageFaultCount,
+        /* Private includes the page-file backing the driver reserves for
+         * every GPU allocation (measured 1:1 on NVIDIA, never resident), so
+         * the working set is the RAM actually in use (Phase 104). */
+        fprintf(f, "Process memory: working set %llu MB (RAM in use; peak %llu MB), private %llu MB "
+            "(includes GPU allocations' backing), page faults %lu; system commit %llu of %llu MB\n\n",
+            (unsigned long long)(pmc.WorkingSetSize >> 20), (unsigned long long)(pmc.PeakWorkingSetSize >> 20),
+            (unsigned long long)(pmc.PrivateUsage >> 20), pmc.PageFaultCount,
             (mem.ullTotalPageFile - mem.ullAvailPageFile) >> 20, mem.ullTotalPageFile >> 20);
     const auto& s = gt5p_settings();
     fprintf(f, "Loaded settings: resolution=%d msaa=%d vsync=%d shader_cache=%d async=%d "
