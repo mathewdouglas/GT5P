@@ -36,7 +36,9 @@ int main() {
     D3D11_RASTERIZER_DESC raster={};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     ComPtr<ID3D11RasterizerState> rs;check(device->CreateRasterizerState(&raster,&rs));context->RSSetState(rs.Get());
     context->VSSetShader(vs.Get(),nullptr,0);context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    bool off=!getenv("RSX_FP_SOURCE_RANGE") || strcmp(getenv("RSX_FP_SOURCE_RANGE"),"1");
+    const char* setting=getenv("RSX_FP_SOURCE_RANGE");
+    int policy=setting && !strcmp(setting,"1")?1:setting && !strcmp(setting,"2")?2:0;
+    bool off=policy==0;
     unsigned tested=0;
     for(int mode=0;mode<6;mode++) for(int abs=0;abs<2;abs++) for(int neg=0;neg<2;neg++) for(int operand=0;operand<3;operand++) {
         if (operand==2 && abs) continue; // Existing source-2 ABS support is a separate issue.
@@ -67,7 +69,7 @@ int main() {
         D3D11_MAPPED_SUBRESOURCE mapped;check(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped));
         const float* result=(const float*)mapped.pData;
         for(int lane=0;lane<4;lane++) {
-            float expected=values[lane];int precision=off?0:mode;
+            float expected=values[lane];int precision=off || (policy==2 && mode!=4)?0:mode;
             if(precision==4)expected=bounded(expected,precision);
             if(abs&&(operand!=2||!off))expected=fabsf(expected);
             if(precision!=4)expected=bounded(expected,precision);
@@ -77,5 +79,5 @@ int main() {
         }
         context->Unmap(readback.Get(),0);
     }
-    printf("PASS: %u rendered source-range lanes (%s), including all operand slots and modifier ordering\n",tested,off?"stable default":"experimental");
+    printf("PASS: %u rendered source-range lanes (%s), including all operand slots and modifier ordering\n",tested,off?"rollback":policy==1?"all ranges":"saturation only");
 }

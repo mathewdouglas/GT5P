@@ -9,6 +9,93 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 97 - Rolling-start pacing reports and isolated saturation handling (2026-10-20)
+
+The user supplied five F8 exports from process 1592, source `cf6a808`, at
+19:23:58 through 19:25:32. These are ZIP reports with screenshots and logs,
+**not RenderDoc frames**. They are preserved in `logs/debug/`; extracted working
+copies are `scratch/pv/graphics97-reports/`. The last screenshots confirm the
+black pre-tunnel barrier and dark tunnel remain present in Phase 96.
+
+### Rolling-start lag is measurable
+
+The first export shows the panning rolling start, 13.5 seconds after
+QuickArcadeRoot. Its retained submission history contains eight gaps over
+250 ms, with a maximum of **852 ms**, about **801 ms** in the submit/present
+path. The last five seconds have a **42.59 ms median, 90.16 ms p95**, despite
+shader busy/pending being zero at export. Several earlier automatic snapshots
+show active compilation. Snapshot counters and the momentary FPS display
+cannot rule out earlier stalls or establish smooth 30 FPS.
+
+The later exports are smoother: report 4 has a five-second median/p95 of
+18.94/22.80 ms. Report 5 contains another 704 ms gap (673 ms submit time), and
+the pipeline-built count increases from 154 to 272 while completed shaders
+remain 122. This implicates pipeline work as a strong lead; it does not prove
+every gap is a driver compile. These are render-submission intervals rather
+than measured display scan-out times. Report histories overlap; do not count
+the same retained hitch snapshots as new freezes in every export.
+
+`scripts/diag/debug_pacing.py logs/debug/gt5p-debug-20261020*.zip` reproduces
+these numbers without extracting ZIP contents. It prints one-/five-second
+windows, the retained history, worst gaps and live shader/memory metadata.
+
+An instrumented 1080p/2x run (`graphics97-saturation`) measured 1.165 seconds
+in pipeline creation across one five-second window, against 196 ms fetching
+DXBC and 40 ms building HLSL. This test used settings-disabled defaults, so
+startup warmup was **off**, unlike the user's warmup-enabled run. It is not a
+before/after performance benchmark and does not prove the introduction fixed.
+
+Both cached-blob and uncached driver pipeline calls now contribute to busy
+state and persistent timing diagnostics in F8 exports. Previously a cached
+blob could still block in the driver without entering the busy counter.
+Bounded `[pso-hitch]` lines include frame, duration, cache-blob presence and
+result. `RSX_PSO_HITCH_MS=0` disables the lines; the default threshold is 50 ms.
+This makes the next report distinguish a hidden cached-driver stall from
+ordinary bytecode compilation; it **does not move pipeline creation off the
+render thread**. Existing startup preload remains the mitigation for known
+pipelines; first-seen states can still hitch.
+
+### Separate operand saturation from experimental fixed ranges
+
+The retained barrier pixel trace already identifies a negative lighting operand
+used without its requested source saturation. Full source-range emulation was
+left off after uncertain road regressions. A new diagnostic mode implements only
+explicit **source saturation**, preserving saturation-before-ABS-before-negation,
+without the experimental signed fixed-range clamps. This is general instruction
+handling, not a barrier colour/brightness override. It is **not enabled by
+default**: the controlled saturation-only run still produces stretched road
+patches, whereas the rollback run has normal asphalt. This narrows the remaining
+regression to saturation or its interaction, rather than requiring the signed
+fixed-range clamps. Camera/time differ slightly, so this is a strong lead for a
+matching-frame GPU comparison rather than proof of the complete mechanism.
+
+`RSX_FP_SOURCE_RANGE` modes are now `0` or unset = legacy/no source ranges,
+`1` = full experimental ranges, `2` = experimental saturation only. Shader text remains part
+of cache identity; no cache removal is needed. The field layout and modifier
+order were checked against the previously cited
+[RSX format/decompiler reference](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/Program/RSXFragmentProgram.h);
+no reference implementation was copied.
+
+WARP tests pass 240 lanes each in full, rollback, explicit saturation-only and
+unset-default (rollback) modes. Volume/sampler and mirror-clear regression tests also
+pass. Production builds pass. Live 1080p/2x reaches the race with the HUD and
+textured road. `graphics97-saturation.win.png` at 0:12.550 shows streaks;
+`graphics97-legacy.win.png` at 0:11.633 has normal asphalt and a black barrier.
+The two measured FPS medians (53 versus 40) are not comparable driving
+benchmarks: camera/clock differ, caches were warm to different states and a
+stall snapshot occurred in the rollback run. The initial patch changed the
+default temporarily for this A/B test; the final build restores legacy default. The precise pre-tunnel barrier still needs a matching visual
+check; the opt-in implementation handles saturation but the barrier
+report is not closed on the basis of a straightaway screenshot.
+
+**Tunnel lighting is still unresolved.** The new F8 screenshots confirm its
+appearance but do not contain per-draw GPU state. The retained GPU tunnel frames
+remain `graphics94-manual_frame{10164,10650}.rdc`. Retained RPCS3 references found
+under scratch are dealership/pit captures and the partial High Speed Ring road
+replay, not a verified matching tunnel-lighting reference. No extra global
+brightness/exposure multiplier was added. Continue by comparing the tunnel's
+lighting/exposure inputs and their producer against a valid matching reference.
+
 ## Phase 96 - Restore volume textures used by spinning wheels (2026-10-20)
 
 The user's Golf captures (`graphics95-golf_frame7330.rdc` and

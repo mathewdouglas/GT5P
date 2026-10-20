@@ -22,6 +22,9 @@ try {
     $env:RSX_FP_SOURCE_RANGE = '0'
     & "$dir/test.exe"
     if ($LASTEXITCODE) { throw 'Source-range rollback rendering failed' }
+    $env:RSX_FP_SOURCE_RANGE = '2'
+    & "$dir/test.exe"
+    if ($LASTEXITCODE) { throw 'Explicit saturation-only rendering failed' }
     Remove-Item Env:RSX_FP_SOURCE_RANGE -ErrorAction SilentlyContinue
     & "$dir/test.exe"
     if ($LASTEXITCODE) { throw 'Stable default rendering failed' }

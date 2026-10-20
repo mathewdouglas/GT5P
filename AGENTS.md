@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 96)
+## Start here: state of play (2026-10-20, Phase 97)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 96 is the latest).
+has the evidence, newest phase first (Phase 97 is the latest).
 
 ### What works now
 
@@ -98,6 +98,20 @@ has the evidence, newest phase first (Phase 96 is the latest).
   `scripts/test/unnorm_hi.ps1` checks the actual backend helpers without a GPU.
 
 ### Open work, in the order the user left it
+
+**Latest: rolling-start reports and saturation (Phase 97).** Five F8 ZIPs
+from process 1592 are in `logs/debug/` (19:23:58-19:25:32). Intro submission
+gaps reach 852 ms; the final report has a 704 ms gap and 118 new pipelines
+without additional completed bytecode. `scripts/diag/debug_pacing.py` reads
+the ZIPs directly. Cached driver calls now enter busy/timing diagnostics;
+`RSX_PSO_HITCH_MS` defaults to 50 ms (0 disables log lines). This is diagnosis,
+not an asynchronous-pipeline fix. User warmup is on; measurement scripts
+normally disable settings and must explicitly enable it for comparisons.
+Source saturation can now be tested independently: `RSX_FP_SOURCE_RANGE=0`
+or unset is legacy, `1` full experimental ranges, `2` saturation only. The
+saturation-only run still streaks roads; rollback has normal asphalt. Keep
+both candidates opt-in. GPU arithmetic tests pass, not full rendering acceptance. Exact barrier appearance and tunnel lighting remain open; road streaks
+also remain. Retained RPCS3 road replay is not a matching tunnel reference.
 
 **Latest: wheel volume textures (Phase 96).** The Golf's spinning-wheel
 material uses 32x16x8 and 64x64x8 textures. The backend previously uploaded

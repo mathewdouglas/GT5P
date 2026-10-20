@@ -62,6 +62,11 @@ See [Phase 95](docs/progress.md#phase-95---restore-mirror-depth-clears-after-gly
 for the mirror fix and [Phase 96](docs/progress.md#phase-96---restore-volume-textures-used-by-spinning-wheels-2026-10-20)
 for volume-texture support and remaining verification.
 
+[Phase 97](docs/progress.md#phase-97---rolling-start-pacing-reports-and-isolated-saturation-handling-2026-10-20)
+analyses rolling-start hitches, adds driver-pipeline timing to debug exports,
+and separates operand saturation from experimental fixed ranges. Tunnel
+lighting and exact pre-tunnel barrier verification remain open.
+
 This is a fork of [sp00nznet/GT5P](https://github.com/sp00nznet/GT5P). Upstream
 targets the US PSN release, NPUA80075 v02.00. This fork adds a second target,
 the **US disc release, BCUS98158 v03.00**, which is a different executable:
