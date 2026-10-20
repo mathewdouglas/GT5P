@@ -740,8 +740,11 @@ int main(int argc, char* argv[])
     /* The current race workload benefits from separate physical PPU cores;
      * the older shared-SMT placement bottlenecks command production. The
      * runtime's topology path also keeps render lanes off both sibling CPUs.
-     * PS3_PPU_CORES=3 restores the previous placement (Phase 91). */
-    if (!getenv("PS3_PPU_CORES")) _putenv_s("PS3_PPU_CORES", "topo");
+     * PS3_PPU_CORES=3 restores the previous placement (Phase 91).
+     * topo-ht also gives the guest both hardware threads of those two cores:
+     * with one each, the race clock ran at about half of real time (slow
+     * motion, Phase 102). PS3_PPU_CORES=topo for one thread per core. */
+    if (!getenv("PS3_PPU_CORES")) _putenv_s("PS3_PPU_CORES", "topo-ht");
 
     /* Run a SPURS workload only while its ready count is nonzero, on as many
      * virtual SPUs as the count asks for. This title fills a job list first

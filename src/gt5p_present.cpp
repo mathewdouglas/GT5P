@@ -644,6 +644,60 @@ extern "C" void rsx_d3d12_backend_prewarm(void);
 extern "C" void rsx_d3d12_backend_prepare_library(void);
 static HANDLE s_startup_ready;
 
+/* GT5P_VBLANK_THREAD (on; =0 off): the vblank and flip clock on its own
+ * thread. It used to share the present thread with the FIFO walk, so no
+ * vblank could fire while a walk ran -- and a race frame's walk is 13-17 ms in
+ * one call. GT5 Prologue paces its frames on the vblank handler, so the beat
+ * the game saw was the walk's: wakes on its vblank-driven workers were 2 to
+ * 37 ms apart instead of multiples of 16.68 (mean error 3.2 ms), late ticks
+ * then fired back to back, and a frame that could have made the next vblank
+ * started late and took two. This thread only advances the count and marks
+ * the tick pending; guest threads deliver the handlers (ppu_gcm_pump) and the
+ * present thread still presents and drains. */
+static volatile LONG s_vbl_ticks = 0;
+static int vblank_thread_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char* e = getenv("GT5P_VBLANK_THREAD"); on = !(e && *e == '0'); }
+    return on;
+}
+static DWORD WINAPI vblank_thread(LPVOID p)
+{
+    fprintf(stderr, "[hostthread] vblank hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
+    ps3_name_thread(L"vblank");
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    const double hz = *(const double*)p;
+    LARGE_INTEGER qf; QueryPerformanceFrequency(&qf);
+    const LONGLONG period = (LONGLONG)((double)qf.QuadPart / hz);
+    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
+    LARGE_INTEGER c; QueryPerformanceCounter(&c);
+    LONGLONG next = c.QuadPart + period;
+    for (;;) {
+        /* Sleep to within 0.4 ms, then spin the remainder: the
+         * high-resolution timer alone can wake a few hundred us late. The
+         * spin is short because this thread outranks a pinned lane. */
+        for (;;) {
+            QueryPerformanceCounter(&c);
+            const LONGLONG left = next - c.QuadPart;
+            if (left <= 0) break;
+            const LONGLONG left_100ns = left * 10000000 / qf.QuadPart;
+            if (left_100ns > 6000 && timer) {
+                LARGE_INTEGER due; due.QuadPart = -(left_100ns - 4000);
+                SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+                WaitForSingleObject(timer, INFINITE);
+            } else if (left_100ns > 15000) Sleep(1);
+            else YieldProcessor();
+        }
+        cellGcmTickVBlank();
+        cellGcmTickFlip();
+        InterlockedIncrement(&s_vbl_ticks);
+        ps3_tl('V', 0, 0);
+        next += period;
+        QueryPerformanceCounter(&c);
+        if (c.QuadPart - next > 6 * period) next = c.QuadPart + period;   /* suspended: resync */
+    }
+}
+
 static DWORD WINAPI present_thread(LPVOID)
 {
     fprintf(stderr, "[hostthread] present hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
@@ -709,6 +763,13 @@ static DWORD WINAPI present_thread(LPVOID)
     const LONGLONG vbl_period = (LONGLONG)((double)qf.QuadPart / vbl_hz);
     auto qpc_now = []() { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; };
     LONGLONG next_tick = qpc_now();
+    const int vbl_thread = vblank_thread_on();
+    if (vbl_thread) {
+        static double hz; hz = vbl_hz;
+        HANDLE vt = CreateThread(NULL, 64 * 1024, vblank_thread, &hz, 0, NULL);
+        if (vt) CloseHandle(vt);
+        else fprintf(stderr, "[GT5P] could not start the vblank thread\n");
+    }
     for (;;) {
         PROF_T(p_wait, cellGcm_fifo_kick_wait(outer_sleep));
         ps3_tl_tick();
@@ -719,9 +780,14 @@ static DWORD WINAPI present_thread(LPVOID)
          * time: when one tick's work takes more than its 16 ms the backlog
          * never clears, and running 240 of them back to back kept this
          * thread away from the message pump for so long that Windows marked
-         * the window "not responding". */
+         * the window "not responding". With the vblank thread this loop
+         * only counts its ticks; the drain below presents and walks. */
         int fired = 0;
-        while (now_q - next_tick >= 0 && fired < 240) {
+        if (vbl_thread) {
+            p_ticks += (unsigned)InterlockedExchange(&s_vbl_ticks, 0);
+            next_tick = now_q + vbl_period;
+        }
+        while (!vbl_thread && now_q - next_tick >= 0 && fired < 240) {
             PROF_T(p_vbl, cellGcmTickVBlank());
             PROF_T(p_flip, cellGcmTickFlip());
             if (rsx_ok && cellGcm_take_flip_pending()) {

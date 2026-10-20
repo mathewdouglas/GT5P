@@ -6,6 +6,7 @@
 #include "gt5p_settings.h"
 #include "gt5p_build_info.h"
 #include <shellapi.h>
+#include <psapi.h>
 #include <io.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -218,6 +219,16 @@ std::string report(HWND game) {
         ((unsigned long long)attr.nFileSizeHigh << 32) | attr.nFileSizeLow,
         attr.ftLastWriteTime.dwHighDateTime, attr.ftLastWriteTime.dwLowDateTime,
         si.dwNumberOfProcessors, mem.ullTotalPhys >> 20, mem.ullAvailPhys >> 20);
+    /* Whether this process is short of memory: a working set well under the
+     * private size, with little RAM available, means pages were trimmed and
+     * any thread touching them waits on the disk. */
+    PROCESS_MEMORY_COUNTERS_EX pmc{}; pmc.cb = sizeof pmc;
+    if (K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof pmc))
+        fprintf(f, "Process memory: private %llu MB, working set %llu MB (peak %llu MB), "
+            "page faults %lu; system commit %llu of %llu MB\n\n",
+            (unsigned long long)(pmc.PrivateUsage >> 20), (unsigned long long)(pmc.WorkingSetSize >> 20),
+            (unsigned long long)(pmc.PeakWorkingSetSize >> 20), pmc.PageFaultCount,
+            (mem.ullTotalPageFile - mem.ullAvailPageFile) >> 20, mem.ullTotalPageFile >> 20);
     const auto& s = gt5p_settings();
     fprintf(f, "Loaded settings: resolution=%d msaa=%d vsync=%d shader_cache=%d async=%d "
         "sdl=%d keyboard=%d vblank=%d lane_cores=%d warmup=%d\nSettings file: %s\n",
@@ -231,6 +242,7 @@ std::string report(HWND game) {
         "RSX_TEX_SLOTS", "RSX_DEPTH_KEEP", "RSX_TEX3D", "RSX_TEX_DIMDBG", "RSX_PSO_HITCH_MS", "RSX_DEPTH_CLEAR_REUSE", "RSX_CLEAR_TRACE", "RSX_TEX_EXPAND",
         "RSX_RT_LOCATION", "RSX_BC_MIP_LIMIT", "RSX_TEX_MIP_VIEWS", "RSX_UNNORM_HI", "RSX_MASK_STATE_RESET", "RSX_FP_SOURCE_RANGE",
         "RSX_VRAM_FRAME", "RSX_GPU_UPLOAD", "SPURS_SINGLE_ASYNC", "GT5P_SPIN_YIELD", "GT5P_SPIN_SLEEP_US",
+        "GT5P_VBLANK_THREAD", "RSX_VPVB_MB",
         "RSX_TEX_UPLOAD_KEEP", "RSX_PSO_RESIDENT_MAX", "RSX_PSO_RETAIN_DEMAND", "RSX_PSO_RECIPE_KEEP_DAYS", "RSX_SHADER_WARMUP_SCAN",
         "GT5P_VBLANK_HZ", "GT5P_PRESENT_SLEEP", "GT5P_STALL_DUMP", "GT5P_PROFVIEW",
         "GT5P_DEBUG_EXPORT", "SPURS_LANE_PIN", "SPURS_LANE_PRUNE", "SPURS_READY_GATE",

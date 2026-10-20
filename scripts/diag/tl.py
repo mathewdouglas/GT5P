@@ -59,6 +59,7 @@ def desc(e):
     if k == 'P': return 'present %d us' % b
     if k == 'R': return 'fifo walk %d us' % b
     if k == 'S': return 'usleep asked %d us, slept %d us' % (a, b)
+    if k == 'V': return 'vblank tick'
     return '%s %d %d' % (k, a, b)
 
 if not summ:

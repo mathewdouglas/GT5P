@@ -9,6 +9,90 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 102 - Race slow motion, vblank clock, upload memory (2026-10-21)
+
+The user drove a race at 1080p/2x and exported five F8 reports (process 1236,
+06:50-06:51, `logs/debug/`): hiccups on the grid, pauses in the rolling start,
+and a race that felt "consistently slow" and rubber-banded. The user also
+confirmed that **the rolling start is meant to run at 30 FPS**; Phase 101's
+"30 FPS lock" in the introduction is the title's design, not a defect.
+
+### The race played in slow motion (fixed)
+
+`race.ps1 -RaceShots <n>` saves a window shot every n seconds; the HUD race
+timer against the shots' file times gives game time per real second. With
+guest threads on two CPUs (`PS3_PPU_CORES=topo`) the race clock ran at
+**0.38 to 0.55** of real time in several runs, also while the timeline showed
+50-60 presented frames a second. So the clock is not frame-locked: the title
+advances its simulation on a timer, and that timer ran late.
+
+- Guest PPU threads were confined to logical CPUs 2 and 4. Their demand
+  summed to about 180% (render thread 57-62%, PDI:1:200c3b80 35-74%, the
+  thread named "Main Thread" 60-88%).
+- "Main Thread" (guest priority 2048, host IDLE) is the title's timer service:
+  its loop at `0x913270` locks the timer list (`+0x1068`), reads the time and
+  fires expired entries from a ring (`0xD897A8`/`0xD89804`, `0x912908`), and
+  polls again. It runs only when no other guest thread wants a CPU.
+- Three CPUs (`PS3_PPU_PRIO_SCHED=3`): ratio 0.97. Both hardware threads of
+  the same two cores (`PS3_PPU_CORES=3C`, four logical CPUs): 0.98, and the
+  render lanes keep their four spare cores.
+- New default **`PS3_PPU_CORES=topo-ht`**: topo's two physical cores with all
+  their hardware threads (on a CPU without SMT, cores until three logical
+  CPUs). Default run: 9.900 -> 49.916 s of race time in 41.23 s, **0.97**.
+  `PS3_PPU_CORES=topo` restores Phase 91's placement.
+- Ferrari dealer visits: topo-ht 24.3/15.9/7.0 fps, topo 6.3/25.1/8.5. The
+  low visits in both are first sightings of a car pair building native
+  pipelines on the worker (50-115 ms each), not the placement.
+
+Not tested: whether a rubber-band feel remains with real driving; the user's
+next exports will show it.
+
+### Vblank on its own thread
+
+The vblank/flip tick shared the present thread with the FIFO walk, and a race
+frame's walk is 13-17 ms in one call, so no vblank fired during it. The
+title paces on the vblank handler. Wakes of its vblank-driven workers were
+2-37 ms apart (mean error from a multiple of 16.68 ms: 3.2 ms), with late ticks
+fired back to back. `GT5P_VBLANK_THREAD` (default on; `=0` old ticker) moves
+`cellGcmTickVBlank`/`cellGcmTickFlip` to a time-critical thread (timer to
+0.4 ms, then spin). Ticks are now 16.68 ms apart (max deviation 0.24 ms) and
+416 of 482 worker wakes are 17 ms apart. It did not change the race clock by
+itself (0.55 on, 0.54 off) or the rolling start's 30 FPS. Timeline event `V`
+marks ticks (`tl.py`).
+
+### Upload memory (1 GB less)
+
+The reports show 394-441 MB of RAM available; the game held 4.8 GB private
+(3.3 GB resident) in a race on this 16 GB machine. Paging is a plausible cause
+of the 120-600 ms "present" gaps, not a proven one: those gaps were under the
+250 ms hitch-snapshot threshold, and no retained snapshot is from the race.
+
+- Per-buffer peaks (new F8 line and `[present-thread]` suffix): race vertex
+  slots 1.2 MB, Ferrari 4.9 MB, of 320 MB per half; indices 2.19M of 4M; raw
+  vertices 28 MB of 96; draws 3484 of 12288.
+- The generic vertex buffer is now `RSX_VPVB_MB` per half, default 64 with
+  GPU vertex fetch on (320, the old size, with `RSX_VTX_GPU=0` or
+  `RSX_VPVB_MB=320`). Race private memory 4.8 -> 3.8 GB, working set 3.26 ->
+  2.75 GB. Its VRAM mirror shrinks by the same 512 MB.
+- F8 reports now include process private memory, working set, page faults
+  and system commit.
+
+### Ruled out / not adopted
+
+- `PS3_PPU_RESERVE` (process default CPU set excluding the PPU CPUs):
+  whole-core reservation made render lanes 25% slower (18.6 vs 14.9 ms);
+  logical-only matched the old placement. Removed.
+- The rolling start's serial chain (vblank -> render list 13.4 ms -> walk
+  tail 3.4 ms -> wid3/wid2 -> flip at about 23 ms) is the title's 30 FPS
+  design, so it was left alone.
+- Vblank handler delivery does not coalesce (`GCM_PUMP_DBG=1`, now printed
+  every 600 deliveries): 7138 deliveries for 7157 ticks.
+
+Open: race windows of 40-56 FPS remain (presents 199-282 per 5 s). With the
+clock fixed these judder but no longer slow the race. A stretch of 26-34 FPS
+right after the timer starts (render lists 12-13 ms) is probably the rolling
+start; confirm with the user's next exports.
+
 ## Phase 101 - Toward 60 FPS in races: SPURS dispatch, guest spin waits, frame buffers in VRAM (2026-10-20)
 
 The user asked for a consistent, smooth 60 FPS in races. Not reached yet; this

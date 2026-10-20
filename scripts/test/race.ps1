@@ -8,6 +8,9 @@
 # -PitIdleSeconds / -GridIdleSeconds delay the first Enter on those pages,
 # saving a window shot every ten seconds while waiting. Use -IntroShots to
 # inspect whether the subsequent race actually starts (a live title is not proof).
+# -RaceShots <n> saves a window shot every n seconds of sampling; the file
+# times against the HUD race timer show whether game time keeps up with real
+# time (the title advances its clock per frame, so a slow frame rate is slow motion).
 # -Cpu also reports per-thread CPU over the sampling window, named from the log
 # (guest thread names, host thread names), in scratch/pv/<tag>.cpu.txt.
 [CmdletBinding(PositionalBinding = $false)]
@@ -15,6 +18,7 @@ param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
       [string]$Tag = "race", [int]$Seconds = 60, [switch]$IntroShots, [switch]$LoadingShots,
       [ValidateRange(0,3600)][int]$PitIdleSeconds = 0,
       [ValidateRange(0,3600)][int]$GridIdleSeconds = 0, [switch]$Cpu,
+      [ValidateRange(0,3600)][int]$RaceShots = 0,
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -117,6 +121,9 @@ try {
         $p.Refresh()
         if ($p.HasExited) { throw "Game exited during the race" }
         $sampleLog += Read-LogTail $profTail
+        if ($RaceShots -gt 0 -and ($s % $RaceShots) -eq 0) {
+            Save-RaceWindowShot $p (Join-Path $dir ("$Tag.race{0:D3}.png" -f $s))
+        }
         if ($p.MainWindowTitle -match 'FPS: ([\d.]+).*draws: (\d+)') {
             $rows += [pscustomobject]@{ Second = $s; Fps = [double]$Matches[1]; Draws = [int]$Matches[2] }
         }

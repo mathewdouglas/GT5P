@@ -99,7 +99,19 @@ has the evidence, newest phase first (Phase 99 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: toward 60 FPS in races (Phase 101), not reached yet.** One-SPU SPURS
+**Latest: race slow motion fixed (Phase 102).** The race clock ran at
+0.38-0.55 of real time: the title advances its simulation from a timer that
+its IDLE-priority timer service ("Main Thread", loop at `0x913270`) fires, and
+two guest CPUs left it too little time. Guest threads now get both hardware
+threads of two cores (`PS3_PPU_CORES=topo-ht`, default; `=topo` previous):
+clock 0.97. **The rolling start is meant to be 30 FPS (user).** Vblank ticks
+run on their own thread (`GT5P_VBLANK_THREAD=0` reverts); they had waited out
+13-17 ms FIFO walks. The generic vertex buffer is 64 MB per half
+(`RSX_VPVB_MB`; 320 old): about 1 GB less private memory. F8 reports add
+process memory and buffer peaks. `race.ps1 -RaceShots <n>` with the HUD timer
+measures game speed. Race windows of 40-56 FPS remain. See Phase 102.
+
+**Toward 60 FPS in races (Phase 101), not reached yet.** One-SPU SPURS
 workloads now run on lane threads instead of blocking the kernel
 (`SPURS_SINGLE_ASYNC=0`). Guest spin waits on SPU progress yield via a new
 required post-lift step, `scripts/spin_patch.py` (`GT5P_SPIN_YIELD=0`); they
