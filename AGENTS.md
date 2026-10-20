@@ -110,6 +110,8 @@ run on their own thread (`GT5P_VBLANK_THREAD=0` reverts); they had waited out
 (`RSX_VPVB_MB`; 320 old): about 1 GB less private memory. F8 reports add
 process memory and buffer peaks. `race.ps1 -RaceShots <n>` with the HUD timer
 measures game speed. Race windows of 40-56 FPS remain. See Phase 102.
+The roadmap to a locked 60 with upscaling headroom is
+[docs/plan-60fps.md](docs/plan-60fps.md).
 
 **Toward 60 FPS in races (Phase 101), not reached yet.** One-SPU SPURS
 workloads now run on lane threads instead of blocking the kernel
