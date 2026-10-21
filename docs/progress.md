@@ -37,6 +37,13 @@ around the popups is dimmed (default 186, as the game).
 Checks: `settings_test.ps1` (updated for pages, adds a shot with a list
 open) and `-Legacy`, `quit_confirm.ps1` pass; shots at 720p and 1080p.
 
+The arrow cursor now copies the game's (from the user's crop, ~28 x 42
+pixels at 1080p): a bevelled arrowhead with a tail on its left, the left
+face dark with a lighter rim, the right face bright at the tip greying
+towards the notch, a thin grey outline and a black edge outside it so it
+reads over the light lists. Drawn as shaded triangles with 4x4 edge
+coverage in device pixels.
+
 ## Phase 115 - Settings page in the game's own style; Escape asks before quitting (2026-10-22)
 
 The user asked for the page to look exactly like an in-game menu, and for a

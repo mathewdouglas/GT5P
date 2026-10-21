@@ -430,15 +430,68 @@ void pill(HDC dc, double x0, double y0, double x1, double y1, bool focused)
     });
 }
 
-/* The arrow cursor the game draws over the focused button. */
+/* A triangle shaded between grey values at its corners, rasterised in device
+ * pixels with 4x4 coverage at its edges, blended over what is there. */
+void shaded_tri(HDC dc, const double (&p)[3][2], const int (&g)[3])
+{
+    DeviceSpace ds(dc);
+    const double s = s_paint_scale;
+    double X[3], Y[3];
+    for (int k = 0; k < 3; k++) { X[k] = p[k][0] * s; Y[k] = p[k][1] * s; }
+    const double area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
+    if (fabs(area) < 1e-6) return;
+    auto bary = [&](double x, double y, double* w) {
+        w[0] = ((X[1] - x) * (Y[2] - y) - (X[2] - x) * (Y[1] - y)) / area;
+        w[1] = ((X[2] - x) * (Y[0] - y) - (X[0] - x) * (Y[2] - y)) / area;
+        w[2] = 1 - w[0] - w[1];
+    };
+    const int x0 = (int)floor(fmin(X[0], fmin(X[1], X[2]))), x1 = (int)ceil(fmax(X[0], fmax(X[1], X[2])));
+    const int y0 = (int)floor(fmin(Y[0], fmin(Y[1], Y[2]))), y1 = (int)ceil(fmax(Y[0], fmax(Y[1], Y[2])));
+    for (int y = y0; y < y1; y++)
+        for (int x = x0; x < x1; x++) {
+            int in = 0;
+            double w[3];
+            for (int sy = 0; sy < 4; sy++)
+                for (int sx = 0; sx < 4; sx++) {
+                    bary(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4, w);
+                    in += w[0] >= 0 && w[1] >= 0 && w[2] >= 0;
+                }
+            if (!in) continue;
+            bary(x + 0.5, y + 0.5, w);
+            for (double& v : w) v = v < 0 ? 0 : v;
+            const double sum = w[0] + w[1] + w[2];
+            const int v = (int)((w[0] * g[0] + w[1] * g[1] + w[2] * g[2]) / sum + 0.5);
+            const double a = in / 16.0;
+            const COLORREF old = GetPixel(dc, x, y);
+            auto mix = [&](int o) { return (int)(o * (1 - a) + v * a + 0.5); };
+            SetPixelV(dc, x, y, RGB(mix(GetRValue(old)), mix(GetGValue(old)), mix(GetBValue(old))));
+        }
+}
+
+/* The game's arrow cursor (from the user's screenshot of it, ~28 x 42 pixels
+ * at 1080p): a bevelled arrowhead with a tail on its left, tip at (x, y). Its
+ * left face is dark with a lighter rim, its right face bright at the tip and
+ * greying towards the notch, all inside a thin grey outline. */
 void cursor(HDC dc, int x, int y)
 {
-    POINT p[] = { {x, y}, {x, y + 17}, {x + 4, y + 13}, {x + 7, y + 20}, {x + 10, y + 19},
-                  {x + 7, y + 12}, {x + 12, y + 12} };
-    HBRUSH b = CreateSolidBrush(grey(235)); HPEN pen = CreatePen(PS_SOLID, 1, grey(20));
-    HGDIOBJ ob = SelectObject(dc, b), op = SelectObject(dc, pen);
-    Polygon(dc, p, 7);
-    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(b); DeleteObject(pen);
+    /* Tip, end of the left tail, the notch, the right wing. */
+    const double T[2] = { x + 0.0, y + 0.0 }, A[2] = { x + 1.3, y + 28.0 },
+                 N[2] = { x + 6.2, y + 20.4 }, R[2] = { x + 18.7, y + 20.6 };
+    /* The outline: the same shape grown about its middle. */
+    const double cx = x + 6.5, cy = y + 17.0;
+    auto grow = [&](const double (&q)[2], double k, double* o) { o[0] = cx + (q[0] - cx) * k; o[1] = cy + (q[1] - cy) * k; };
+    double t[2], a[2], n[2], r[2];
+    /* A black edge outside the outline, so it reads over light lists. */
+    grow(T, 1.17, t); grow(A, 1.17, a); grow(N, 1.17, n); grow(R, 1.17, r);
+    t[1] -= 1.2;
+    shaded_tri(dc, { { t[0], t[1] }, { a[0], a[1] }, { n[0], n[1] } }, { 0, 0, 0 });
+    shaded_tri(dc, { { t[0], t[1] }, { n[0], n[1] }, { r[0], r[1] } }, { 0, 0, 0 });
+    grow(T, 1.09, t); grow(A, 1.09, a); grow(N, 1.09, n); grow(R, 1.09, r);
+    t[1] -= 0.6;
+    shaded_tri(dc, { { t[0], t[1] }, { a[0], a[1] }, { n[0], n[1] } }, { 140, 140, 120 });
+    shaded_tri(dc, { { t[0], t[1] }, { n[0], n[1] }, { r[0], r[1] } }, { 160, 120, 150 });
+    shaded_tri(dc, { { T[0], T[1] }, { A[0], A[1] }, { N[0], N[1] } }, { 70, 115, 4 });       /* left face */
+    shaded_tri(dc, { { T[0], T[1] }, { N[0], N[1] }, { R[0], R[1] } }, { 252, 90, 205 });     /* right face */
 }
 
 /* Text centred in a box, both ways (the button labels). */
