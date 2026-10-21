@@ -45,6 +45,15 @@ unchanged. The investigation that got there follows the fix.
   the probe's sky (drawn last) covered everything, tunnel included. Such a
   target now gets its own depth buffer, keyed by the guest depth surface,
   when its draws test depth (`RSX_RT_OWN_DEPTH=0` off). `ZB_MAX` is 12.
+- **Follow-up: the car still reflected sky in the tunnel** (user screenshot).
+  The car samples the probe through a real cube copied from the six face
+  targets at the first draw of a frame that samples it. That draw comes
+  while face 0 is being rendered (objects in the probe sample it too); the
+  bound face was skipped and the cube marked done, so face 0 kept a view from
+  outside the tunnel indefinitely. Faces are now tracked per frame and a
+  skipped one is copied at the next sampling draw (`RSX_CUBE_RT_ONCE=1`: one
+  pass, as before). Capture `tunrefl118b`: all six faces show the tunnel and
+  the roof reflects its light strips; dealer cars unchanged; race 60 FPS.
 - New diagnostics: `RSX_RT_WB_SIDE=<n>` (write back regions up to n x n),
   `RSX_SKIPDBG_FP=<fp>` (why a program's draws are left out),
   `GT5P_WATCH=addr>off` (follow a pointer),

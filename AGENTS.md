@@ -105,7 +105,8 @@ stale guest memory, so adaptation never ran. Such blits now record a
 readback in command order (`RSX_BLIT_READBACK=0` off). Draw records are
 reused: new draws must clear `readback`. Non-window-sized targets get their
 own depth buffer when they depth-test (`RSX_RT_OWN_DEPTH=0`), fixing the car
-reflection probe. Tools: `rdoc_expo.py`, `rdoc_vlit.py`, `rdoc_smalldraws.py`,
+reflection probe; its cube copies a face skipped while bound later in the
+frame (`RSX_CUBE_RT_ONCE=1` old). Tools: `rdoc_expo.py`, `rdoc_vlit.py`, `rdoc_smalldraws.py`,
 `GT5P_WATCH=addr>off`, `RSX_SKIPDBG_FP`.
 
 **Settings in a race pause it (Phase 117).** Opening the page
