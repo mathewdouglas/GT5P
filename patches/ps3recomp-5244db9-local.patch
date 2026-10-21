@@ -4855,7 +4855,7 @@ index 5166a47..c627e66 100644
      if (!path || !sb)
          return CELL_EFAULT;
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c11..ebe7ee9 100644
+index f2b4c11..5a53466 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -52,6 +52,7 @@
@@ -4879,10 +4879,11 @@ index f2b4c11..ebe7ee9 100644
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,13 +147,194 @@ static int pad_host_window_focused(void)
+@@ -140,23 +147,180 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
+-static void pad_poll_keyboard(void)
 +/* PAD_HOLD="<from_ms>-<to_ms>:<KEY>,...": hold a button over a span of time
 + * measured from the first poll, with no keyboard and no window focus needed,
 + * so a run that has to be driven can be repeated unattended. Keys: UP DOWN
@@ -4907,7 +4908,10 @@ index f2b4c11..ebe7ee9 100644
 +void (*g_pad_milestone_hook)(const char*) = NULL;
 +
 +void pad_milestone_seen(const char* path)
-+{
+ {
+-    static int off = -1;
+-    if (off < 0) off = getenv("PAD_NO_KEYBOARD") ? 1 : 0;
+-    if (off) return;
 +    static int on = -1;
 +    if (on < 0) { const char* e = getenv("PAD_MILESTONES"); on = (e && *e == '0') ? 0 : 1; }
 +    if (!path) return;
@@ -4933,7 +4937,16 @@ index f2b4c11..ebe7ee9 100644
 +    }
 +    InterlockedExchange(&s_ms_lock, 0);
 +}
-+
+ 
+-    PadHostState* hs = &s_host_state[0];
+-    if (!pad_host_window_focused()) {
+-        /* Release everything on focus loss, or a key held while alt-tabbing
+-         * would stay down forever. */
+-        hs->buttons = 0;
+-        hs->analog_lx = hs->analog_ly = 128;
+-        hs->analog_rx = hs->analog_ry = 128;
+-        hs->connected = 1;
+-        return;
 +/* When the named milestone was first seen, or 0. */
 +static ULONGLONG pad_milestone_at(const char* name)
 +{
@@ -5042,7 +5055,7 @@ index f2b4c11..ebe7ee9 100644
 +        }
 +        if (ev[i].unless[0] && pad_milestone_at(ev[i].unless)) continue;
 +        if (rel >= ev[i].from && rel < ev[i].to) btns |= ev[i].btn;
-+    }
+     }
 +    return btns;
 +}
 +
@@ -5050,16 +5063,29 @@ index f2b4c11..ebe7ee9 100644
 + * settings screen can switch it while running (pad_set_keyboard_enabled). */
 +static int s_kbd_off = -1;
 +void pad_set_keyboard_enabled(int on) { s_kbd_off = on ? 0 : 1; }
+ 
++/* Port 0's keys, 0 when the game window is not focused or the keyboard is
++ * off (PAD_NO_KEYBOARD). */
++static u16 pad_keyboard_buttons(void)
++{
++    if (s_kbd_off < 0) s_kbd_off = getenv("PAD_NO_KEYBOARD") ? 1 : 0;
++    if (s_kbd_off || !pad_host_window_focused()) return 0;
+     static const struct { int vk; u16 btn; } map[] = {
+         { VK_UP,     CELL_PAD_CTRL_UP },      { VK_DOWN,  CELL_PAD_CTRL_DOWN },
+         { VK_LEFT,   CELL_PAD_CTRL_LEFT },    { VK_RIGHT, CELL_PAD_CTRL_RIGHT },
+@@ -170,6 +334,40 @@ static void pad_poll_keyboard(void)
+     u16 btns = 0;
+     for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++)
+         if (GetAsyncKeyState(map[i].vk) & 0x8000) btns |= map[i].btn;
++    return btns;
++}
 +
- static void pad_poll_keyboard(void)
- {
--    static int off = -1;
--    if (off < 0) off = getenv("PAD_NO_KEYBOARD") ? 1 : 0;
--    if (off) return;
++static void pad_poll_keyboard(void)
++{
 +    if (s_kbd_off < 0) s_kbd_off = getenv("PAD_NO_KEYBOARD") ? 1 : 0;
 +    if (s_kbd_off) return;
- 
-     PadHostState* hs = &s_host_state[0];
++
++    PadHostState* hs = &s_host_state[0];
 +    { int sb = pad_script_buttons();
 +      if (sb >= 0) {
 +          hs->buttons = (u16)sb; hs->connected = 1;
@@ -5074,10 +5100,21 @@ index f2b4c11..ebe7ee9 100644
 +          hs->trigger_l2 = hs->trigger_r2 = 0;
 +          return;
 +      } }
-     if (!pad_host_window_focused()) {
-         /* Release everything on focus loss, or a key held while alt-tabbing
-          * would stay down forever. */
-@@ -390,6 +578,256 @@ static void pad_shutdown_backend(void)
++    if (!pad_host_window_focused()) {
++        /* Release everything on focus loss, or a key held while alt-tabbing
++         * would stay down forever. */
++        hs->buttons = 0;
++        hs->analog_lx = hs->analog_ly = 128;
++        hs->analog_rx = hs->analog_ry = 128;
++        hs->connected = 1;
++        return;
++    }
++
++    u16 btns = pad_keyboard_buttons();
+ 
+     hs->buttons   = btns;
+     hs->connected = 1;
+@@ -390,6 +588,256 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -5334,7 +5371,7 @@ index f2b4c11..ebe7ee9 100644
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -407,7 +845,6 @@ static void pad_shutdown_backend(void)
+@@ -407,7 +855,6 @@ static void pad_shutdown_backend(void)
   * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
   * a real DualShock 3's own report rate), so no game can tell the difference,
   * including one sampling for button-press edges. */
@@ -5342,7 +5379,7 @@ index f2b4c11..ebe7ee9 100644
  
  static unsigned long long pad_now_ms(void)
  {
-@@ -421,13 +858,44 @@ static unsigned long long pad_now_ms(void)
+@@ -421,13 +868,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -5390,7 +5427,7 @@ index f2b4c11..ebe7ee9 100644
      s_last_ms = now;
      /* A real pad streams reports at roughly this rate whether or not anything
       * changed, and libpad buffers them; a fresh sweep is a fresh report for
-@@ -435,12 +903,42 @@ static void pad_poll_backend(void)
+@@ -435,12 +913,67 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT
@@ -5403,9 +5440,34 @@ index f2b4c11..ebe7ee9 100644
 -    if (!s_host_state[0].connected) pad_poll_keyboard();
 +    /* A PAD_HOLD script drives port 0 even with a controller plugged in;
 +     * otherwise an unattended run depends on what is connected. */
-+    { static int scripted = -1;
-+      if (scripted < 0) scripted = getenv("PAD_HOLD") ? 1 : 0;
-+      if (!s_host_state[0].connected || scripted) pad_poll_keyboard(); }
++    /* PAD_HOLD_MERGE (default on): a connected controller and the focused
++     * window's keyboard still play over the script, buttons ORed and the
++     * controller's sticks and triggers kept where the script leaves them at
++     * rest, so someone can change camera or take over during a test run.
++     * PAD_HOLD_MERGE=0: the script alone, as before. */
++    { static int scripted = -1, merge = 1;
++      if (scripted < 0) { scripted = getenv("PAD_HOLD") ? 1 : 0;
++                          const char* m = getenv("PAD_HOLD_MERGE"); merge = !(m && m[0] == '0'); }
++      const PadHostState real = s_host_state[0];
++      if (!s_host_state[0].connected || scripted) pad_poll_keyboard();
++      if (scripted && merge) {
++          PadHostState* hs = &s_host_state[0];
++          u16 kb = pad_keyboard_buttons();
++          if (kb) {
++              hs->buttons |= kb;
++              if (kb & CELL_PAD_CTRL_L2) hs->trigger_l2 = 255;
++              if (kb & CELL_PAD_CTRL_R2) hs->trigger_r2 = 255;
++          }
++          if (real.connected) {
++              hs->buttons |= real.buttons;
++              if (hs->analog_lx == 128 && hs->analog_ly == 128) { hs->analog_lx = real.analog_lx; hs->analog_ly = real.analog_ly; }
++              if (hs->analog_rx == 128 && hs->analog_ry == 128) { hs->analog_rx = real.analog_rx; hs->analog_ry = real.analog_ry; }
++              if (real.trigger_l2 > hs->trigger_l2) hs->trigger_l2 = real.trigger_l2;
++              if (real.trigger_r2 > hs->trigger_r2) hs->trigger_r2 = real.trigger_r2;
++              u8* d = &hs->press_right; const u8* r = &real.press_right;
++              for (int k = 0; k < 10; k++) if (r[k] > d[k]) d[k] = r[k];
++          }
++      } }
 +    pad_skip_movie(&s_host_state[0]);
 +#endif
 +

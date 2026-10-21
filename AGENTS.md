@@ -99,7 +99,16 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: FIFO walk trimmed (Phase 108).** Changes, each with an off switch:
+**Latest: controller during tests; replay ghosting and audio open (Phase 109).**
+Test runs now merge a connected controller and the keyboard into the
+`PAD_HOLD` script (`PAD_HOLD_MERGE=0` script only), so someone can change
+camera or take over. Open, from the user's play: the post-race replay shows
+about four overlaid frames plus a noise strip on the right edge (F8 reports
+from process 34220), and sound cuts in and out in hood and chase cameras.
+A scripted race with the default camera had 2 underruns in 60 s, no silent
+blocks, with the job chain 81-92% busy.
+
+**FIFO walk trimmed (Phase 108).** Changes, each with an off switch:
 
 - Hot data methods (immediate vertex data, transform constants) skip the
   dispatcher's long test chain (`RSX_HOT_METHODS=0`).
@@ -264,8 +273,8 @@ trace: `RSX_CLEAR_TRACE=1`. Tunnel lighting and blue Golf rims remain open.
 Retained tunnel captures are `scratch/rdoc/graphics94-manual_frame{10164,10650}.rdc`;
 do not ask for another tunnel drive. The exit capture's wheel shader uses
 procedural spinning-wheel coverage and is a different material from the Golf.
-The user supplied two Golf captures (`graphics95-golf_frame{7330,8018}.rdc`). Omit `PAD_HOLD` from interactive launches:
-it disables controllers for the entire process.
+The user supplied two Golf captures (`graphics95-golf_frame{7330,8018}.rdc`). Since Phase 109 a connected controller
+and the focused window's keys play over a `PAD_HOLD` script (`PAD_HOLD_MERGE=0`: script only).
 `RSX_FP_SOURCE_RANGE=1` remains experimental. A default-off run also showed
 road streaks, so Phase 94's apparent correlation was not exclusive evidence.
 Tests: `scripts/test/depth_clear_reuse.ps1`, `scripts/test/debug_export.ps1`.

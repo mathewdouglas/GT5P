@@ -9,6 +9,32 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 109 - Controller during test runs; replay ghosting and audio reports (2026-10-21)
+
+**Controller during tests.** A `PAD_HOLD` script used to replace port 0
+outright, so a controller did nothing during a scripted run. Now a connected
+controller and the focused window's keyboard are merged over the script:
+buttons ORed, the controller's sticks used where the script leaves them
+centred, triggers and pressures the larger of the two. `PAD_HOLD_MERGE=0`
+restores script-only input. A 20 s 1080p/2x HSR run still drives into the
+race (59 FPS median), with no controller pressed.
+
+**Replay ghosting (open).** Two F8 reports from process 34220 (Phase 108
+build) catch the post-race replay: the frame is about four overlaid copies of
+the scene a few frames apart, and a ~225-pixel strip at the right edge is
+noise. Its FIFO walk is ~22 ms a frame against ~9 ms while racing; 28 FPS.
+The log has an `[RT] evict slot 7 (off=0x1100000 1920x1080)` shortly before.
+Hypothesis, untested: the replay's frame blend samples earlier frames by
+address, and they resolve to stale targets or to unwritten guest memory.
+Whether it predates Phase 108 is not checked (`RSX_HOT_METHODS=0
+RSX_IMM_MASK=0 RSX_FPK_FAST=0` would tell).
+
+**Audio cutting out in hood and chase cameras (open).** A scripted 1080p/2x
+frame test (default camera) with `AUDIO_RATE=1 SPURS_JC_STATS=1`: 2 underruns
+in 60 s, 0% silent blocks, 3,189 jobs/s, chain busy 81-92%, longest job up to
+6.9 ms (a mixer block is 5.3 ms). Frame test 59.2 FPS, 1.9% late. The
+reported cut-outs were not reproduced with this camera.
+
 ## Phase 108 - FIFO walk: hot methods first, fewer copies (2026-10-21)
 
 `RSX_DRAWPROF=1` (new) times the walker's draw recording by stage with the
