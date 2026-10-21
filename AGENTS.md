@@ -99,11 +99,14 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: tunnel lighting investigated (Phase 118).** The tunnel's near-black
-is the title's own numbers: walls get lamp light x 0.01 (per-draw `c0`) x
-exposure 0.4, which never changes in the race. Needs an RPCS3 tunnel picture to
-tell authored from missing adaptation. Tools: `scripts/diag/rdoc_expo.py`,
-`rdoc_vlit.py`.
+**Latest: tunnel lighting fixed (Phase 118).** The title meters exposure from
+a 16x8 block it blits (NV3089) out of a GPU-only surface; our blit copied
+stale guest memory, so adaptation never ran. Such blits now record a
+readback in command order (`RSX_BLIT_READBACK=0` off). Draw records are
+reused: new draws must clear `readback`. Non-window-sized targets get their
+own depth buffer when they depth-test (`RSX_RT_OWN_DEPTH=0`), fixing the car
+reflection probe. Tools: `rdoc_expo.py`, `rdoc_vlit.py`, `rdoc_smalldraws.py`,
+`GT5P_WATCH=addr>off`, `RSX_SKIPDBG_FP`.
 
 **Settings in a race pause it (Phase 117).** Opening the page
 while racing presses Start for the title (cellPad `g_pad_inject_buttons`),

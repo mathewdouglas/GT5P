@@ -959,7 +959,7 @@ void toggle_poll()
 
 /* GT5P_WATCH=addr[,addr...]: print each guest word there whenever it
  * changes (checked every UI tick, ~16 ms), to confirm a candidate found by
- * memsnap_diff.py. */
+ * memsnap_diff.py. addr>off follows a pointer: the word at (word at addr)+off. */
 uint32_t guest_word(uint32_t a)
 {
     uint32_t w;
@@ -970,19 +970,35 @@ uint32_t guest_word(uint32_t a)
 void watch_poll()
 {
     static int on = -1;
-    static std::vector<uint32_t> addr, last;
+    /* addr>off: the word at (the word at addr) + off, when that is mapped. */
+    static std::vector<uint32_t> addr, offs, last;
+    static std::vector<bool> deref;
     if (on < 0) {
         const char* e = getenv("GT5P_WATCH");
         on = e && *e && vm_base;
         for (const char* p = e; on && p && *p;) {
-            addr.push_back((uint32_t)strtoul(p, nullptr, 16)); last.push_back(0xDEADBEEF);
+            char* q = nullptr;
+            addr.push_back((uint32_t)strtoul(p, &q, 16));
+            deref.push_back(q && *q == '>');
+            offs.push_back(q && *q == '>' ? (uint32_t)strtoul(q + 1, nullptr, 16) : 0);
+            last.push_back(0xDEADBEEF);
             p = strchr(p, ','); if (p) p++;
         }
     }
     if (!on) return;
     for (size_t k = 0; k < addr.size(); k++) {
-        const uint32_t v = guest_word(addr[k]);
-        if (v != last[k]) { fprintf(stderr, "[watch] %llu ms %08X = %08X\n", GetTickCount64(), addr[k], v); last[k] = v; }
+        uint32_t a = addr[k];
+        if (deref[k]) {
+            const uint32_t b = guest_word(a);
+            if (!b || b >= 0xF0000000u) continue;
+            a = b + offs[k];
+        }
+        const uint32_t v = guest_word(a);
+        if (v != last[k]) {
+            if (deref[k]) fprintf(stderr, "[watch] %llu ms %08X>%X (%08X) = %08X\n", GetTickCount64(), addr[k], offs[k], a, v);
+            else fprintf(stderr, "[watch] %llu ms %08X = %08X\n", GetTickCount64(), addr[k], v);
+            last[k] = v;
+        }
     }
 }
 

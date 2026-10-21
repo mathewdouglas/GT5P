@@ -9,9 +9,50 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 118 - Tunnel lighting: what the title feeds the walls (2026-10-22)
+## Phase 118 - Tunnel lighting fixed: the exposure meter's readback (2026-10-22)
 
-Investigation only; nothing changed in the renderer. Retained captures
+**Fixed.** The High Speed Ring tunnel is lit (lamps, beams, blown-out exit)
+and the exposure adapts outdoors, as in the user's RPCS3 screenshot.
+`tunnel118g`: 1080p/2x, 150 s, median 60 FPS; dealer and Kyoto menu shots
+unchanged. The investigation that got there follows the fix.
+
+- **The cause.** The title meters exposure itself (`0x008064E8`, every
+  frame on scene object + `0x288`): it copies the scene into a 128x128
+  corner of surface `0x02EC0000`, reduces it in place (`fp 0x057B6001`,
+  then `0x057B5E01`, 8-tap averages, alpha 0) to a 16x8 block at row 80,
+  and blits that block (NV3089, 1:1, local `0x02F60000` pitch 8192) into a
+  three-slot ring in main memory (scene + `0x260`, `0x200` bytes a slot),
+  read two frames later. From it the meter sets a target at `+0x248` and
+  enables the smoother `0x008062D8` (`+0x254`), which drives the scale
+  `+0x65C` behind the exposure global. Our blit copied guest memory, which
+  never holds a GPU-only surface, so the meter always found no data and
+  left adaptation off: exposure stayed at its base 0.4.
+- **The fix** (ps3recomp): a 1:1 32-bit NV3089 blit out of local memory
+  that overlaps a surface drawn this frame now records a readback in
+  command order (`rsx_d3d12_note_blit_read`); replay copies that rectangle
+  from the target, and the next frame start writes it into the surface's
+  guest memory, where the next blit picks it up (one frame later than on
+  hardware; the ring already allows two). `RSX_BLIT_READBACK=0` off;
+  `RSX_BLIT_READBACK_DBG=1|2|3` logs (3: per second, valid/zero/stale
+  counts); `RSX_BLIT_READBACK_NOWRITE=1` copies without writing.
+- **A trap found on the way.** Draw records are reused across frames and
+  filled field by field: a record slot that held a readback kept the flag
+  when reused for a draw, so random draws were skipped and copied instead
+  (it removed the meter's own second pass, and garbage readbacks swung the
+  exposure between white and black). New draws clear the flag.
+- **Also fixed: the car's reflection probe had no depth test.** Colour
+  targets that are not window-sized never got the shared depth buffer, so
+  the probe's sky (drawn last) covered everything, tunnel included. Such a
+  target now gets its own depth buffer, keyed by the guest depth surface,
+  when its draws test depth (`RSX_RT_OWN_DEPTH=0` off). `ZB_MAX` is 12.
+- New diagnostics: `RSX_RT_WB_SIDE=<n>` (write back regions up to n x n),
+  `RSX_SKIPDBG_FP=<fp>` (why a program's draws are left out),
+  `GT5P_WATCH=addr>off` (follow a pointer),
+  `scripts/diag/rdoc_smalldraws.py`.
+
+### The investigation
+
+Retained captures
 (`graphics94-manual_frame{6819,10164,10650}`) plus two driven 1080p/2x HSR
 races (`scratch/pv/tunnel118a`, `tunnel118b`; tunnel at shots 90-135 s).
 
@@ -41,8 +82,11 @@ races (`scratch/pv/tunnel118a`, `tunnel118b`; tunnel at shots 90-135 s).
   `0D1725` for the whole race. Whether the title meters exposure from these
   is not established.
 
-Open: whether the title is meant to raise exposure (or `c0`) in the tunnel
-on hardware. That needs a reference picture from RPCS3 in the tunnel.
+The user's RPCS3 screenshot then showed the tunnel lit and its exit blown
+out: adaptation. A store watch on the exposure fields led to the meter
+above (EV `0x01390EB4`, set only by a script binding at `0x00362668`, is
+the course's base and stays 0). Pixel-count reports were ruled out
+(`GCM_REPORT_FULL=0` changes nothing; the race reads zcull statistics).
 
 ## Phase 117 - Opening the settings in a race pauses it (2026-10-22)
 
