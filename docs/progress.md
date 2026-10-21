@@ -9,6 +9,77 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 110 - SPU profile: where hand-written replacements would pay (2026-10-21)
+
+Prompted by another port's report of a 25x gain from replacing one SPU
+occlusion job with a native routine. The question: which GT5P SPU code, if
+any, is worth that treatment. Measured on the current build (Phase 109).
+
+**Ferrari dealer page, 1080p/2x** (`dealer.ps1 -Moves DOWN,RIGHT,RIGHT,RIGHT,RIGHT
+-Enter`, `GT5P_SAMPLE=16 GT5P_SAMPLE_GRAIN=16 GT5P_SAMPLE_WID=1
+SPURS_LANE_CYC=1`). 30 FPS; render workloads 0 and 1 take 28-30 ms a lane
+pass, so this page is SPU-bound (60 FPS needs under ~16 ms). Workload 1's
+samples, all rounds summed (11,195):
+
+- 60% job body b01376080: 0xF8C0 18%, 0xF620 8%, 0x10EE0 6%, 0x4844 6%,
+  0xD388 5%, 0x10C18 4%, 0xB3E0 4%, 0xB240 4%, then smaller ones.
+- 40% runtime: `mfc_do_transfer` 8%, `spu_indirect_branch` 7%,
+  `spu_drain_call_impl` 5%, `spu_lookup_fast` 4%,
+  `spu_irq_regs_maybe_restore` 3%, `spu_restart_dispatch` 3% (its longjmp's
+  unwind), `spu_rdch` 2%, `spu_shlqby` 2%, `spu_fi` 1%.
+
+`SPU_IRQSTAT=1` (new): about 33,000 SPU interrupts a second on this page,
+~310 per lane pass, each ending in two longjmps (iret to the taking frame,
+then a drain restart), and ~420,000 indirect branches a second resolved on
+the slow path while a handler's registers were saved. The interrupts are
+the job manager's tag-update events: our DMA completes at once, so each
+armed tag update interrupts at the next dispatch. An experiment letting
+handler-time branches take the fast path (except to the interrupted pc)
+measured within noise in an A/B in one boot (paired windows within 0.5 ms
+of 31-33 ms) and was removed. The counters themselves cost ~5 ms a pass
+(atomics); leave them off for timing.
+
+**Race, HSR frame test** (`GT5P_SAMPLE_WID=5`). Workloads 5/6 take ~11 ms a
+pass. Workload 5's samples (6,587): 90% body 0x0133A700, 9% runtime.
+
+- 0x43E8 (with its head 0x43E0) 40%: a walk along a list of 68-byte nodes
+  linked by 16-bit index, comparing a float key at +60 against the inserted
+  one: a sorted insertion, O(n) per insert. 0x554C 14%, 0x66B8 8%, 0x19498
+  6%, 0x196B0 5%, 0x69B0 5%.
+- `spu_fi` 7%: the reciprocal-estimate interpolation, a called four-lane
+  scalar loop.
+
+**`spu_fi` vectorised.** Same arithmetic with SSE2: the step's 2^(exp-140)
+is built from bits while exp >= 14 (lower exponents take the scalar form),
+y's 2^-19 is a constant, multiply and subtract stay separate. 0 differing
+words in 20 million random and edge-exponent operands, with IEEE and with
+FTZ/DAZ (scratch test against `spu_fi_scalar`). Race workloads 5/6:
+11.0-11.4 ms -> 10.0-10.5 ms a pass; frame test 59.4 FPS, 1.1% late.
+`-DSPU_FI_SCALAR` builds the old form.
+
+**Where a replacement would pay, in order:**
+
+1. The race's sorted insertion at 0x0133A700+0x43E8: 40% of the frame's
+   critical-path workload in a dozen instructions. A native loop over the
+   local store (or a different insertion structure producing the same
+   order) should take most of that away. Gains go to race headroom; the
+   frame test is already at its ceiling.
+2. The dealer's interrupt traffic: ~310 interrupts a pass, each with two
+   longjmps and 2 KB of register save/restore. Returning from an iret
+   without the longjmps, or not raising a tag-update interrupt the handler
+   provably does nothing with, is a runtime change that helps every WWS job.
+3. Body b01376080 (geometry): the time is spread over ten routines, so no
+   single rewrite takes much; better served by general lifter work (hot
+   leaf loops with registers in locals) than one-off replacements.
+
+A replacement must be our own code describing the behaviour (addresses, not
+transcribed lifted or decompiled code), behind a switch, with a check mode
+comparing its output memory against the lifted routine.
+
+Tools: `SPU_IRQSTAT=1`; `SPU_EXP_AB=1` flips `g_spu_exp` every
+`SPURS_LANE_CYC` window for an A/B in one boot (`abcyc.py --key exp`); read
+`g_spu_exp` only from code under test.
+
 ## Phase 109 - Hood-camera audio (SPU denormals), controller during tests, replay ghosting report (2026-10-21)
 
 **Controller during tests.** A `PAD_HOLD` script used to replace port 0

@@ -1,6 +1,6 @@
 """A/B within one boot from the [lane-cyc] windows (SPURS_LANE_CYC=1).
-   python scripts/diag/abcyc.py [--key fast|pin] <run.err> [<run.err> ...]
---key fast (default): SPU_FAST_AB=1 runs; --key pin: SPURS_LANE_PIN_AB=1 runs.
+   python scripts/diag/abcyc.py [--key fast|pin|exp] <run.err> [<run.err> ...]
+--key fast (default): SPU_FAST_AB=1 runs; --key pin: SPURS_LANE_PIN_AB=1 runs; --key exp: SPU_EXP_AB=1 runs.
 Per log: the mean CPU ms per render-lane run (workloads 0 and 1) in windows
 with key=1 against key=0, skipping windows with few runs (not on the page)."""
 import re

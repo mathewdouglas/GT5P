@@ -256,7 +256,7 @@ std::string report(HWND game) {
         "PS3_VERBOSE", "PS3_COND_DEFER_GCM", "PS3_COND_TRACE_ID", "PS3_SC_CONTEXT",
         "GT5P_STALL_MS", "GT5P_STALL_STACKS",
         "D3D12_DBG", "D3D12_IQ", "PAD_NO_SDL", "PAD_NO_KEYBOARD",
-        "PAD_HOTPLUG", "PAD_HOLD_MERGE", "SPU_FTZ", "SPU_CHAIN_BACK", "AUDIO_HOTPLUG", "AUDIO_HOTPLUG_POLL", "GT5P_AUDIO_NATIVE", "AUDIO_RATE", "AUDIO_GAPDBG", "AUDIO_LEADDBG",
+        "PAD_HOTPLUG", "PAD_HOLD_MERGE", "SPU_FTZ", "SPU_CHAIN_BACK", "SPU_IRQSTAT", "SPU_EXP_AB", "AUDIO_HOTPLUG", "AUDIO_HOTPLUG_POLL", "GT5P_AUDIO_NATIVE", "AUDIO_RATE", "AUDIO_GAPDBG", "AUDIO_LEADDBG",
         "SPURS_JC_STATS", "SPURS_JC_SAMPLE", "SPURS_JC_NORMAL_PRIO", "SPURS_JG_GAPDBG", "SCREEN_AS_TEX"};
     for (const char* name : names) if (const char* value = getenv(name)) fprintf(f, "%s=%s\n", name, value);
     fprintf(f, "\nCURRENT STATE\n"); guarded_snapshot(f);
