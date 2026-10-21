@@ -9,6 +9,44 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 113 - Barrier/tunnel lighting: source saturation narrowed to one program (2026-10-21)
+
+The user asked for the tunnel lighting next, suspecting shadows and the
+black barrier. Phase 94's barrier trace needs fragment source saturation
+(`RSX_FP_SOURCE_RANGE=2`), which streaks the road (user-confirmed on every
+saturating variant below; mode 0 looks right).
+
+- RPCS3's decompiler (read for behaviour, not copied) applies the three
+  source precision modifiers (SRC1 bits 19-27; 4 = saturate, before ABS,
+  negation last) to temporaries and constants only: input registers take
+  none (COL0/COL1 are always saturated). Ours applied them to inputs too.
+  Modes 1/2 now skip input operands. The road still streaks, so that was
+  not the cause; kept because it matches the reference.
+- `RSX_FP_SATLOG=1` (new): saturation requests are MUL src1 (123), LG2 src0
+  (116), MAD src0 (56), MUL src0 (32), MAD src1 (8); all temporaries.
+- `RSX_FP_SAT_OPS=<mask>` (new, 1 MUL, 2 LG2, 4 MAD, 8 rest): only MUL
+  saturation streaks the road.
+- `RSX_FP_SAT_PROG=<m>,<lo>,<hi>` (new): bisection by a hash of the
+  program's first 64 bytes (logged as hash16/hash64). Four rounds of
+  window-shot comparisons narrow it to bucket 6 of 16: three programs.
+- RenderDoc (`scratch/rdoc/satroad_frame6804.rdc`, MUL saturation on): the
+  main road draw (event 5395) saturates N.L before a multiply, but N.L is
+  0.33-0.52 at every traced road pixel, so the road surface is unchanged.
+  The candidate is a reflective/specular overlay program (guest fp
+  0x075F5AC1, dump under ignored `scratch/fpd113/`) that squares
+  `saturate(x)` of a reflection term and multiplies by it again: without
+  saturation a negative term squares to a positive highlight, so mode 0
+  may be the one adding light. Which is right needs the RPCS3 reference:
+  the next step is the same program's draw in
+  `scratch/rdoc/rpcroadreplay_frame187.rdc` and its term at a road pixel.
+- Also seen in this capture: render target 36843 holds an old 1280-wide
+  frame with garbage on its right, the likely source of the replay's noise
+  strip (Phase 109).
+
+Mode 3 of `RSX_FP_SOURCE_RANGE` (also skip texture-fetch operands) is a
+diagnostic only. The default stays 0. Tunnel lighting itself is not changed
+yet (Phase 94: material constant 0.01 times exposure 0.4).
+
 ## Phase 112 - Dealer page: SPU dispatch measured, no cheap win (2026-10-21)
 
 Goal: cut the Ferrari dealer page's render workloads (0/1, ~29 ms of CPU a
