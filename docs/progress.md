@@ -9,6 +9,49 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 115 - Settings page in the game's own style; Escape asks before quitting (2026-10-22)
+
+The user asked for the page to look exactly like an in-game menu, and for a
+confirmation before Escape quits.
+
+**Measured from the game's 1080p screens** (Options, and its "Exit the
+Options menu?" Confirmation): the popup dims the scene to about 27% (grey 20
+-> 5), its panel is flat grey 28 with a dark header gradient (45 rule, then
+2 -> 21), a grey-76 rule above the buttons; the pill buttons are 236 x 56
+pixels with a black rim, a 3-pixel red ring (237, 0, 0) when focused, and a
+glass face (123/125/140 fading to 57 at the middle, then near-black rising
+to ~60 at the bottom); the Options screen is black lifting to grey 24 at the
+bottom, a grey-180 rule under its big grey title, section bars with grey-70
+rules over a 3 -> 34 gradient, text at greys 132-212. Layout units are those
+pixels over 1.5.
+
+**The page** is now full screen after the Options screen: the GT header,
+a large "Settings" title over its rule, Video / Input / Game / Performance /
+Debug section bars with end knobs, a dotted rule between the columns, the
+selected row as the game's red-ringed pill, the help centred below, and
+Restart / Close as the game's pill buttons between its two bottom rules
+(arrow cursor on the focused one). Prompts top right. Left/Right move
+between the buttons; Up/Down treat them as one stop. Opaque by default
+(`GT5P_SETTINGS_UI_ALPHA` < 255 lets the scene through its black).
+
+**Escape** in the game window now shows a copy of the Confirmation popup,
+"Quit Gran Turismo 5 Prologue?", Cancel focused: Left/Right, Enter/Cross,
+Esc/Circle cancels, mouse on the buttons. OK posts WM_CLOSE (the normal exit
+path). The backend calls `rsx_d3d12_on_escape` (ignoring auto-repeat) and
+closes at once only when it is unset or returns 0. `GT5P_ESC_CONFIRM=0`
+restores the immediate close; `GT5P_QUIT_UI=1` asks at start (tests). The
+window's close button still closes at once.
+
+**Transparency:** text drawn over clear areas (the Options tag) picked up
+the magenta colour key at its antialiased edges. Images are now painted
+twice, clear parts black then white; the black pass is the premultiplied
+colour and the difference the transmitted fraction, so edges are exact.
+Fonts use greyscale antialiasing.
+
+Checks: new `scripts/test/quit_confirm.ps1` (Escape asks, Cancel keeps the
+game, OK exits; passes at 1080p); `settings_test.ps1` with and without
+`-Legacy`; `debug_export.ps1`; a driven Options visit shows the tag cleanly.
+
 ## Phase 114 - Settings page drawn in the game's picture; reachable from the game's Options (2026-10-21)
 
 The user asked for the F1 page to be part of the game's menus. Two steps,

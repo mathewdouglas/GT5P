@@ -99,7 +99,13 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: settings page in the game's picture (Phase 114).** F1/PS now
+**Latest: game-style settings page; Escape asks (Phase 115).** The page
+copies the game's Options screen and pill buttons, measured from 1080p
+shots; Escape shows a copy of its Confirmation popup ("Quit Gran Turismo 5
+Prologue?", `GT5P_ESC_CONFIRM=0` closes at once). Test:
+`scripts/test/quit_confirm.ps1`.
+
+**Settings page in the game's picture (Phase 114).** F1/PS now
 draws the page into the frame (backend `rsx_d3d12_overlay_set`, blended
 before present), styled like the game's popups; on the game's own Options
 screen a "SELECT PC settings" tag opens it with Select. Escape no longer
