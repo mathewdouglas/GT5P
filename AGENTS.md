@@ -99,7 +99,16 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: native sorted walk; SPU interrupts measured (Phase 111).** The
+**Latest: barrier fixed; stale pipeline blobs found (Phase 113).** The
+native pipeline blob key left out the root signature (static samplers), so
+blobs from older builds served old sampler setups: this, not saturation, was
+the road streaking of Phases 94/97. The key now includes it
+(`RSX_PSO_KEY_RS=0` old key); fragment source saturation is the default
+(`RSX_FP_SOURCE_RANGE=0` legacy), fixing the black barrier (user-confirmed).
+The tunnel interior is still dark. Diagnostics: `RSX_FP_SATLOG`,
+`RSX_FP_SAT_OPS`, `RSX_FP_SAT_PROG`, `RSX_FP_SAT_VIS`.
+
+**Native sorted walk; SPU interrupts measured (Phase 111).** The
 race workloads' sorted-list insertion (body 0x0133A700, 0x43E8) now runs
 natively (`src/gt5p_spu_native.c`, hooked by the new required post-lift step
 `scripts/spu_native_patch.py`): workloads 5/6 ~11.2 -> ~9.2 ms a pass in an

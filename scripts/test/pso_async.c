@@ -42,6 +42,7 @@ static int pso_warm_get(u64 hash,ID3D12PipelineState** out){
     ReleaseSRWLockShared(&warm_lock);return hit;
 }
 static u64 guest_pso_hash(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd){(void)pd;return 0x222;}
+static int guest_pso_recipe_hash_ok(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd,u64 h){return guest_pso_hash(pd)==h;}
 static HRESULT create_guest_pso_cached(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd,ID3D12PipelineState** out){
     LONG t=InterlockedIncrement(&trace_count)-1;if(t<1024)trace[t]=pd->SampleMask;
     InterlockedIncrement(&calls);driver=GetCurrentThreadId();CHECK(driver!=caller);

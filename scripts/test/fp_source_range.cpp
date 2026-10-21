@@ -37,7 +37,7 @@ int main() {
     ComPtr<ID3D11RasterizerState> rs;check(device->CreateRasterizerState(&raster,&rs));context->RSSetState(rs.Get());
     context->VSSetShader(vs.Get(),nullptr,0);context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     const char* setting=getenv("RSX_FP_SOURCE_RANGE");
-    int policy=setting && !strcmp(setting,"1")?1:setting && !strcmp(setting,"2")?2:0;
+    int policy=!setting?2:!strcmp(setting,"1")?1:!strcmp(setting,"0")?0:2; // unset = saturation only (Phase 113)
     bool off=policy==0;
     unsigned tested=0;
     for(int mode=0;mode<6;mode++) for(int abs=0;abs<2;abs++) for(int neg=0;neg<2;neg++) for(int operand=0;operand<3;operand++) {

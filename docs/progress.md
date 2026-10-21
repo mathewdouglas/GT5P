@@ -9,7 +9,7 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 113 - Barrier/tunnel lighting: source saturation narrowed to one program (2026-10-21)
+## Phase 113 - Black barrier fixed: stale pipeline blobs, then source saturation by default (2026-10-21)
 
 The user asked for the tunnel lighting next, suspecting shadows and the
 black barrier. Phase 94's barrier trace needs fragment source saturation
@@ -68,7 +68,34 @@ the normal map's N.L.
 - RenderDoc captures are not representative (the user notes they run
   differently): their composites showed no streaks in either mode.
 
-Conflicting evidence; the mechanism is open. The user's rolling-start shot
+**Solved: stale native pipeline blobs.** `RSX_PSO_DISK=0` (no driver
+pipeline blob cache) on the main cache made saturation smooth at 216 km/h.
+The blob key (`guest_pso_hash`) covered pipeline state and both shaders'
+bytecode but left out the root signature, which holds the static sampler
+bank, and that bank has changed across builds (Phase 78 and later). So a
+pipeline whose shader bytecode matched one first built in an older build
+got that build's blob, with its sampler setup, and the road sampled with
+the wrong wrap. That explains every observation: saturated variants were
+first built in Phases 94/97; the conditional spellings compile to new
+bytecode (no blob), `min(max(x,0),1)` compiles to the same bytecode as
+`saturate`; an empty cache folder has no blobs. The Phase 97 conclusion
+that saturation streaks the road was this artefact.
+
+- The serialized root signatures are hashed when created and folded into
+  the blob key (`RSX_PSO_KEY_RS=0`: the old key). Old blobs stop matching;
+  nothing is deleted. Recipes recorded under the old key are still accepted
+  (`guest_pso_recipe_hash_ok`), and the pipelines they create are looked up
+  under the new key.
+- **Fragment source saturation is now the default** (`RSX_FP_SOURCE_RANGE`
+  unset = 2; `=0` legacy; `=1` all ranges, experimental). The user confirmed
+  on a fresh-cache run that it fixes both the black barrier and the road.
+  Verified on the main cache with warmup on: smooth road at 207 km/h, menu
+  set 2236 and race set 3040 prepared. Tunnel interior still dark (user).
+- Tests: `fp_source_range.ps1` (unset now expects saturation only; all four
+  modes pass, 240 lanes each), `pso_async.py` (stub for the recipe check),
+  `debug_export.ps1`.
+
+The earlier contradictions in this phase are kept above for the record. The user's rolling-start shot
 shows the streaks along the pit straight at 120 km/h from a trackside
 camera, so they are a texture-like artefact, not speed blur.
 
