@@ -9,6 +9,59 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 107 - Inline guest memory access; chained SPU job bodies (2026-10-21)
+
+With the pacer pad gone, full rendering still had 7-9% of frames over 20 ms.
+`rtsplit.py` on a full-rendering timeline: the render thread's CPU was 14.1 ms
+a frame, against 8.5 ms with draws dropped, and it often was not running.
+Keeping host threads off the guest CPUs (`PS3_HOST_AVOID_PPU=1`) changed
+nothing measurable (58.1 FPS, 6.6% late, CPU 13.4 ms).
+
+**Guest memory accessors.** Sampling the render thread (g20) put 24% in
+`vm_read32`, 13% in `vm_write64`, 10% each in `vm_write32` and
+`spu_coh_is_reserved`, and 5% in `vm_read64`: about 65% of its time was
+calls to the out-of-line accessors, against a few percent in game code. Main
+and g21 looked the same. `GT5P_VM_INLINE` (Phase 54's step 5a, set aside when
+SPU dispatch set the pace) is now **on by default**. Render thread CPU 14.1
+-> 5.8 ms a frame, p99 ~30 -> 24.4 ms, walk 11 -> 7.5 ms. The late share did
+not move (6.8%): the render thread now spent ~9 ms a frame in spin waits.
+`-DGT5P_VM_INLINE=OFF` builds the old way; `VM_INLINE=0` at run time sends
+every access out of line. The exe is 176 MB.
+
+**The race's one-SPU workloads.** Lining up the render thread's spin-wait
+sleeps (timeline `Q`) with workload passes: each frame it waits for workload
+5 or 6 to end, then kicks the other and prepares the flip. Those are WWS job
+lists with maxContention 1 (forcing two lanes made no difference and was
+removed), and a pass took 14-17 ms of lane CPU (`SPURS_LANE_CYC=1`), against
+4.2 ms in Phase 101. That pass was the frame's critical path.
+`GT5P_SAMPLE_WID=<wid>` (new) profiles one workload's SPU code across pool
+lanes (lanes publish the workload they run in `g_spurs_tid_wid`;
+`GT5P_SAMPLE` now takes up to 16 threads). Workload 5 runs job body
+`0x0133A700`. 26% was one two-block loop (`0x43E0`/`0x43E8`, a walk along a
+list of 68-byte nodes ordered by a float key), and 17% the dispatcher between
+lifted blocks: every block, even a fall-through, returned to it.
+
+`lift_spu_jobs.py` turns forward transfers into guaranteed tail calls for job
+images, but it never did so for job bodies. It now does for bodies too
+(`SPU_CHAIN_BODIES=0` at lift time to skip; `--chain` applies it to an existing
+`generated/`): 3,410 transfers, 1,066 in `0x0133A700`. Backward transfers still
+pass the dispatcher. Workload 5/6 passes 17 -> ~6 ms in racing (13 ms in an
+earlier, heavier window); render lists 3.4 ms.
+
+| Frame test (1080p/2x, HSR) | FPS | Late | p99 |
+| --- | --- | --- | --- |
+| Phase 106 | 57.7-58.1 | 7.1-8.8% | 28-34 ms |
+| + inline accessors | 57.7 | 6.8% | 24.4 ms |
+| + chained bodies (2 runs) | 58.9-59.0 | 3.0-3.2% | 26.6-27.7 ms |
+
+Game speed 1.006 (HUD timer over 40 s of shots). The rolling start stays at
+30 FPS (two seconds at 22-27), then 59-60. Ferrari dealer 25 FPS. Tests:
+`pso_async.py`, `shader_warmup.py`, `debug_export.ps1` pass.
+
+**Next.** The FIFO walk is 10-12 ms a frame (draw recording, Phase 105) and
+now the largest serial item. Backward SPU transfers (loops) still use the
+dispatcher, and the patched spin waits sleep 0.5 ms when asked for 0.1.
+
 ## Phase 106 - The title's frame pacer copies slow frames; skip its pad (2026-10-21)
 
 The user asked why the race still missed 60 FPS with every draw dropped

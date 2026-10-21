@@ -75,7 +75,10 @@ message(STATUS "lifted PPU chunks: ${N_CHUNKS}")
 # registers, the GCM ref register and SPU-reserved lines. VM_INLINE=0 at run
 # time sends every access out of line again. Changing this option recompiles
 # all the chunks: set CMAKE_BUILD_PARALLEL_LEVEL=4 first.
-option(GT5P_VM_INLINE "Inline guest memory access in the lifted PPU code" OFF)
+# On by default since Phase 107: out-of-line accessors were about 65% of the
+# race render thread's CPU (14.1 -> 5.8 ms a frame inline). The exe is about
+# 176 MB instead of 97. -DGT5P_VM_INLINE=OFF builds the old way.
+option(GT5P_VM_INLINE "Inline guest memory access in the lifted PPU code" ON)
 if(GT5P_VM_INLINE)
     set(GT5P_VM_INLINE_H "${PS3RECOMP_DIR}/runtime/ppu/ppu_vm_inline.h")
     if(MSVC)

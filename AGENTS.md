@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-21, Phase 106)
+## Start here: state of play (2026-10-21, Phase 107)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 106 is the latest).
+has the evidence, newest phase first (Phase 107 is the latest).
 
 ### What works now
 
@@ -99,7 +99,17 @@ has the evidence, newest phase first (Phase 106 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: the title's frame pacer (Phase 106).** The render thread pads each
+**Latest: inline memory access, chained SPU bodies (Phase 107).** The build
+now defaults to `GT5P_VM_INLINE=ON`. Out-of-line `vm_read*`/`vm_write*` were
+about 65% of the race render thread's CPU (14.1 -> 5.8 ms a frame). The exe is
+176 MB, and changing the option recompiles every lifted chunk.
+`lift_spu_jobs.py` now chains forward transfers in job bodies as well as job
+images (`--chain` updates an existing `generated/`; `SPU_CHAIN_BODIES=0`
+skips). This cut the race's one-SPU workloads 5/6 (body `0x0133A700`, the
+frame's critical path) from 17 to ~6 ms. Frame test: 59 FPS, 3% late, p99
+~27 ms. `GT5P_SAMPLE_WID=<wid>` profiles one workload's SPU code.
+
+**The title's frame pacer (Phase 106).** The render thread pads each
 frame with a sleep up to the slowest of its last four once one passes a
 vblank (`func_007AF300`, sleep returns to `0x00B24AF4`). Our ms-scale jitter
 made it copy every hitch onto the next frames. That sleep is now skipped
@@ -448,8 +458,8 @@ Other black materials/geometry in the race remain to investigate. Beware
 benchmarking the starting-grid preview: Start at `QuickArcadeRoot+5000`, with
 retries, and inspect the final shot for the racing HUD. Dropping all draws
 also removes the HUD, so that alone cannot confirm the race actually started.
-The PPU-inline experiment was not adopted; the normal exe is rebuilt with
-`GT5P_VM_INLINE=OFF`. Phase 79 records its observations and limitations.
+The PPU-inline experiment was not adopted then; since Phase 107 the build
+defaults to `GT5P_VM_INLINE=ON`. Phase 79 records the earlier observations.
 
 0. **Phases 76 to 73 (2026-10-18), read them first.** The race start froze every
    time; fixed in the walker (11 of 12 races clean at 1080p). The user's

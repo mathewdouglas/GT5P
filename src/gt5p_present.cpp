@@ -1,4 +1,4 @@
-/* Present / vblank ticker.
+﻿/* Present / vblank ticker.
  *
  * Nothing in a port's own main() advances the display. The game requests a flip
  * (`_cellGcmSetFlipCommand`), then polls `cellGcmGetFlipStatus` until it clears
@@ -222,7 +222,7 @@ static int backend_pump(void)
 }
 
 /* GT5P_SAMPLE=<n>: a sampling profiler for the n busiest threads (default 4,
- * at most 8). Every 10 s it reports, for each thread it sampled, the 60
+ * at most 16). Every 10 s it reports, for each thread it sampled, the 60
  * busiest 256-byte code buckets as offsets from the executable's base, then
  * picks the threads that used the most CPU in that round to sample next. A
  * sample in a DLL is charged to its first caller in the executable (bit 0
@@ -286,12 +286,20 @@ struct ThreadCpu { DWORD tid; unsigned long long cpu, d; };
 /* GT5P_SAMPLE_PRESENT=1: the per-thread sampler always takes the present
  * (FIFO walker) thread as one of its n, busy or not. */
 static DWORD s_samp_force_tid;
+/* GT5P_SAMPLE_WID=<wid>: also one table of the samples, from any sampled lane
+ * thread, taken while that lane was running SPURS workload <wid> (printed as
+ * tid=w<wid>). Lanes of a pool take passes in turn, so no one thread holds a
+ * workload's profile. */
+extern "C" volatile signed char g_spurs_tid_wid[4096];
+static int s_samp_wid = -1;
+static struct { unsigned long long rva; unsigned n; } s_wid_b[4096];
+static unsigned s_wid_nb, s_wid_total, s_wid_seen[32];
 static DWORD WINAPI sampler_thread(LPVOID p)
 {
     const int want = (int)(uintptr_t)p;
     const unsigned long long base = (unsigned long long)GetModuleHandleW(NULL);
     const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
-    static SampThread s[8];
+    static SampThread s[16];
     static ThreadCpu prev[1024], cur[1024];
     int ns = 0, nprev = 0, round = 0;
     ULONGLONG t0 = GetTickCount64();
@@ -300,6 +308,13 @@ static DWORD WINAPI sampler_thread(LPVOID p)
         for (int i = 0; i < ns; i++) {
             unsigned long long rva;
             if (!sample_rip(s[i].h, base, &rva)) continue;
+            if (s_samp_wid >= 0) s_wid_seen[(unsigned char)g_spurs_tid_wid[s[i].tid & 4095u] & 31]++;
+            if (s_samp_wid >= 0 && g_spurs_tid_wid[s[i].tid & 4095u] == s_samp_wid + 1) {
+                unsigned k = 0;
+                for (; k < s_wid_nb; k++) if (s_wid_b[k].rva == rva) { s_wid_b[k].n++; break; }
+                if (k == s_wid_nb && s_wid_nb < 4096) { s_wid_b[k].rva = rva; s_wid_b[k].n = 1; s_wid_nb++; }
+                s_wid_total++;
+            }
             unsigned k = 0;
             for (; k < s[i].nb; k++) if (s[i].b[k].rva == rva) { s[i].b[k].n++; break; }
             if (k == s[i].nb && s[i].nb < 4096) { s[i].b[k].rva = rva; s[i].b[k].n = 1; s[i].nb++; }
@@ -333,6 +348,21 @@ static DWORD WINAPI sampler_thread(LPVOID p)
                 t->b[best].n = 0;
             }
             CloseHandle(t->h);
+        }
+        if (s_samp_wid >= 0) {
+            fprintf(stderr, "[ps-sample] round=%d tid=w%d cpu=lanes %u samples, %u buckets, base 0x%llX\n",
+                    round, s_samp_wid, s_wid_total, s_wid_nb, base);
+            fprintf(stderr, "[ps-sample] samples by running workload:");
+            for (int k = 0; k < 32; k++) if (s_wid_seen[k]) fprintf(stderr, " %s%d=%u", k ? "w" : "none", k ? k - 1 : 0, s_wid_seen[k]);
+            fprintf(stderr, "\n"); memset(s_wid_seen, 0, sizeof s_wid_seen);
+            for (int r = 0; r < 300; r++) {
+                unsigned best = 0;
+                for (unsigned q = 1; q < s_wid_nb; q++) if (s_wid_b[q].n > s_wid_b[best].n) best = q;
+                if (!s_wid_nb || !s_wid_b[best].n) break;
+                fprintf(stderr, "[ps-sample]   +0x%llX  %u\n", s_wid_b[best].rva, s_wid_b[best].n);
+                s_wid_b[best].n = 0;
+            }
+            s_wid_nb = 0; s_wid_total = 0;
         }
         /* The next round samples the threads that used the most CPU in this one. */
         int ncur = 0;
@@ -522,13 +552,14 @@ extern "C" void gt5p_start_sampler(void)
 {
     const char* e = getenv("GT5P_SAMPLE");
     if (!e) return;
+    if (const char* w = getenv("GT5P_SAMPLE_WID")) s_samp_wid = atoi(w);
     if (!strcmp(e, "all")) {
         s_sampler_lanes = 1;
         g_spurs_lane_start_hook = lane_start_hook;
         CreateThread(NULL, 0, sampler_all_thread, NULL, 0, NULL);
         return;
     }
-    int n = atoi(e); if (n <= 0) n = 4; if (n > 8) n = 8;
+    int n = atoi(e); if (n <= 0) n = 4; if (n > 16) n = 16;
     if (getenv("GT5P_SAMPLE_PRESENT")) s_samp_force_tid = GetCurrentThreadId();
     CreateThread(NULL, 0, sampler_thread, (LPVOID)(uintptr_t)n, 0, NULL);
 }

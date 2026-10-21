@@ -34,7 +34,8 @@ Presents per 5 s in normal racing: 199-300 (40-60 FPS).
   constant snapshots ~1.5 ms); without draws the walk is 4.2 ms and the
   frame test shows 58.8 FPS, 3.5% late. Next: cheaper draw recording.
 - Step 6 done in Phase 104.
-- Phase 106 skips the title's frame-pacer pad: 57.7-58.1 FPS, 7-9% late,
+- Phase 107 (inline guest memory access, chained SPU job bodies): 58.9-59.0
+  FPS, 3% late, p99 27-28 ms. Phase 106 (frame-pacer pad skipped): 57.7-58.1 FPS, 7-9% late,
   p99 28-34 ms. Before it: 54.8-55.7 FPS, 13.6-15.4% late, p99 41-45 ms (from
   51.6-51.9 FPS, 27% late, p99 46-49 ms).
 

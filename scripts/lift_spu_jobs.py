@@ -198,6 +198,12 @@ XFER_RE = re.compile(
     r"g_spu_trampoline_fn = (\w+_spu_func_([0-9A-F]{8})); return; \}")
 
 
+# Job bodies get the same treatment (Phase 107): the race's one-SPU workloads
+# run body 0x0133A700, whose hot list walk went through the dispatcher on every
+# block. SPU_CHAIN_BODIES=0 at lift time leaves bodies as before.
+CHAIN_BODIES = os.environ.get("SPU_CHAIN_BODIES", "1") != "0"
+
+
 def chain_forward(outdir):
     """Turn transfers to a LATER block of the same image into direct tail calls.
 
@@ -233,7 +239,7 @@ def chain_forward(outdir):
 def main():    # --chain: apply chain_forward to the job images already generated, without
     # lifting again.
     if "--chain" in sys.argv:
-        for d in sorted(OUT.glob("j*")):
+        for d in sorted(OUT.glob("j*")) + (sorted(OUT.glob("b*")) if CHAIN_BODIES else []):
             if d.is_dir():
                 print(f"  {d.name}: {chain_forward(d)} forward transfers made direct")
         return
@@ -299,7 +305,8 @@ def main():    # --chain: apply chain_forward to the job images already generate
             seeds |= abs_tables(raw, lsa)
         n = lift(blob, prefix, outdir, base=lsa, extra=",".join(map(hex, sorted(seeds))))
         total += n
-        print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}")
+        chained = f" ({chain_forward(outdir)} forward transfers made direct)" if CHAIN_BODIES else ""
+        print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}{chained}")
         externs += f"\nextern void {prefix}_spu_recomp_register(void);"
         regs += (f"\n\n    /* job body at 0x{ea:08X}, {size} bytes, runs at LS 0x{lsa:X} */\n"
                  f"    spu_begin_image({img});\n"
