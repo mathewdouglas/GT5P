@@ -99,7 +99,13 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: settings in a race pause it (Phase 117).** Opening the page
+**Latest: tunnel lighting investigated (Phase 118).** The tunnel's near-black
+is the title's own numbers: walls get lamp light x 0.01 (per-draw `c0`) x
+exposure 0.4, which never changes in the race. Needs an RPCS3 tunnel picture to
+tell authored from missing adaptation. Tools: `scripts/diag/rdoc_expo.py`,
+`rdoc_vlit.py`.
+
+**Settings in a race pause it (Phase 117).** Opening the page
 while racing presses Start for the title (cellPad `g_pad_inject_buttons`),
 unless a pause bar or grid menu is shown: found by scanning guest memory for
 mListBox (`menu_listbox_vtable`). `GT5P_SETTINGS_PAUSE=0` off. New

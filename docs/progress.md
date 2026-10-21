@@ -9,6 +9,41 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 118 - Tunnel lighting: what the title feeds the walls (2026-10-22)
+
+Investigation only; nothing changed in the renderer. Retained captures
+(`graphics94-manual_frame{6819,10164,10650}`) plus two driven 1080p/2x HSR
+races (`scratch/pv/tunnel118a`, `tunnel118b`; tunnel at shots 90-135 s).
+
+- **The wall shader** (draw 489): light = `v7.rgb * c0 + v7.w * c1`, times
+  sRGB-decoded albedo, times `c4`, then fog. `v7` is attribute 13 passed
+  straight through, four half floats (descriptor `0x143`, stride 28), so
+  (1.69, 0.89, 0.26, 0) is a real HDR value: orange lamp light, no sky.
+- **`c4` is the main view's exposure**, (0.4, 0.4, 0.4, 10), in every draw
+  of all four captures, tunnel included (`scripts/diag/rdoc_expo.py`).
+  Live, the global `0x015FA284` alternates per view between (0.04, w 0),
+  (0.4, w 10) and (1, 1): fixed values the whole race (`GT5P_WATCH`).
+- **`c0` is a per-draw value the title chooses** (`scripts/diag/rdoc_vlit.py`):
+  outside the tunnel these programs get the sun colour (1.09, 1.01, 0.9) or
+  0.8; tunnel pieces get 0.01 or 0.006, even on a shader that gets 0.8 on
+  another draw in the same frame. So the near-black is the title's own
+  numbers (0.01 x 0.4 x albedo 0.08), not a decode or upload fault seen so
+  far.
+- The exposure function (`0x007132C0`, helper `0x00712E28`) is in its
+  clamped regime, where exposure is proportional to the colour at
+  `object+0xB30`, set through `0x00712B18` from `0x00702950`: a product of
+  scene fields `+0x65C`, `+0x668`, `+0x674`. That input does not change in
+  the tunnel.
+- **The car's cube probe**: six 256x511 targets, each a 256x256 face with
+  its mip chain stacked below; the 4x4/2x2/1x1 levels are written back
+  (`RSX_RT_WB`). The 1x1 averages are nonzero and live, but barely change
+  inside the tunnel (`15191C` vs `161A1D` outside), and one face is
+  `0D1725` for the whole race. Whether the title meters exposure from these
+  is not established.
+
+Open: whether the title is meant to raise exposure (or `c0`) in the tunnel
+on hardware. That needs a reference picture from RPCS3 in the tunnel.
+
 ## Phase 117 - Opening the settings in a race pauses it (2026-10-22)
 
 The user asked that opening the settings during a race open the game's pause
