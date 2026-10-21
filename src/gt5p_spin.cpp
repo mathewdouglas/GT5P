@@ -12,6 +12,7 @@
 #include <immintrin.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "ps3emu/timeline.h"   /* PS3_TIMELINE: each sleeping step (kind Q) */
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -35,6 +36,8 @@ extern "C" void gt5p_spin_pause(uint32_t* n)
         nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!timer) { Sleep(0); return; }
     LARGE_INTEGER due; due.QuadPart = -step_100ns;
+    const uint64_t t0 = g_tl_on ? ps3_tl_us() : 0;
     SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
     WaitForSingleObject(timer, INFINITE);
+    if (t0) ps3_tl_rec('Q', i, (uint32_t)(ps3_tl_us() - t0));
 }

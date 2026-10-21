@@ -47,6 +47,11 @@ string(JSON GT5P_BOOT_FROM    GET "${GT5P_T}" boot_from)
 string(JSON GT5P_HDD_TITLE    GET "${GT5P_T}" hdd_title)
 string(JSON GT5P_SPU_REGISTRY GET "${GT5P_T}" spu_registry)
 string(JSON GT5P_SYNTH_DONE   GET "${GT5P_T}" spurs_synth_job_done)
+# Return address of the title's frame-pacer sleep (Phase 106); absent: none.
+string(JSON GT5P_PACER_LR ERROR_VARIABLE GT5P_PACER_LR_ERR GET "${GT5P_T}" frame_pacer_sleep_lr)
+if(GT5P_PACER_LR_ERR)
+    set(GT5P_PACER_LR "")
+endif()
 message(STATUS "game build: ${GT5P_TARGET} (code end ${GT5P_CODE_END}, boot_from=${GT5P_BOOT_FROM})")
 
 # =============================================================================
@@ -170,7 +175,8 @@ set_source_files_properties(src/gt5p_debug_export.cpp PROPERTIES
 set(GT5P_MAIN_DEFS
     "GT5P_TITLE_ID=\"${GT5P_TARGET}\""
     "GT5P_CODE_END=${GT5P_CODE_END}u"
-    "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\"")
+    "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\""
+    "GT5P_PACER_LR=\"${GT5P_PACER_LR}\"")
 if(GT5P_HDD_TITLE)
     list(APPEND GT5P_MAIN_DEFS "GT5P_HDD_TITLE=1")
 endif()

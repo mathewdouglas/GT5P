@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-21, Phase 105)
+## Start here: state of play (2026-10-21, Phase 106)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 105 is the latest).
+has the evidence, newest phase first (Phase 106 is the latest).
 
 ### What works now
 
@@ -99,7 +99,16 @@ has the evidence, newest phase first (Phase 105 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: frame-time test and a cheaper FIFO walk (Phase 105).**
+**Latest: the title's frame pacer (Phase 106).** The render thread pads each
+frame with a sleep up to the slowest of its last four once one passes a
+vblank (`func_007AF300`, sleep returns to `0x00B24AF4`). Our ms-scale jitter
+made it copy every hitch onto the next frames. That sleep is now skipped
+(`frame_pacer_sleep_lr` in `config/targets.json`; `GT5P_PACER_PAD=1` keeps
+it). Frame test 55 -> ~58 FPS, ~14% -> 7-9% late, p99 ~43 -> ~30 ms. Game
+speed is unchanged, and the rolling start still runs at 30.
+`scripts/diag/rtsplit.py` splits render-thread frames (timeline `C`/`Q`).
+
+**Frame-time test and a cheaper FIFO walk (Phase 105).**
 `race.ps1 -FrameTest` is the 60-FPS pass/fail number: 60 s of HSR racing
 after the rolling start, with FPS, p99, % of intervals over 20 ms and walk
 per frame (`GT5P_FRAME_LOG`). The walk is CPU work, not waiting. A method

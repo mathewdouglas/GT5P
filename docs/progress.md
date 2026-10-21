@@ -9,6 +9,68 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 106 - The title's frame pacer copies slow frames; skip its pad (2026-10-21)
+
+The user asked why the race still missed 60 FPS with every draw dropped
+(`RSX_VTX_SKIP=1`: 58.5-58.8 FPS, 3.5-5.4% of frames over 20 ms).
+
+**Where late frames come from.** A no-draw timeline (`nd-tl`, 10 s): 523
+frames took one vblank, 18 two and 14 three, in clusters. In a three-vblank
+frame the walker sat idle for 37 ms: the render thread (`PDI:1:200c3b40`,
+guest tid 20, the one calling `cellGcmSetPrepareFlip`) slept in `usleep(37381)`
+before submitting. `PS3_USLEEP_LONG=<us>` (new) logs long sleeps with their
+guest return address. Every long render-thread sleep returns to `0x00B24AF4`.
+
+**The pacer** (`func_007AF300`, once per frame on the render thread; read
+from the disassembly, not decompiled into this repo):
+
+- It keeps the render loop's elapsed time for the last four frames (fields
+  `+0x148..+0x160`; timer at `+0x168`, restarted after the pad).
+- The target is `[+0x1C] x 16683 us` (one 59.94 Hz vblank per unit).
+- If the longest of the four reaches the target, it sleeps until the
+  current frame has lasted that long, capped at 50,049 us (`0x00B24AA8`,
+  sleep until an offset from the timer's start).
+
+So one slow frame is copied onto the following ones: a 40 ms hitch becomes a
+run of ~40 ms frames. On a console frame times vary by microseconds and this
+rarely fires. Here it fires on ordinary jitter.
+
+**What the render thread does per frame.** New timeline events: `C` at each
+prepare flip (the thread's CPU time and wall time since its previous one) and
+`Q` for each sleeping step of a patched spin wait. `scripts/diag/rtsplit.py`
+splits each frame (`nd-tl3`, 880 frames, no draws):
+
+| | Wall | CPU | Syscall waits | Pacer pad | Spin waits | Not running |
+| --- | --- | --- | --- | --- | --- | --- |
+| Normal frames (mean) | 16.6 | 8.5 | 5.0 | 0.6 | 2.3 | 0.2 |
+| Late frames (range) | 20-37 | 8-15 | 0-10 | 0-22 | 0-11 | 0-13 (25 frames) |
+
+The render thread's CPU never exceeded 15 ms. Late frames were a spin wait on
+SPU progress, an occasional preemption, or a vblank wait, and then the pacer
+padding.
+
+**Skipping the pad** (`PS3_USLEEP_SKIP_LR=<hex lr>` returns at once from sleeps
+from that call site; the address is `frame_pacer_sleep_lr` in
+`config/targets.json`, set by default from `main.cpp`; `GT5P_PACER_PAD=1` keeps
+the title's padding):
+
+| Frame test (1080p/2x, HSR) | FPS | Late | p99 |
+| --- | --- | --- | --- |
+| No draws, pad | 58.5-58.8 | 3.5-5.4% | 26-39 ms |
+| No draws, no pad | 59.3 | 1.6% | 24.2 ms |
+| Full, pad (Phase 105) | 54.8-55.7 | 13.6-15.4% | 41-45 ms |
+| Full, no pad (3 runs) | 57.7-58.1 | 7.1-8.8% | 28.5-34.1 ms |
+
+Game speed is unchanged: the HUD timer advanced 39.48 s across 40 s of shots
+(0.99; Phase 102 measured 0.97). The race clock follows the title's timer
+service. The rolling start still runs at 30 FPS, and more steadily (30 almost
+every second, against 24-30 with the pad). Ferrari dealer 24 FPS. Tests:
+`debug_export.ps1`, `pso_async.py` pass.
+
+**What remains** (full rendering, ~7-9% late): the walker's draw recording
+(~5.6 ms, Phase 105) delays the render jobs, SPU spin waits stretch the
+render loop, and guest threads are occasionally preempted.
+
 ## Phase 105 - Frame-time test, walker CPU split, NOP-loop parks (2026-10-21)
 
 Steps 1-3 of [plan-60fps.md](plan-60fps.md), as the user asked.

@@ -7404,7 +7404,7 @@ index 071b9ec..74fc692 100644
  }
  
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb0464..43e1505 100644
+index cdb0464..2304b48 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,6 +14,7 @@
@@ -8102,15 +8102,34 @@ index cdb0464..43e1505 100644
      /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
       * which answers "did it ever flip?" and not "is it still flipping, and how
       * fast?" -- the question that matters when a title stops appearing on
-@@ -2331,6 +2781,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
+@@ -2331,6 +2781,26 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
  s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
  {
      (void)ctx;  /* command buffer context -- not used in HLE */
 +    ps3_tl('F', bufferId, 0);
++    /* PS3_TIMELINE: the calling thread's CPU time against wall time since its
++     * previous prepare (kind C, microseconds). The title's frame pacer pads
++     * later frames to the slowest recent one, so a frame that took long
++     * because its thread was not running is worth telling apart from one
++     * that had more work. */
++    if (g_tl_on) {
++        static __declspec(thread) ULONG64 c_prev; static __declspec(thread) LARGE_INTEGER q_prev;
++        static double cyc_per_us;
++        if (!cyc_per_us) { LARGE_INTEGER f, a, b; ULONG64 c0, c1; QueryPerformanceFrequency(&f);
++            QueryPerformanceCounter(&a); QueryThreadCycleTime(GetCurrentThread(), &c0);
++            do QueryPerformanceCounter(&b); while (b.QuadPart - a.QuadPart < f.QuadPart / 50);
++            QueryThreadCycleTime(GetCurrentThread(), &c1);
++            cyc_per_us = (double)(c1 - c0) / ((double)(b.QuadPart - a.QuadPart) * 1e6 / (double)f.QuadPart); }
++        ULONG64 c; LARGE_INTEGER q, f; QueryThreadCycleTime(GetCurrentThread(), &c);
++        QueryPerformanceCounter(&q); QueryPerformanceFrequency(&f);
++        if (c_prev) ps3_tl('C', (u32)((double)(c - c_prev) / cyc_per_us),
++                           (u32)((q.QuadPart - q_prev.QuadPart) * 1000000 / f.QuadPart));
++        c_prev = c; q_prev = q;
++    }
  
      if (bufferId >= CELL_GCM_MAX_DISPLAY_BUFFER_NUM)
          return CELL_GCM_ERROR_INVALID_VALUE;
-@@ -2339,6 +2790,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2339,6 +2809,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
          return CELL_GCM_ERROR_INVALID_VALUE;
  
      printf("[cellGcmSys] SetPrepareFlip(bufferId=%u)\n", bufferId);
@@ -8118,7 +8137,7 @@ index cdb0464..43e1505 100644
  
      s_current_display_buffer_id = bufferId;
      s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
-@@ -2352,6 +2804,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2352,6 +2823,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
      if (s_flip_handler_opd && g_ps3_guest_caller && !gcm_flipcb_on_tick_only())
          g_ps3_guest_caller(s_flip_handler_opd, 0, 0, 0, 0, 0, 0, 0, 0);
  
@@ -24140,7 +24159,7 @@ index a297bf5..d0a5714 100644
  int64_t sys_ppu_thread_join(ppu_context* ctx);
  int64_t sys_ppu_thread_detach(ppu_context* ctx);
 diff --git a/runtime/syscalls/sys_timer.c b/runtime/syscalls/sys_timer.c
-index d8f4081..c781613 100644
+index d8f4081..15f097a 100644
 --- a/runtime/syscalls/sys_timer.c
 +++ b/runtime/syscalls/sys_timer.c
 @@ -2,6 +2,7 @@
@@ -24151,7 +24170,32 @@ index d8f4081..c781613 100644
  #include "sys_timer.h"
  #include "sys_event.h"
  #include "../memory/vm.h"
-@@ -214,14 +215,28 @@ int64_t sys_timer_usleep(ppu_context* ctx)
+@@ -111,6 +112,24 @@ int64_t sys_timer_usleep(ppu_context* ctx)
+       static int n=0; if (n++ < 60)
+         fprintf(stderr, "[WAIT] t=%lluus timer_usleep(%llu us) lr=0x%08llX cia=0x%08llX\n", ps3_qpc_us(),
+         (unsigned long long)usec, (unsigned long long)ctx->lr, (unsigned long long)ctx->cia); }
++    /* PS3_USLEEP_LONG=<us>: each sleep of at least that long, with the guest
++     * return address and thread: who decided to wait a whole frame. */
++    { static long long lmin = -1;
++      if (lmin < 0) { const char* e = getenv("PS3_USLEEP_LONG"); lmin = e ? atoll(e) : 0; }
++      if (lmin > 0 && usec >= (uint64_t)lmin) {
++          extern unsigned long long ps3_qpc_us(void);
++          fprintf(stderr, "[usleep-long] t=%llu us=%llu tid=%u lr=0x%08llX r31=%08llX r30=%08llX r29=%08llX%c",
++                  ps3_qpc_us(), (unsigned long long)usec, (unsigned)ctx->thread_id, (unsigned long long)ctx->lr,
++                  (unsigned long long)ctx->gpr[31], (unsigned long long)ctx->gpr[30], (unsigned long long)ctx->gpr[29], 10);
++      } }
++    /* PS3_USLEEP_SKIP_LR=<hex lr>[,<hex lr>]: return at once from sleeps
++     * requested from these guest return addresses (a test: a title's frame
++     * pacer that pads frames to its slowest recent one). */
++    { static int n = -1; static uint32_t skip[2];
++      if (n < 0) { const char* e = getenv("PS3_USLEEP_SKIP_LR"); n = 0;
++                   while (e && *e && n < 2) { char* end; skip[n++] = (uint32_t)strtoul(e, &end, 16);
++                                              e = *end == ',' ? end + 1 : NULL; } }
++      for (int k = 0; k < n; k++) if ((uint32_t)ctx->lr == skip[k]) return CELL_OK; }
+     /* PS3_POLLTOP=<seconds>: name the usleep poll sites.
+      *
+      * A title that is "hung" is usually not blocked on anything -- every thread
+@@ -214,14 +233,28 @@ int64_t sys_timer_usleep(ppu_context* ctx)
  
  #ifdef _WIN32
      /* Use high-resolution sleep via waitable timer for better precision */
@@ -24182,7 +24226,7 @@ index d8f4081..c781613 100644
          } else {
              Sleep((DWORD)(usec / 1000));
          }
-@@ -244,6 +259,8 @@ int64_t sys_timer_usleep(ppu_context* ctx)
+@@ -244,6 +277,8 @@ int64_t sys_timer_usleep(ppu_context* ctx)
              QueryPerformanceCounter(&qpc_now);
          } while (qpc_now.QuadPart < qpc_deadline);
      }
@@ -24191,7 +24235,7 @@ index d8f4081..c781613 100644
  #else
      if (usec > 0) {
          struct timespec ts;
-@@ -288,14 +305,29 @@ int64_t sys_time_get_current_time(ppu_context* ctx)
+@@ -288,14 +323,29 @@ int64_t sys_time_get_current_time(ppu_context* ctx)
      uint64_t sec, nsec;
  
  #ifdef _WIN32

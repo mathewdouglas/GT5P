@@ -59,6 +59,8 @@ def desc(e):
     if k == 'P': return 'present %d us' % b
     if k == 'R': return 'fifo walk %d us (cpu %d us)' % (b, a)
     if k == 'S': return 'usleep asked %d us, slept %d us' % (a, b)
+    if k == 'C': return 'frame cpu %d us of %d us wall since last prepare' % (a, b)
+    if k == 'Q': return 'spin-wait sleep %d us (iteration %d)' % (b, a)
     if k == 'V': return 'vblank tick'
     return '%s %d %d' % (k, a, b)
 

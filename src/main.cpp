@@ -746,6 +746,17 @@ int main(int argc, char* argv[])
      * motion, Phase 102). PS3_PPU_CORES=topo for one thread per core. */
     if (!getenv("PS3_PPU_CORES")) _putenv_s("PS3_PPU_CORES", "topo-ht");
 
+    /* The title's frame pacer pads each frame with a sleep up to the slowest
+     * of the last four (up to 50 ms) once one passes a vblank. On a console
+     * frame times vary by microseconds; here an SPU wait or a preempted
+     * thread does it, and the pad copies one slow frame onto the next few
+     * (Phase 106). Skip that sleep: the race clock follows the title's timer
+     * service, not frames, so game speed is unchanged. GT5P_PACER_PAD=1 keeps
+     * the title's padding. */
+    { const char* pad = getenv("GT5P_PACER_PAD");
+      if (GT5P_PACER_LR[0] && !(pad && pad[0] == '1') && !getenv("PS3_USLEEP_SKIP_LR"))
+          _putenv_s("PS3_USLEEP_SKIP_LR", GT5P_PACER_LR); }
+
     /* Run a SPURS workload only while its ready count is nonzero, on as many
      * virtual SPUs as the count asks for. This title fills a job list first
      * and raises the count afterwards; run before that, the dealership's

@@ -26,6 +26,7 @@
     "spu_registry": "src/gen/spu_workloads_bcus98158.c",
     "boot_from": "bdvd",
     "hdd_title": false,
-    "spurs_synth_job_done": false
+    "spurs_synth_job_done": false,
+    "frame_pacer_sleep_lr": "0x00B24AF4"
   }
 }
