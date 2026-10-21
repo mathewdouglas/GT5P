@@ -115,6 +115,9 @@ if(GT5P_ENABLE_SPU)
     # the include to these TUs so the huge PPU chunks keep their cached command.
     set_source_files_properties(${GT5P_SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu")
+    # Native replacements hooked into lifted SPU blocks (scripts/spu_native_patch.py).
+    set_source_files_properties(src/gt5p_spu_native.c PROPERTIES
+        INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu")
     # SSE4.1 for the lifted SPU code only. Its helpers (spu_shufb above all)
     # have a vector form behind __SSE4_1__ and fall back to a byte loop without
     # it; that loop was a sixth of the sound job thread. Any CPU with a D3D12
@@ -140,6 +143,7 @@ add_executable(gt5p
     src/gt5p_present.cpp
     src/gt5p_audio_native.cpp
     src/gt5p_spin.cpp
+    src/gt5p_spu_native.c
     src/gt5p_settings.cpp
     src/gt5p_profview.cpp
     src/gt5p_debug_export.cpp

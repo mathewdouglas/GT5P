@@ -99,7 +99,16 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: SPU profile, where rewrites would pay (Phase 110).** Ferrari
+**Latest: native sorted walk; SPU interrupts measured (Phase 111).** The
+race workloads' sorted-list insertion (body 0x0133A700, 0x43E8) now runs
+natively (`src/gt5p_spu_native.c`, hooked by the new required post-lift step
+`scripts/spu_native_patch.py`): workloads 5/6 ~11.2 -> ~9.2 ms a pass in an
+A/B within one boot; `GT5P_SPU_NATIVE=2` checks every walk against the
+lifted code (0 mismatches in millions). The dealer's SPU interrupts are only
+~2.5% of render-lane CPU (`SPU_IRQSTAT=1` now reports cycles): not worth
+reworking. The rest of its 40% runtime share is call/return dispatch.
+
+**SPU profile, where rewrites would pay (Phase 110).** Ferrari
 dealer render workloads 0/1 take ~29-30 ms a lane pass (SPU-bound at 30
 FPS): 60% body b01376080 (0xF8C0 18%, rest spread), 40% runtime, with ~33,000
 SPU interrupts/s from the job manager's tag-update events. Race workloads 5/6
@@ -551,7 +560,8 @@ defaults to `GT5P_VM_INLINE=ON`. Phase 79 records the earlier observations.
   - PPU: the README steps, then `scripts/setjmp_patch.py` and
     `scripts/spin_patch.py` (both required; `--check` reports);
   - SPU: `.venv\Scripts\python scripts\lift_spu_jobs.py`, which takes
-    about 20 s and rewrites `src/gen/spu_workloads_bcus98158.c` (diff it).
+    about 20 s and rewrites `src/gen/spu_workloads_bcus98158.c` (diff it),
+    then `scripts/spu_native_patch.py` (required; also after `--chain`).
 
   Then grep `generated/` for `/* TODO:` lines other than `.word`.
 - **Instrumentation helpers patch `generated/` in place.** Before any real
@@ -1330,6 +1340,7 @@ Run Python through the repo's virtual environment: `.venv\Scripts\python`.
 | `scripts/self_metainfo.py`, `scripts/decrypt_self.py` | SELF decryption helpers; need a `data/keys` file that is not in the repo |
 | `scripts/setjmp_patch.py` | Post-lift patch, required after every lift |
 | `scripts/spin_patch.py` | Post-lift patch, required after every lift: guest spin waits on SPU progress yield (`spin_waits` in `config/targets.json`) |
+| `scripts/spu_native_patch.py` | Post-SPU-lift patch, required: hooks native replacements (`src/gt5p_spu_native.c`) into lifted SPU blocks (`spu_native_hooks`); `GT5P_SPU_NATIVE=0` off, `=2` check |
 | `scripts/lift_spu_jobs.py` | Lift the policy module, the captured job images and the job bodies; writes `src/gen/spu_workloads_bcus98158.c` |
 | `scripts/soak.sh`, `soak.py`, `boot.py` | Repeated or single headless boots with a summary |
 | `scripts/test/*.ps1` | Drive the game to a page and measure or shoot it (table under "Start here") |

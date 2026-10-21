@@ -23,6 +23,7 @@
     "wws_job_bodies": [["0x011A4100", 3344, "0x4000"], ["0x011A4E80", 9968, "0x4000"], ["0x01376080", 75008, "0x4000"], ["0x01371A00", 17936, "0x4000"], ["0x0133A300", 944, "0x4000"], ["0x0133A700", 98640, "0x4000"], ["0x01360100", 57600, "0x4000"]],
     "wws_job_pm_size": 11648,
     "spin_waits": [["0x00BAB5C8", "0x00BAB5F0"], ["0x00BA97B0", "0x00BA9830"]],
+    "spu_native_hooks": [["b0133A700", "0x43E8", "gt5p_spu_sorted_walk"], ["b0133A700", "0x4420", "gt5p_spu_sorted_walk_end"]],
     "spu_registry": "src/gen/spu_workloads_bcus98158.c",
     "boot_from": "bdvd",
     "hdd_title": false,

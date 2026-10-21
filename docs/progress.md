@@ -9,6 +9,44 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 111 - Native sorted walk in the race workloads; SPU interrupt cost (2026-10-21)
+
+**The race's sorted insertion runs natively.** Body 0x0133A700, blocks
+0x43E0/0x43E8/0x4420 (Phase 110): walk a list in descending order of the
+float key at +60, next index the halfword at +66 (0xFFFF ends it), 68-byte
+nodes from r13, new key in r12; stop when the new key is greater (fcgt).
+
+- `src/gt5p_spu_native.c` finds the stopping node natively and sets r7 to
+  the node one step before it; the lifted code then takes the last step and
+  the final test, so every register ends as before, and nothing is written.
+  Local-store reads follow rotqby's wrap within a quadword.
+- `scripts/spu_native_patch.py` inserts the call at the top of the lifted
+  blocks named in `spu_native_hooks` (`config/targets.json`). Required after
+  every SPU lift or `--chain`; `--check`, `--restore`.
+- `GT5P_SPU_NATIVE`: 0 off, 1 on (default), 2 check: compute natively,
+  change nothing, compare with where the lifted walk stopped at 0x4420.
+  Two 30 s race runs in check mode: about 2.5 million walks each run's
+  final windows, 0 mismatches. `GT5P_SPU_NATIVE_STATS=1` counts.
+- Walks average ~90 nodes (~120,000 nodes a pass). A/B within one boot
+  (`SPU_EXP_AB=1`, gate since removed): byte-wise reads 10.8-11.8 -> 9.4-10.3 ms;
+  with single unaligned loads 10.7-11.9 -> 8.8-9.8 ms a pass (~18%). The
+  walk is still a third of the workload: it is latency-bound pointer
+  chasing, natively or not; only a different algorithm would remove it.
+  Frame test 59.0-59.3 FPS (at its ceiling).
+
+**SPU interrupt cost on the dealer page.** `SPU_IRQTRACE=1`: the interrupts
+are list stall-and-notify (event 0x2), not tag updates as Phase 110 said: a
+pair per job, at 0x2D38 (job manager, depth 0; its iret runs one call deeper
+and unwinds to the driver) and 0x2328 (depth 1; iret at depth 2, unwinds to
+the taking frame, then a drain restart). `SPU_IRQSTAT=1` now also stamps
+cycles: handler ~17,500 cycles an interrupt (take to iret restore), longjmp
+~5,000 cycles each, two per interrupt; ~9,400 interrupts/s on this visit's
+cars. About 2.5% of render-lane CPU in all, under 1% in unwinds. Reworking
+the iret path (non-unwinding jumps, no longjmp) is not worth its risk for
+that; left alone. The dealer's remaining runtime share (Phase 110: 40%) is
+mostly ordinary call/return dispatch (`spu_indirect_branch`,
+`spu_lookup_fast`, `spu_drain_call_impl`) and DMA copies, outside interrupts.
+
 ## Phase 110 - SPU profile: where hand-written replacements would pay (2026-10-21)
 
 Prompted by another port's report of a 25x gain from replacing one SPU
