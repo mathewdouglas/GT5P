@@ -102,7 +102,8 @@ has the evidence, newest phase first (Phase 108 is the latest).
 **Latest: button prompts follow the controller (Phase 119).** Kenney's
 CC0 art (`assets/glyphs/kenney/`) is painted over the game's button
 textures, which are listed by content hash in `assets/glyphs/textures.txt`:
-the 52x52 Cross by "Enter" and the 460x720 button-assignment diagram. The
+the 52x52 Cross by "Enter", the 460x720 button-assignment diagram and
+its 14 red highlight rings (redrawn around the new icons). The
 backend hook is `rsx_tex_set_replacer`, and the cellPad device is
 `g_pad_device_family`. A PlayStation pad keeps the original art.
 Switches:

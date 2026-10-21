@@ -82,7 +82,9 @@ struct Img {
 };
 
 struct Cell { int btn, x, y, w, h, fx, fy, fw, fh; };   /* f*: box to fit the art in, 0 = the button's own */
-struct Entry { unsigned w, h; std::vector<Cell> cells; };
+/* A texture with button cells, or (outline) the game's highlight ring for one
+ * button of a picture: cells[0] is then that button's box in the picture. */
+struct Entry { unsigned w, h; std::vector<Cell> cells; int inset = 0, ring = 5; bool outline = false; };
 
 std::map<unsigned long long, Entry> g_table;
 Img g_art[5][B_N];                     /* [style][button], empty = keep */
@@ -367,6 +369,64 @@ bool clear_button(Img& im, const Cell& c, int* bx0, int* by0, int* bx1, int* by1
     return true;
 }
 
+/* A highlight ring redrawn around the new art. The game draws the ring's
+ * texture centred over its button at the picture's scale, so the art is
+ * placed where build() put it in the picture, shifted into the ring's frame;
+ * the ring is the texels 1 to e.ring texels outside its silhouette, in the
+ * original ring's colour. False when the style keeps this button's art. */
+bool outline_ring(const Entry& e, int style, Img& im)
+{
+    const Cell& c = e.cells[0];
+    const Img& art = g_art[style][c.btn];
+    if (art.px.empty()) return false;
+    double col[3] = {0, 0, 0}, n = 0;
+    for (size_t i = 0; i < im.px.size(); i += 4)
+        if (im.px[i + 3] > 128) { for (int k = 0; k < 3; k++) col[k] += im.px[i + k]; n++; }
+    if (n == 0) { col[0] = 255; n = 1; }
+    double fx = c.x + e.inset, fy = c.y + e.inset, fw = c.w - 2.0 * e.inset, fh = c.h - 2.0 * e.inset;
+    if (c.fw > 0) { fx = c.fx; fy = c.fy; fw = c.fw; fh = c.fh; }
+    const double ox = (im.w - c.w) / 2.0 - c.x, oy = (im.h - c.h) / 2.0 - c.y;
+    Img sil; sil.w = im.w; sil.h = im.h; sil.px.assign(im.px.size(), 0);
+    draw_fit(sil, fx + ox, fy + oy, fw, fh, art);
+    /* Letters cut through the art are holes, not outside: fill whatever a
+     * flood from the border cannot reach, or the ring is drawn in them too. */
+    {
+        std::vector<uint8_t> out((size_t)im.w * im.h, 0);
+        std::vector<std::pair<int, int>> st;
+        auto solid = [&](int x, int y) { return sil.px[((size_t)y * im.w + x) * 4 + 3] > 128; };
+        for (int x = 0; x < im.w; x++) { st.push_back({x, 0}); st.push_back({x, im.h - 1}); }
+        for (int y = 0; y < im.h; y++) { st.push_back({0, y}); st.push_back({im.w - 1, y}); }
+        while (!st.empty()) {
+            auto [x, y] = st.back(); st.pop_back();
+            if (x < 0 || y < 0 || x >= im.w || y >= im.h) continue;
+            uint8_t& o = out[(size_t)y * im.w + x];
+            if (o || solid(x, y)) continue;
+            o = 1;
+            st.push_back({x + 1, y}); st.push_back({x - 1, y}); st.push_back({x, y + 1}); st.push_back({x, y - 1});
+        }
+        for (size_t i = 0; i < out.size(); i++) if (!out[i]) sil.px[i * 4 + 3] = 255;
+    }
+    const int R = e.ring + 1;
+    for (int y = 0; y < im.h; y++)
+        for (int x = 0; x < im.w; x++) {
+            double d2 = 1e9;
+            if (sil.px[((size_t)y * im.w + x) * 4 + 3] > 128) d2 = 0;
+            else
+                for (int j = -R; j <= R; j++)
+                    for (int i = -R; i <= R; i++) {
+                        const int u = x + i, v = y + j;
+                        if (u < 0 || v < 0 || u >= im.w || v >= im.h) continue;
+                        if (sil.px[((size_t)v * im.w + u) * 4 + 3] > 128) d2 = std::min(d2, (double)(i * i + j * j));
+                    }
+            const double d = std::sqrt(d2);
+            const double a = std::clamp(d - 1.0 + 0.5, 0.0, 1.0) * std::clamp(e.ring - d + 0.5, 0.0, 1.0);
+            uint8_t* p = &im.px[((size_t)y * im.w + x) * 4];
+            for (int k = 0; k < 3; k++) p[k] = (uint8_t)(col[k] / n);
+            p[3] = (uint8_t)std::lround(a * 255);
+        }
+    return true;
+}
+
 /* The replacement bytes for one listed texture in one style, or empty. */
 std::vector<uint8_t> build(const Entry& e, int style, unsigned w, unsigned h, unsigned fmt,
                            unsigned levels, unsigned nbytes, const uint8_t* src)
@@ -375,6 +435,21 @@ std::vector<uint8_t> build(const Entry& e, int style, unsigned w, unsigned h, un
     if (nbytes < bc3_size((int)w, (int)h)) return {};
     Img im;
     decode_bc3(src, (int)w, (int)h, im);
+    if (e.outline) {
+        if (e.cells.empty() || !outline_ring(e, style, im)) return {};
+        std::vector<uint8_t> out(src, src + nbytes);
+        size_t at = 0;
+        Img lv = im;
+        for (unsigned l = 0; l < std::max(1u, levels); l++) {
+            const size_t sz = bc3_size(lv.w, lv.h);
+            if (at + sz > nbytes) break;
+            encode_bc3(lv, out.data() + at);
+            at += sz;
+            if (lv.w == 1 && lv.h == 1) break;
+            lv = half(lv);
+        }
+        return out;
+    }
     bool changed = false;
     for (const Cell& c : e.cells) {
         if (c.btn == B_LABEL) {
@@ -389,7 +464,8 @@ std::vector<uint8_t> build(const Entry& e, int style, unsigned w, unsigned h, un
         int x0, y0, x1, y1;
         if (!clear_button(im, c, &x0, &y0, &x1, &y1)) continue;
         if (c.fw > 0) draw_fit(im, c.fx, c.fy, c.fw, c.fh, art);
-        else draw_fit(im, x0, y0, x1 - x0 + 1, y1 - y0 + 1, art);
+        else draw_fit(im, x0 + e.inset, y0 + e.inset, x1 - x0 + 1 - 2 * e.inset,
+                      y1 - y0 + 1 - 2 * e.inset, art);
         changed = true;
     }
     if (!changed) return {};
@@ -439,7 +515,7 @@ int btn_from(const std::string& s)
     return -1;
 }
 
-/* assets/glyphs/textures.txt: "<hash> <w>x<h> <button>@x,y,w,h[/x,y,w,h] ..." per line. */
+/* assets/glyphs/textures.txt: "<hash> <w>x<h> [inset=N] [ring=N] [outline:]<button>@x,y,w,h[/x,y,w,h] ..." per line. */
 void load_table()
 {
     std::ifstream f("assets/glyphs/textures.txt");
@@ -454,6 +530,9 @@ void load_table()
         if (sscanf(dim.c_str(), "%ux%u", &e.w, &e.h) != 2) continue;
         while (ls >> cell) {
             if (cell[0] == '#') break;
+            if (!cell.compare(0, 6, "inset=")) { e.inset = atoi(cell.c_str() + 6); continue; }
+            if (!cell.compare(0, 5, "ring=")) { e.ring = atoi(cell.c_str() + 5); continue; }
+            if (!cell.compare(0, 8, "outline:")) { e.outline = true; cell.erase(0, 8); }
             const size_t at = cell.find('@');
             Cell c{};
             if (at == std::string::npos || (c.btn = btn_from(cell.substr(0, at))) < 0 ||

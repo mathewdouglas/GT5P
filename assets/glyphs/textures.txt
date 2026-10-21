@@ -4,7 +4,11 @@
 # <hash> is the backend's FNV-1a 64 of the texture's bytes, as
 # RSX_TEX_REPL_DUMP=<dir> names its dumps. Each cell holds one button; its
 # pixels (a flood from the cell's centre) are cleared and the style's art is
-# drawn where they were, or in the box after a "/" when one is given.
+# drawn where they were (less inset=N texels each side, which keeps the gaps
+# between buttons), or in the box after a "/" when one is given.
+# outline:<button>@<box> marks the game's red highlight ring for that button
+# of the diagram (<box>: the button in the diagram, "/" box as for its cell).
+# The ring is redrawn around the new art, ring=N texels wide.
 # Buttons: cross circle square triangle l1 r1 l2 r2 l3
 # r3 start select up down left right, and label (a printed name, cleared).
 
@@ -13,4 +17,21 @@ CCD46794ADA54FB6 52x52 cross@0,0,52,52
 
 # The controller diagram of Options > Change Button Assignments, 460x720 DXT5.
 # The D-pad arms and sticks keep their shape on pads; the keyboard shows keys.
-CB0E04F79D45CCA2 460x720 l2@64,61,119,76 r2@277,61,119,76 l1@64,136,119,55 r1@277,136,119,55 up@96,227,55,62 left@54,270,61,57 right@132,270,61,57 down@96,306,55,62 triangle@309,228,55,57 square@268,270,55,57 circle@350,270,55,57 cross@309,311,55,57 label@128,409,68,17 label@272,409,56,17 select@138,437,49,35/139,417,46,46 start@273,435,55,39/277,417,46,46
+CB0E04F79D45CCA2 460x720 inset=6 l2@64,61,119,76 r2@277,61,119,76 l1@64,136,119,55 r1@277,136,119,55 up@96,227,55,62 left@54,270,61,57 right@132,270,61,57 down@96,306,55,62 triangle@309,228,55,57 square@268,270,55,57 circle@350,270,55,57 cross@309,311,55,57 label@128,409,68,17 label@272,409,56,17 select@138,437,49,35/142,441,40,26 start@273,435,55,39/278,440,44,28
+
+# The diagram's highlight rings, one texture per button, drawn over it while
+# its row is selected (mapped by moving the cursor through every row).
+68F42B557BAC0644 116x72 inset=6 outline:l2@66,63,115,72
+F5A3EB7538CF80CF 116x72 inset=6 outline:r2@279,63,115,72
+57E77D625DA359A0 116x52 inset=6 outline:l1@66,138,115,51
+06BE69A4E6623B19 116x52 inset=6 outline:r1@279,138,115,51
+B63032C4AEF2C6E7 60x60 inset=6 outline:up@98,229,51,58
+235CCB8C041051A8 60x60 inset=6 outline:down@98,308,51,58
+A18428D5BB81005F 60x60 inset=6 outline:left@56,272,57,53
+9754452C8FE0D782 60x60 inset=6 outline:right@134,272,57,53
+D84C1E7DDF0B11A2 52x52 inset=6 outline:triangle@311,230,51,53
+4D410F67E539E93D 52x52 inset=6 outline:square@270,272,51,53
+8840C3788622E8BF 52x52 inset=6 outline:circle@352,272,51,53
+EAC346F4F46927D6 52x52 inset=6 outline:cross@311,313,51,53
+CA74717BAA2CFCD0 48x32 ring=3 outline:select@140,439,45,31/142,441,40,26
+A0FB2A82627E4998 52x36 ring=4 outline:start@275,437,51,35/278,440,44,28

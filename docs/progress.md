@@ -85,6 +85,31 @@ texture (capture `btnasg`).
 - **Tests:** `debug_export.ps1` (its stubs gained the two new symbols) and
   `settings_test.ps1` pass.
 
+**Follow-up: spacing and highlight rings.** The user reported two problems
+on the assignment page. The new icons crowded each other, and the red
+selection outline kept the PS3 button shapes.
+
+- **What the outlines are:** each button has its own highlight texture,
+  14 in all. L2/R2 are 116x72, L1/R1 are 116x52, the D-pad arms are 60x60
+  pentagons, the face buttons are 52x52 circles, Select is 48x32 and Start
+  is 52x36. Each is drawn centred over its button at the diagram's scale.
+- **Mapping:** moving the cursor through all 24 rows with
+  `RSX_TEX_REPL_DUMP` (run `hl1`) gave each texture's button. Each texture
+  first uploads when its row is selected.
+- **Spacing:** the diagram's cells now take `inset=6`, so the art is fitted
+  6 texels inside the button's own area.
+- **Rings:** `outline:<button>@<box>` lines name the ring textures. For each
+  one the port draws the art where the diagram has it, shifted into the
+  ring's frame. It fills holes, such as see-through letters, by a flood from
+  the border. It then draws a ring 1 to `ring=N` texels outside that
+  silhouette, in the original's red.
+- **Select and Start:** these now sit on their own buttons instead of over
+  the cleared labels, because their rings are only 32 and 36 texels high.
+  They are sized to fit those rings.
+- **Checked:** runs `hl2-xbox` and `hl2-keyboard` walk every row. The rings
+  trace LT/RT/LB/RB, the face buttons, the keycaps and the arrow keys, and
+  the letters stay white.
+
 **Limits.**
 
 - The assignment page's help line still names PS3 buttons ("Assign controls
