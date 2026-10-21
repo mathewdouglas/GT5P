@@ -1,7 +1,10 @@
 # Drive the F1 settings page without the desktop keyboard: start the game on a
-# scratch settings file with the page open, capture the page's own window,
-# post keys to it, and show what reached the file.
-#   scripts\test\settings_test.ps1
+# scratch settings file with the page open, post keys to the page's window,
+# and show what reached the file.
+#   scripts\test\settings_test.ps1          page drawn into the game's picture
+#                                           (shots are of the game window)
+#   scripts\test\settings_test.ps1 -Legacy  the page's own window (GT5P_SETTINGS_UI_LEGACY=1)
+param([switch]$Legacy)
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -18,14 +21,16 @@ $dir = "$root\scratch\settings_t"
 New-Item -ItemType Directory -Force $dir | Out-Null
 $toml = "$dir\test.toml"
 if (Test-Path $toml) { Remove-Item $toml }
+if ($Legacy) { $env:GT5P_SETTINGS_UI_LEGACY = "1" } else { Remove-Item Env:GT5P_SETTINGS_UI_LEGACY -ErrorAction SilentlyContinue }
+$shotClass = if ($Legacy) { "gt5p_settings" } else { "ps3recomp_d3d12" }
 $env:GT5P_SETTINGS = $toml; $env:GT5P_SETTINGS_UI = "1"; $env:PS3_VERBOSE = "0"; $env:FS_HIDE = "grim/file/contents"
 Remove-Item Env:GT5P_NO_SETTINGS -ErrorAction SilentlyContinue
 Remove-Item Env:PS3_HEADLESS -ErrorAction SilentlyContinue
 $p = Start-Process -FilePath "$root\build\gt5p.exe" -WorkingDirectory $root -PassThru `
     -RedirectStandardOutput "$dir\out.txt" -RedirectStandardError "$dir\err.txt"
 function cap($tag) {
-    $h = [SetUi]::FindWindow("gt5p_settings", [NullString]::Value)
-    if ($h -eq [IntPtr]::Zero) { "no settings window ($tag)"; return }
+    $h = [SetUi]::FindWindow($shotClass, [NullString]::Value)
+    if ($h -eq [IntPtr]::Zero) { "no $shotClass window ($tag)"; return }
     $r = New-Object SetUi+RECT; [SetUi]::GetClientRect($h, [ref]$r) | Out-Null
     $bmp = New-Object System.Drawing.Bitmap ([Math]::Max($r.R,16)), ([Math]::Max($r.B,16))
     $g = [System.Drawing.Graphics]::FromImage($bmp); $dc = $g.GetHdc()
@@ -64,5 +69,5 @@ try {
     Start-Sleep -Milliseconds 500; cap "closed"
 } finally {
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-    Remove-Item Env:GT5P_SETTINGS, Env:GT5P_SETTINGS_UI, Env:FS_HIDE -ErrorAction SilentlyContinue
+    Remove-Item Env:GT5P_SETTINGS, Env:GT5P_SETTINGS_UI, Env:GT5P_SETTINGS_UI_LEGACY, Env:FS_HIDE -ErrorAction SilentlyContinue
 }

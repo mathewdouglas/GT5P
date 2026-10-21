@@ -99,7 +99,16 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: barrier fixed; stale pipeline blobs found (Phase 113).** The
+**Latest: settings page in the game's picture (Phase 114).** F1/PS now
+draws the page into the frame (backend `rsx_d3d12_overlay_set`, blended
+before present), styled like the game's popups; on the game's own Options
+screen a "SELECT PC settings" tag opens it with Select. Escape no longer
+closes the game while it is up. Switches: `GT5P_SETTINGS_UI_LEGACY=1` /
+`RSX_OVERLAY=0` (old window), `GT5P_OPTIONS_HINT=0`, `GT5P_SETTINGS_UI_ALPHA`;
+`GT5P_SETTINGS_UI_DBG=1` prints each screen script. `settings_test.ps1
+[-Legacy]`. Still open: the dark tunnel interior.
+
+**Barrier fixed; stale pipeline blobs found (Phase 113).** The
 native pipeline blob key left out the root signature (static samplers), so
 blobs from older builds served old sampler setups: this, not saturation, was
 the road streaking of Phases 94/97. The key now includes it

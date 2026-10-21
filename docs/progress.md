@@ -9,6 +9,48 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 114 - Settings page drawn in the game's picture; reachable from the game's Options (2026-10-21)
+
+The user asked for the F1 page to be part of the game's menus. Two steps,
+both measured live at 720p:
+
+**1. The page is drawn into the frame.** It was a GDI window kept over the
+game window. Now `gt5p_settings_ui.cpp` paints the same layout with GDI into
+a 32-bit bitmap at the backbuffer's scale (layout units are 1280 x 720
+pixels, so 1080p is a 1.5x world transform), converts it to premultiplied
+BGRA, and hands it to the backend (`rsx_d3d12_overlay_set`). The conversion
+is a colour key outside the rounded panel (clear), the panel's plain
+background at alpha 236 (`GT5P_SETTINGS_UI_ALPHA`), everything drawn on it
+opaque. The backend uploads it when it changes (three upload buffers in turn)
+and blends it with a premultiplied-alpha triangle over the backbuffer just
+before the present barrier (`overlay_present`, SRV slot 22, `vp_root_sig`'s
+point/clamp s0; 1:1 pixels). It shows in fullscreen and in window captures.
+Keyboard and mouse are read with `GetAsyncKeyState` while the game window has
+the focus; keys posted to the page's hidden window still work (tests). The
+window's Escape no longer closes the game while the page is up, nor for
+600 ms after (the page closes itself on Escape). Restyled after the game's
+own popups: dark grey glass, a grey selection bar with a red rim.
+`GT5P_SETTINGS_UI_LEGACY=1` or `RSX_OVERLAY=0` keeps the old window.
+Limitation: the page updates only when the game presents frames (a long
+loading stall freezes it too).
+
+**2. The game's Options screen offers it.** Entering Options reads
+`OptionRoot.gpb` (then `DLSGadgetRoot.gpb`); leaving through its "Exit the
+Options menu?" prompt reads `TopRoot`/`TopMenuTemplate` again (measured with
+`GT5P_SETTINGS_UI_DBG=1`, which now prints each screen script). cellPad has a
+second listener for every file the title opens (`g_pad_screen_hook`). While
+Options is up and the page is closed, a "SELECT  PC settings" tag sits in the
+screen's empty bottom-right corner, and Select (Tab on the keyboard) opens
+the page; the game showed no reaction to that Select. `GT5P_OPTIONS_HINT=0`
+removes both. Closing the page now keeps the title's pads at rest until every
+button is up: before, the Circle that closed it would have reached the game
+as a new press and opened its exit prompt (checked: it does not).
+
+Checks: `scripts/test/settings_test.ps1` (overlay; shots now of the game
+window) and `-Legacy` both save every change; `debug_export.ps1` passes; a
+driven run showed the tag, Select opening the page, Circle closing it with
+the game still on Options, and the tag gone after leaving Options.
+
 ## Phase 113 - Black barrier fixed: stale pipeline blobs, then source saturation by default (2026-10-21)
 
 The user asked for the tunnel lighting next, suspecting shadows and the

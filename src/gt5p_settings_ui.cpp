@@ -5,13 +5,19 @@
  * as a controller) take effect immediately; the rest say "after restart", and
  * a "Restart now" row relaunches the game with the new file.
  *
- * Like the F3 profiler (gt5p_profview.cpp) it is a GDI window of its own kept
- * over the game window, so it never touches what the D3D12 backend renders.
+ * The page is drawn into the game's own picture: it is painted with GDI into
+ * a bitmap at the backbuffer's scale (layout units are 1280 x 720 pixels),
+ * and the D3D12 backend blends that over each frame before present
+ * (rsx_d3d12_overlay_set). So it shows in fullscreen and in captures, and
+ * keyboard and mouse are read while the game window has the focus.
+ * GT5P_SETTINGS_UI_LEGACY=1 (or RSX_OVERLAY=0) keeps the older form: a GDI
+ * window of its own over the game window, like the F3 profiler.
  * While it is open the game sees every controller at rest
  * (g_pad_input_blocked, cellPad.c), and the page reads the controllers itself.
  *
  *   keyboard    Up/Down select, Left/Right change, Enter/Space change or
- *               press, Esc/F1/Backspace close
+ *               press, Esc/F1/Backspace close (Escape does not close the
+ *               game while the page is up)
  *   controller  D-pad, Cross change or press, Circle close, PS opens/closes
  *   mouse       click a row to select it, click its value to change it
  *
@@ -41,12 +47,16 @@ extern volatile uint32_t g_pad_menu_buttons;    /* cellPad.c: bit 16 = PS button
 void pad_set_keyboard_enabled(int on);          /* cellPad.c */
 void rsx_d3d12_set_present_sync(int interval);  /* rsx_d3d12_backend.c */
 void gt5p_shader_indicator_enable(int on);      /* gt5p_shaderbusy.cpp */
+extern void (*g_pad_screen_hook)(const char*);  /* cellPad.c: every file the title opens */
+int  rsx_d3d12_overlay_available(void);         /* rsx_d3d12_backend.c */
+void rsx_d3d12_backbuffer_size(int* w, int* h);
+void rsx_d3d12_overlay_set(const void* bgra, int w, int h, int x, int y);
 }
 
 namespace {
 
 /* CELL_PAD_CTRL_* (cellPad.h) */
-const uint32_t kUp = 1u << 4, kRight = 1u << 5, kDown = 1u << 6, kLeft = 1u << 7,
+const uint32_t kSelect = 1u << 0, kUp = 1u << 4, kRight = 1u << 5, kDown = 1u << 6, kLeft = 1u << 7,
                kCircle = 1u << 13, kCross = 1u << 14, kPs = 1u << 16;
 
 struct Choice { int value; const wchar_t* label; };
@@ -186,6 +196,9 @@ int column_of(const wchar_t* section) { return wcscmp(section, L"VIDEO") ? 1 : 0
 
 HWND s_game, s_wnd;
 bool s_open;
+bool s_overlay;                 /* drawn into the game's picture (this open) */
+double s_scale = 1;             /* overlay: backbuffer pixels per layout unit */
+int s_ox, s_oy;                 /* overlay: its top left in the backbuffer */
 int s_sel;
 Gt5pSettings s_edit;   /* what the page shows and saves */
 Gt5pSettings s_boot;   /* the file as this run started with it */
@@ -292,6 +305,8 @@ void change(int id, int dir)
 
 /* ---- drawing ---- */
 
+const COLORREF kBg = RGB(26, 26, 28), kKey = RGB(255, 0, 255);
+
 void fill(HDC dc, int x0, int y0, int x1, int y1, COLORREF c)
 {
     RECT r = { x0, y0, x1, y1 };
@@ -325,10 +340,19 @@ void paint(HDC dc)
     static HFONT fTitle = font(26, FW_SEMIBOLD), fRow = font(17, FW_NORMAL),
                  fSmall = font(13, FW_SEMIBOLD), fHelp = font(15, FW_NORMAL);
     SetBkMode(dc, TRANSPARENT);
-    fill(dc, 0, 0, kW, kH, RGB(17, 19, 24));
-    fill(dc, 0, 0, kW, 3, RGB(52, 120, 220));
+    if (s_overlay) {
+        /* A rounded panel: outside it is the key colour (clear), and its
+         * plain background is see-through (render_overlay). */
+        fill(dc, 0, 0, kW, kH, kKey);
+        rounded(dc, 0, 0, kW + 1, kH + 1, 26, kBg);
+        fill(dc, 22, 0, kW - 22, 3, RGB(196, 30, 36));
+    } else {
+        fill(dc, 0, 0, kW, kH, kBg);
+        fill(dc, 0, 0, kW, 3, RGB(196, 30, 36));
+    }
     text(dc, fTitle, 28, 18, RGB(240, 242, 248), L"Settings");
-    text(dc, fHelp, kW - 28, 26, RGB(120, 126, 140), L"F1 or PS button to close", TA_RIGHT);
+    text(dc, fHelp, kW - 28, 26, RGB(120, 126, 140),
+         s_overlay ? L"F1, Esc or PS button to close" : L"F1 or PS button to close", TA_RIGHT);
 
     const std::vector<int> r = rows();
     const std::vector<Slot> sl = layout(r);
@@ -337,7 +361,10 @@ void paint(HDC dc)
         const int id = r[i], top = sl[i].y, x0 = sl[i].x0, x1 = sl[i].x1, vx = x0 + kValOff;
         const bool sel = (int)i == s_sel;
         if (sl[i].head) text(dc, fSmall, x0 + 12, top - kSectionH + 8, RGB(110, 118, 135), items()[id].section);
-        if (sel) rounded(dc, x0, top, x1, top + kRowH - 4, 8, RGB(38, 74, 132));
+        if (sel) {   /* grey bar with a red rim, like the game's own buttons */
+            rounded(dc, x0, top, x1, top + kRowH - 4, 10, RGB(196, 30, 36));
+            rounded(dc, x0 + 2, top + 2, x1 - 2, top + kRowH - 6, 8, RGB(70, 70, 74));
+        }
         if (id == kRowRestart) {
             text(dc, fRow, x0 + 12, top + 6, RGB(255, 210, 120), L"Restart now to apply");
             continue;
@@ -353,8 +380,8 @@ void paint(HDC dc)
         std::wstring val = it.choices[choice_index(it)].label;
         COLORREF vc = over ? RGB(130, 134, 145) : RGB(255, 255, 255);
         text(dc, fRow, (vx + x1 - 12) / 2, top + 6, vc, val, TA_CENTER);
-        text(dc, fRow, vx, top + 6, sel ? RGB(170, 200, 255) : RGB(80, 86, 100), L"‹");
-        text(dc, fRow, x1 - 12, top + 6, sel ? RGB(170, 200, 255) : RGB(80, 86, 100), L"›", TA_RIGHT);
+        text(dc, fRow, vx, top + 6, sel ? RGB(240, 110, 110) : RGB(90, 90, 96), L"‹");
+        text(dc, fRow, x1 - 12, top + 6, sel ? RGB(240, 110, 110) : RGB(90, 90, 96), L"›", TA_RIGHT);
         if (later) text(dc, fSmall, vx - 12, top + 9, RGB(255, 190, 90), L"after restart", TA_RIGHT);
         else if (over) text(dc, fSmall, vx - 12, top + 9, RGB(150, 150, 160),
                             L"set by " + widen(it.env), TA_RIGHT);
@@ -374,6 +401,125 @@ void paint(HDC dc)
     text(dc, fHelp, 30, kH - 32, RGB(110, 116, 130),
          L"↑↓ select    ←→ change    Esc close    "
          L"·  Controller: D-pad, ✕ change, ○ close");
+}
+
+void activate(int dir);
+
+/* A click at layout position (mx, my): select the row, and change its value
+ * when the click is on the value (left half back, right half on). */
+void click(int mx, int my)
+{
+    const std::vector<int> r = rows();
+    const std::vector<Slot> sl = layout(r);
+    for (size_t i = 0; i < r.size(); i++)
+        if (my >= sl[i].y && my < sl[i].y + kRowH - 4 && mx >= sl[i].x0 && mx < sl[i].x1) {
+            s_sel = (int)i;
+            const int vx = sl[i].x0 + kValOff;
+            if (r[i] < 0 || mx >= vx) activate(r[i] >= 0 && mx < (vx + sl[i].x1 - 12) / 2 ? -1 : +1);
+            break;
+        }
+}
+
+/* Overlay: paint at the backbuffer's scale into a 32-bit bitmap, make it
+ * premultiplied BGRA (the key colour clear, the panel's plain background
+ * see-through, everything drawn on it opaque) and hand it to the backend,
+ * centred. */
+void push_image(int lw, int lh, void (*painter)(HDC), bool corner)
+{
+    int bw = 0, bh = 0;
+    rsx_d3d12_backbuffer_size(&bw, &bh);
+    if (bw <= 0 || bh <= 0) return;
+    double sc = bh / 720.0;
+    if (lw * sc > bw) sc = bw / (double)lw;
+    const int w = (int)(lw * sc + 0.5), h = (int)(lh * sc + 0.5);
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+    bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC dc = CreateCompatibleDC(NULL);
+    HBITMAP bm = dc ? CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0) : NULL;
+    if (!bm || !bits) { if (bm) DeleteObject(bm); if (dc) DeleteDC(dc); return; }
+    HGDIOBJ o = SelectObject(dc, bm);
+    SetGraphicsMode(dc, GM_ADVANCED);
+    XFORM x = { (FLOAT)sc, 0, 0, (FLOAT)sc, 0, 0 };
+    SetWorldTransform(dc, &x);
+    painter(dc);
+    GdiFlush();
+    static int alpha = -1;   /* GT5P_SETTINGS_UI_ALPHA: the background's opacity, 0-255 */
+    if (alpha < 0) { const char* e = getenv("GT5P_SETTINGS_UI_ALPHA"); alpha = e ? atoi(e) & 255 : 236; }
+    const uint32_t key = ((uint32_t)GetRValue(kKey) << 16) | ((uint32_t)GetGValue(kKey) << 8) | GetBValue(kKey);
+    const uint32_t bg = ((uint32_t)GetRValue(kBg) << 16) | ((uint32_t)GetGValue(kBg) << 8) | GetBValue(kBg);
+    const uint32_t bgp = ((uint32_t)alpha << 24) | ((GetRValue(kBg) * alpha / 255u) << 16) |
+                         ((GetGValue(kBg) * alpha / 255u) << 8) | (GetBValue(kBg) * alpha / 255u);
+    uint32_t* p = (uint32_t*)bits;
+    for (int i = 0, n = w * h; i < n; i++) {
+        const uint32_t c = p[i] & 0xFFFFFFu;
+        p[i] = c == key ? 0 : c == bg ? bgp : c | 0xFF000000u;
+    }
+    if (corner) {   /* bottom right, in the game's own margin */
+        rsx_d3d12_overlay_set(bits, w, h, bw - w - (int)(40 * sc), bh - h - (int)(34 * sc));
+    } else {
+        s_scale = sc; s_ox = (bw - w) / 2; s_oy = (bh - h) / 2;
+        rsx_d3d12_overlay_set(bits, w, h, s_ox, s_oy);
+    }
+    SelectObject(dc, o); DeleteObject(bm); DeleteDC(dc);
+}
+
+void render_overlay()
+{
+    if (s_open && s_overlay) push_image(kW, kH, paint, false);
+}
+
+/* The game's Options screen: a tag in its bottom right saying the port's
+ * settings are a button away. GT5P_OPTIONS_HINT=0: no tag, and Select does
+ * not open the page. */
+const int kHintW = 214, kHintH = 34;
+void paint_hint(HDC dc)
+{
+    static HFONT fBtn = font(13, FW_BOLD), fLbl = font(16, FW_NORMAL);
+    SetBkMode(dc, TRANSPARENT);
+    fill(dc, 0, 0, kHintW, kHintH, kKey);
+    rounded(dc, 0, 0, kHintW + 1, kHintH + 1, 14, kBg);
+    rounded(dc, 10, 8, 78, kHintH - 7, 8, RGB(196, 30, 36));
+    rounded(dc, 11, 9, 77, kHintH - 8, 7, RGB(70, 70, 74));
+    text(dc, fBtn, 44, 10, RGB(240, 240, 244), L"SELECT", TA_CENTER);
+    text(dc, fLbl, 90, 7, RGB(225, 228, 236), L"PC settings");
+}
+
+bool hint_enabled()
+{
+    static int on = -1;
+    if (on < 0) { const char* e = getenv("GT5P_OPTIONS_HINT"); on = !(e && e[0] == '0'); }
+    return on != 0;
+}
+
+volatile int s_in_options;     /* the title's Options screen is up */
+bool s_hint_shown;
+
+/* Which screen the title is on, from the screen scripts (.gpb) it reads.
+ * GT5P_SETTINGS_UI_DBG=1 prints each one. */
+volatile int s_dbg_screens = -1;
+void screen_seen(const char* b)
+{
+    const size_t n = strlen(b);
+    if (n < 5 || strcmp(b + n - 4, ".gpb")) return;
+    if (s_dbg_screens < 0) { const char* e = getenv("GT5P_SETTINGS_UI_DBG"); s_dbg_screens = e && e[0] == '1'; }
+    if (s_dbg_screens) fprintf(stderr, "[settings-ui] %llu ms screen %s\n", GetTickCount64(), b);
+    /* Entering Options reads OptionRoot (then the gadget layer, DLSGadgetRoot);
+     * leaving it reads the top menu's scripts again (TopRoot,
+     * TopMenuTemplate); any other screen root also means it has gone. */
+    if (!strcmp(b, "OptionRoot.gpb")) s_in_options = 1;
+    else if (strcmp(b, "DLSGadgetRoot.gpb") &&
+             (strstr(b, "Root.gpb") || strstr(b, "Template.gpb"))) s_in_options = 0;
+}
+
+/* Redraw whichever form is open. */
+void redraw()
+{
+    if (!s_open) return;
+    if (s_overlay) render_overlay();
+    else InvalidateRect(s_wnd, NULL, FALSE);
 }
 
 /* ---- window ---- */
@@ -398,20 +544,38 @@ void place(bool force = false)
                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
 }
 
+bool s_release_wait;     /* closed; the title's input waits for all buttons up */
+
+bool legacy_ui()
+{
+    static int legacy = -1;
+    if (legacy < 0) { const char* e = getenv("GT5P_SETTINGS_UI_LEGACY"); legacy = e && e[0] == '1'; }
+    return legacy != 0;
+}
+
 void set_open(bool open)
 {
     if (open == s_open) return;
     s_open = open;
-    g_pad_input_blocked = open ? 1 : 0;
+    s_hint_shown = false;   /* the page's image replaces the tag, and closing clears both */
+    /* Closing keeps the title's pads at rest until every button is let go
+     * (the loop below): the Circle or Cross that closed the page must not
+     * reach the game as a new press. */
+    if (open) g_pad_input_blocked = 1;
+    else s_release_wait = true;
     if (open) {
         s_edit = gt5p_settings_file();
         s_sel = 0;
         s_status = gt5p_settings_enabled() ? L"" : L"GT5P_NO_SETTINGS is set: changes are not saved.";
+        s_overlay = !legacy_ui() && rsx_d3d12_overlay_available();
+        if (s_overlay) { render_overlay(); return; }
         place(true);
         ShowWindow(s_wnd, SW_SHOW);
         SetForegroundWindow(s_wnd);
         SetFocus(s_wnd);
         InvalidateRect(s_wnd, NULL, FALSE);
+    } else if (s_overlay) {
+        rsx_d3d12_overlay_set(nullptr, 0, 0, 0, 0);
     } else {
         ShowWindow(s_wnd, SW_HIDE);
         SetForegroundWindow(s_game);
@@ -454,22 +618,12 @@ LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
         case VK_ESCAPE: case VK_F1: case VK_BACK: set_open(false); break;
         default: return 0;
         }
+        redraw();   /* keys posted to this window drive the overlay too (tests) */
+        return 0;
+    case WM_LBUTTONDOWN:
+        click(GET_X_LPARAM(l), GET_Y_LPARAM(l));
         InvalidateRect(h, NULL, FALSE);
         return 0;
-    case WM_LBUTTONDOWN: {
-        const int mx = GET_X_LPARAM(l), my = GET_Y_LPARAM(l);
-        const std::vector<int> r = rows();
-        const std::vector<Slot> sl = layout(r);
-        for (size_t i = 0; i < r.size(); i++)
-            if (my >= sl[i].y && my < sl[i].y + kRowH - 4 && mx >= sl[i].x0 && mx < sl[i].x1) {
-                s_sel = (int)i;
-                const int vx = sl[i].x0 + kValOff;
-                if (r[i] < 0 || mx >= vx) activate(r[i] >= 0 && mx < (vx + sl[i].x1 - 12) / 2 ? -1 : +1);
-                break;
-            }
-        InvalidateRect(h, NULL, FALSE);
-        return 0;
-    }
     case WM_ACTIVATE:
         /* Clicking the game behind the page closes it. */
         if (LOWORD(w) == WA_INACTIVE && s_open && (HWND)l == s_game) set_open(false);
@@ -506,6 +660,7 @@ DWORD WINAPI ui_thread(LPVOID)
     fprintf(stderr, "[settings-ui] page ready over window %p (%s): F1 or the PS button\n",
             (void*)s_game, s_wnd ? "ok" : "CreateWindow failed");
     s_boot = gt5p_settings_file();
+    g_pad_screen_hook = screen_seen;
     { const char* e = getenv("GT5P_SETTINGS_UI"); if (e && e[0] == '1') set_open(true); }
 
     int f1_was = 0;
@@ -516,10 +671,61 @@ DWORD WINAPI ui_thread(LPVOID)
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
         if (!IsWindow(s_game)) return 0;
 
-        /* F1 over the game opens it (inside the page, WM_KEYDOWN closes it). */
+        /* F1 over the game opens it (inside the legacy window, WM_KEYDOWN
+         * closes it; the overlay reads its keys below). */
+        const bool game_fg = GetForegroundWindow() == s_game;
         const int f1 = (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
-        if (f1 && !f1_was && !s_open && GetForegroundWindow() == s_game) set_open(true);
+        if (f1 && !f1_was && game_fg) {
+            if (!s_open) set_open(true);
+            else if (s_overlay) set_open(false);
+        }
         f1_was = f1;
+
+        /* Overlay: the keyboard and mouse while the game window has the
+         * focus, a held arrow repeating. */
+        static uint8_t key_was[256];
+        static ULONGLONG key_repeat_at;
+        if (s_open && s_overlay && game_fg) {
+            static const int keys[] = { VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_SPACE,
+                                        VK_ESCAPE, VK_BACK, VK_LBUTTON };
+            const ULONGLONG t = GetTickCount64();
+            bool changed = false;
+            for (int vk : keys) {
+                const bool held = (GetAsyncKeyState(vk) & 0x8000) != 0;
+                const bool arrow = vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT;
+                bool hit = held && !key_was[vk];
+                if (hit && arrow) key_repeat_at = t + 380;
+                else if (held && key_was[vk] && arrow && t >= key_repeat_at) { hit = true; key_repeat_at = t + 110; }
+                key_was[vk] = held;
+                if (!hit || !s_open) continue;
+                changed = true;
+                switch (vk) {
+                case VK_UP:    move_sel(-1); break;
+                case VK_DOWN:  move_sel(+1); break;
+                case VK_LEFT:  activate(-1); break;
+                case VK_RIGHT: case VK_RETURN: case VK_SPACE: activate(+1); break;
+                case VK_ESCAPE: case VK_BACK: set_open(false); break;
+                case VK_LBUTTON: {
+                    /* Client pixels to backbuffer pixels (the swap chain is
+                     * stretched over the window), then to layout units. A
+                     * click on the game outside the page closes it. */
+                    POINT c; GetCursorPos(&c); ScreenToClient(s_game, &c);
+                    RECT rc; GetClientRect(s_game, &rc);
+                    int bw = 0, bh = 0; rsx_d3d12_backbuffer_size(&bw, &bh);
+                    if (rc.right <= 0 || rc.bottom <= 0 || bw <= 0 ||
+                        c.x < 0 || c.y < 0 || c.x >= rc.right || c.y >= rc.bottom) break;
+                    const double bx = c.x * (double)bw / rc.right, by = c.y * (double)bh / rc.bottom;
+                    const int lx = (int)((bx - s_ox) / s_scale), ly = (int)((by - s_oy) / s_scale);
+                    if (lx < 0 || ly < 0 || lx >= kW || ly >= kH) set_open(false);
+                    else click(lx, ly);
+                    break;
+                }
+                }
+            }
+            if (changed) redraw();
+        } else if (s_open && s_overlay) {
+            memset(key_was, 1, sizeof key_was);   /* a key still held on return is not a press */
+        } else memset(key_was, 0, sizeof key_was);
 
         /* Controllers: PS toggles; while open, the d-pad and face buttons
          * drive the page, a held direction repeating. The buttons come from
@@ -530,23 +736,34 @@ DWORD WINAPI ui_thread(LPVOID)
         { static int dbg = -1;   /* GT5P_SETTINGS_UI_DBG=1: the buttons the page sees */
           if (dbg < 0) { const char* e = getenv("GT5P_SETTINGS_UI_DBG"); dbg = e && e[0] == '1'; }
           if (dbg && pad != pad_was) fprintf(stderr, "[settings-ui] %llu ms pad %05X\n", now, pad); }
-        if ((down & kPs) && (s_open || GetForegroundWindow() == s_game)) set_open(!s_open);
+        if ((down & kSelect) && !s_open && s_in_options && hint_enabled() && game_fg) set_open(true);
+        else if ((down & kPs) && (s_open || GetForegroundWindow() == s_game)) set_open(!s_open);
         else if (s_open) {
             const uint32_t dirs = kUp | kDown | kLeft | kRight;
             uint32_t act = down;
             if (pad & dirs & pad_was) { if (now >= repeat_at) { act |= pad & dirs; repeat_at = now + 110; } }
             else if (down & dirs) repeat_at = now + 380;
-            bool redraw = act != 0;
             if (act & kUp) move_sel(-1);
             if (act & kDown) move_sel(+1);
             if (act & kLeft) activate(-1);
             if (act & (kRight | kCross)) activate(+1);
             if (act & kCircle) set_open(false);
-            if (redraw && s_open) InvalidateRect(s_wnd, NULL, FALSE);
+            if (act && s_open) redraw();
         }
         pad_was = pad;
+        if (s_release_wait && !s_open && !(pad & 0xFFFFu)) { g_pad_input_blocked = 0; s_release_wait = false; }
+        else if (s_open) s_release_wait = false;
 
-        if (s_open) place();
+        /* The title's Options screen: show the tag while the page is closed. */
+        const bool want_hint = s_in_options && !s_open && hint_enabled() && !legacy_ui() &&
+                               rsx_d3d12_overlay_available();
+        if (want_hint != s_hint_shown) {
+            if (want_hint) push_image(kHintW, kHintH, paint_hint, true);
+            else rsx_d3d12_overlay_set(nullptr, 0, 0, 0, 0);
+            s_hint_shown = want_hint;
+        }
+
+        if (s_open && !s_overlay) place();
         Sleep(16);
     }
 }
