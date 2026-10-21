@@ -1,6 +1,10 @@
 # Xbox and keyboard button prompts
 
-Assessment: 2026-10-19. This is an implementation plan, not an enabled feature.
+Assessment: 2026-10-19. **Implemented in Phase 119 (2026-10-22)** with
+Kenney's CC0 art. Measured steps 1-4 and 6 are covered (`src/gt5p_glyphs.cpp`,
+`assets/glyphs/`, F1 "Button prompts"). Step 5, the keyboard alongside a
+connected pad, is not done: the keyboard is still a fallback. The text below
+is the original plan.
 The requested behaviour is automatic in-game PlayStation/Xbox/keyboard prompts,
 with an explicit style override. The guest continues to receive PS3 actions.
 

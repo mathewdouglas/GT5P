@@ -9,6 +9,92 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 119 - Button prompts for the controller in use (2026-10-22)
+
+The user asked for the prompts to follow the connected controller, using
+Kenney's Input Prompts pack (CC0). The art used is in
+`assets/glyphs/kenney/` (73 PNGs at 128 px, 197 KB, with Kenney's licence).
+
+**Where the game's prompts come from.** A RenderDoc capture of Options
+(`glyph720`) showed that the Cross beside "Enter" is drawn from its own
+52x52 DXT5 texture. It is not a font glyph and not part of an atlas. Dumps
+of every small texture uploaded on the main menu, Options, the dealer, the
+pit and a paused race found no other button symbol. GT5P shows only "Cross
+Enter" there. The race pause bar uses plain icons. The one other place is
+Options > Change Button Assignments. Its whole DualShock diagram (L1/R1/L2/R2,
+the face buttons, SELECT/START, the D-pad and the sticks) is one 460x720 DXT5
+texture (capture `btnasg`).
+
+**How they are replaced.**
+
+- **Backend:** `vp_upload_tex_slot` hashes each 2D texture of up to
+  1024x1024 that it uploads (FNV-1a 64 over the whole mip chain). It offers
+  the texture to a replacer callback (`rsx_tex_set_replacer`), which may
+  return bytes of the same size and layout to decode instead.
+  - The texture cache re-uploads a managed texture when the replacer's
+    generation changes (`rsx_tex_replace_invalidate`).
+  - `RSX_TEX_REPLACE=0` turns the hook off.
+  - `RSX_TEX_REPL_DUMP=<dir>` writes each distinct texture larger than 16x16
+    as `<hash>_<w>x<h>_<fmt>.dds` (game-derived: keep it in `scratch/`).
+- **Port (`src/gt5p_glyphs.cpp`):** the table is `assets/glyphs/textures.txt`.
+  Each line is a hash, a size and the cells, one cell per button.
+  - For a listed texture the port decodes the DXT5 and clears each cell's
+    button. The button is found by a flood from the cell's centre at alpha > 40,
+    widened by two texels.
+  - It draws the style's art fitted to where the button was, or into a given
+    box. Labels baked into the picture ("SELECT", "START") are cleared.
+  - It then encodes back to DXT5, mips included, so the format and size never
+    change. Results are cached per texture and style.
+- **Device (cellPad):** `g_pad_device_family` records what port 0 is played with.
+  - With SDL, it comes from `SDL_GameControllerGetType` (an optional import),
+    or from the controller's name.
+  - XInput means Xbox.
+  - Otherwise it is the keyboard, unless the keyboard is off. A `PAD_HOLD`
+    script does not count as a device.
+  - `pad_keyboard_vk()` exposes the key bound to each button, so the keyboard
+    art names the real binding.
+- **Styles:** Auto maps the device to a style:
+  - Xbox and other pads get Xbox art.
+  - Switch pads get Switch art. SDL reads them by label, so Cross shows A.
+  - The keyboard gets keycaps of the bound keys.
+  - A PlayStation pad, or nothing at all, keeps the game's art.
+
+  A watcher thread re-resolves the style every 250 ms; a change re-uploads
+  the listed textures. D-pad arms and sticks keep their shape on pads.
+- **Switches:**
+  - `GT5P_GLYPHS=auto|playstation|xbox|nintendo|keyboard` chooses the style.
+  - `GT5P_GLYPHS=0` turns the feature off.
+  - The F1 page has INPUT > Button prompts, which applies live, and the
+    settings file has `input.button_prompts`.
+  - `GT5P_GLYPHS_DBG=1` logs changes. `GT5P_GLYPHS_CYCLE=<ms>` steps through
+    the styles, for tests.
+  - F8 reports state the setting, the style in effect and the device family.
+
+**Measured.**
+
+- **Detection:** with the user's DualSense connected, the log reads
+  `port 0: DualSense Wireless Controller (type 7, family 3)`, and Auto keeps
+  the game's art.
+- **Forced Xbox (`gx2`, 1080p):** "A Enter" appears top right, and the
+  diagram shows LT/RT/LB/RB, Y/X/B/A and View/Menu.
+- **Cycling on the assignment page (`gx3`):** the page switched live through
+  PlayStation, Xbox, Switch (ZL/ZR/L/R, A/B/X/Y, -/+) and keyboard (1/2/Q/W,
+  arrows, S/A/X/Z, Tab/Enter), then back to the game's own art.
+- **Speed:** the 1080p/2x HSR frame test gave 59.3 FPS, median 16.7 ms, p99
+  19 ms and 0.7% late, the same as before.
+- **Tests:** `debug_export.ps1` (its stubs gained the two new symbols) and
+  `settings_test.ps1` pass.
+
+**Limits.**
+
+- The assignment page's help line still names PS3 buttons ("Assign controls
+  to the L2 button"). That is game text, not a texture.
+- The keyboard is still only used when no controller is connected. Its art
+  shows only in that case or when forced.
+- Prompt textures not seen yet are not listed. Add one by dumping with
+  `RSX_TEX_REPL_DUMP` and adding a line to `textures.txt`; no rebuild is
+  needed.
+
 ## Phase 118 - Tunnel lighting fixed: the exposure meter's readback (2026-10-22)
 
 **Fixed.** The High Speed Ring tunnel is lit (lamps, beams, blown-out exit)

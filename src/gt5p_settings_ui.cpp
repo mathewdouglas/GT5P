@@ -46,6 +46,7 @@
 
 #include "gt5p_settings.h"
 #include "gt5p_debug_export.h"
+#include "gt5p_glyphs.h"
 
 extern "C" {
 extern volatile int g_pad_input_blocked;        /* cellPad.c */
@@ -157,6 +158,14 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.keyboard ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.keyboard = v != 0; },
           [](int v) { pad_set_keyboard_enabled(v); } },
+        { L"INPUT", L"Button prompts",
+          L"The button symbols the game shows. Auto follows the controller in use: Xbox and "
+          L"other pads, Switch pads and the keyboard get their own (Kenney's art); a "
+          L"PlayStation pad keeps the game's.",
+          "GT5P_GLYPHS", { {0, L"Auto"}, {1, L"PlayStation"}, {2, L"Xbox"}, {3, L"Nintendo"}, {4, L"Keyboard"} },
+          [](const Gt5pSettings& s) { return s.button_prompts; },
+          [](Gt5pSettings& s, int v) { s.button_prompts = v; },
+          [](int v) { gt5p_glyphs_set_style(v); } },
         { L"GAME", L"Skip opening movie",
           L"Press through the opening movie as soon as it starts. It only plays when the TV "
           L"content is installed.",

@@ -32,6 +32,8 @@ extern "C" void gt5p_debug_snapshot(FILE* out) {
     if (s_fault) RaiseException(0xE0424242, 0, 0, nullptr);
 }
 extern "C" void gt5p_pv_export(FILE* out) { fprintf(out, "test frame marker\n"); }
+extern "C" volatile int g_pad_device_family = 0;   /* cellPad.c */
+int gt5p_glyphs_effective() { return 1; }            /* gt5p_glyphs.cpp */
 
 static void wait_report(int expected) {
     char message[256];

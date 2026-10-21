@@ -4,7 +4,10 @@
  */
 #include "gt5p_debug_export.h"
 #include "gt5p_settings.h"
+#include "gt5p_glyphs.h"
 #include "gt5p_build_info.h"
+
+extern "C" volatile int g_pad_device_family;   /* cellPad.c */
 #include <shellapi.h>
 #include <psapi.h>
 #include <io.h>
@@ -237,6 +240,8 @@ std::string report(HWND game) {
         "sdl=%d keyboard=%d vblank=%d lane_cores=%d warmup=%d\nSettings file: %s\n",
         s.resolution, s.msaa, s.vsync, s.shader_cache, s.shader_precompile,
         s.sdl_controllers, s.keyboard, s.vblank_hz100, s.lane_cores, s.shader_warmup, gt5p_settings_path().c_str());
+    fprintf(f, "Button prompts: setting %d, in effect %d (1 PlayStation, 2 Xbox, 3 Nintendo, 4 keyboard); "
+        "port 0 device family %d\n", s.button_prompts, gt5p_glyphs_effective(), (int)g_pad_device_family);
     /* Explicit allowlist: never dump the process environment, keys or game files. */
     static const char* names[] = {"GT5P_RESOLUTION", "RSX_MSAA", "RSX_SSAA", "RSX_PRESENT_SYNC",
         "RSX_SHADER_CACHE", "RSX_SHADER_ASYNC", "RSX_SHADER_WARMUP", "RSX_SHADER_WARMUP_BACKGROUND", "RSX_PSO_RECIPES", "RSX_PSO_ASYNC", "RSX_RACE_PREWARM", "RSX_RACE_PREWARM_WAIT_MS",
@@ -256,7 +261,7 @@ std::string report(HWND game) {
         "PS3_VERBOSE", "PS3_COND_DEFER_GCM", "PS3_COND_TRACE_ID", "PS3_SC_CONTEXT",
         "GT5P_STALL_MS", "GT5P_STALL_STACKS",
         "D3D12_DBG", "D3D12_IQ", "PAD_NO_SDL", "PAD_NO_KEYBOARD",
-        "PAD_HOTPLUG", "PAD_HOLD_MERGE", "SPU_FTZ", "SPU_CHAIN_BACK", "SPU_IRQSTAT", "SPU_EXP_AB", "GT5P_SPU_NATIVE", "GT5P_SPU_NATIVE_STATS", "SPU_IBHIST", "RSX_FP_SATLOG", "RSX_FP_SAT_OPS", "RSX_FP_SAT_PROG", "RSX_FP_SAT_VIS", "RSX_PSO_KEY_RS", "RSX_OVERLAY", "GT5P_SETTINGS_UI_LEGACY", "GT5P_SETTINGS_UI_ALPHA", "GT5P_OPTIONS_HINT", "GT5P_ESC_CONFIRM", "GT5P_QUIT_UI", "GT5P_SETTINGS_PAUSE", "GT5P_LISTBOX_VTABLE", "GT5P_SETTINGS_TOGGLE_AT", "GT5P_MEMSNAP", "GT5P_WATCH", "RSX_RT_OWN_DEPTH", "RSX_BLIT_READBACK", "RSX_BLIT_READBACK_DBG", "RSX_BLIT_READBACK_NOWRITE", "RSX_RT_WB_SIDE", "RSX_SKIPDBG_FP", "RSX_CUBE_RT_ONCE", "AUDIO_HOTPLUG", "AUDIO_HOTPLUG_POLL", "GT5P_AUDIO_NATIVE", "AUDIO_RATE", "AUDIO_GAPDBG", "AUDIO_LEADDBG",
+        "PAD_HOTPLUG", "PAD_HOLD_MERGE", "SPU_FTZ", "SPU_CHAIN_BACK", "SPU_IRQSTAT", "SPU_EXP_AB", "GT5P_SPU_NATIVE", "GT5P_SPU_NATIVE_STATS", "SPU_IBHIST", "RSX_FP_SATLOG", "RSX_FP_SAT_OPS", "RSX_FP_SAT_PROG", "RSX_FP_SAT_VIS", "RSX_PSO_KEY_RS", "RSX_OVERLAY", "GT5P_SETTINGS_UI_LEGACY", "GT5P_SETTINGS_UI_ALPHA", "GT5P_OPTIONS_HINT", "GT5P_ESC_CONFIRM", "GT5P_QUIT_UI", "GT5P_SETTINGS_PAUSE", "GT5P_LISTBOX_VTABLE", "GT5P_SETTINGS_TOGGLE_AT", "GT5P_MEMSNAP", "GT5P_WATCH", "RSX_RT_OWN_DEPTH", "RSX_BLIT_READBACK", "RSX_BLIT_READBACK_DBG", "RSX_BLIT_READBACK_NOWRITE", "RSX_RT_WB_SIDE", "RSX_SKIPDBG_FP", "RSX_CUBE_RT_ONCE", "GT5P_GLYPHS", "GT5P_GLYPHS_DBG", "GT5P_GLYPHS_CYCLE", "RSX_TEX_REPLACE", "RSX_TEX_REPL_DUMP", "AUDIO_HOTPLUG", "AUDIO_HOTPLUG_POLL", "GT5P_AUDIO_NATIVE", "AUDIO_RATE", "AUDIO_GAPDBG", "AUDIO_LEADDBG",
         "SPURS_JC_STATS", "SPURS_JC_SAMPLE", "SPURS_JC_NORMAL_PRIO", "SPURS_JG_GAPDBG", "SCREEN_AS_TEX"};
     for (const char* name : names) if (const char* value = getenv(name)) fprintf(f, "%s=%s\n", name, value);
     fprintf(f, "\nCURRENT STATE\n"); guarded_snapshot(f);

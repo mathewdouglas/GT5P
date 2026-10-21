@@ -33,6 +33,7 @@ struct Gt5pSettings {
     /* [input] */
     bool sdl_controllers = true;    /* PlayStation / Switch / generic pads via SDL2.dll */
     bool keyboard        = true;    /* keyboard as pad 1 when no controller is connected */
+    int button_prompts   = 0;       /* 0 auto, 1 PlayStation, 2 Xbox, 3 Nintendo, 4 keyboard (gt5p_glyphs.h) */
 
     /* [game] */
     bool skip_movie = false;    /* press through the opening movie (PAD_SKIP_MOVIE) */

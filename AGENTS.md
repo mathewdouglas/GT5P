@@ -99,7 +99,20 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: tunnel lighting fixed (Phase 118).** The title meters exposure from
+**Latest: button prompts follow the controller (Phase 119).** Kenney's
+CC0 art (`assets/glyphs/kenney/`) is painted over the game's button
+textures, which are listed by content hash in `assets/glyphs/textures.txt`:
+the 52x52 Cross by "Enter" and the 460x720 button-assignment diagram. The
+backend hook is `rsx_tex_set_replacer`, and the cellPad device is
+`g_pad_device_family`. A PlayStation pad keeps the original art.
+Switches:
+
+- `GT5P_GLYPHS=auto|playstation|xbox|nintendo|keyboard|0` (F1: INPUT >
+  Button prompts);
+- `RSX_TEX_REPL_DUMP=<dir>` finds new hashes;
+- `GT5P_GLYPHS_CYCLE` tests the live switch.
+
+**Tunnel lighting fixed (Phase 118).** The title meters exposure from
 a 16x8 block it blits (NV3089) out of a GPU-only surface; our blit copied
 stale guest memory, so adaptation never ran. Such blits now record a
 readback in command order (`RSX_BLIT_READBACK=0` off). Draw records are
