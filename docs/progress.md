@@ -9,6 +9,32 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 112 - Dealer page: SPU dispatch measured, no cheap win (2026-10-21)
+
+Goal: cut the Ferrari dealer page's render workloads (0/1, ~29 ms of CPU a
+lane pass at 30 FPS) toward 60 FPS. Measured before changing anything:
+
+- `SPU_IBHIST=1` (new): ~1.2 million indirect branches a second, nearly all
+  indirect calls (bisl through a register) to a few geometry routines of
+  body b01376080 (0xB240, 0x10EE0, 0x10C18, 0x103E0, 0x10418); full drains
+  ~130,000 a second. The fast-path resolve, timed with rdtsc, is ~34 cycles
+  including the timer pair: about 1% of lane CPU. A per-call-site target
+  cache would save at most that, against the overlay/residency cases it
+  must get right; not built. The Phase 110 sample shares for
+  `spu_indirect_branch`/`spu_lookup_fast` (11%) do not match this timing;
+  treat per-function runtime shares from the sampler with caution.
+- Interrupts: ~2.5% (Phase 111).
+- `SPURS_KERN_STAT=1`: both workloads already run on 5 lanes each (ready 5,
+  maxContention 5), so ~10 SPU lanes share 6 cores / 12 threads with the
+  title's PPU threads. The page is bound by total CPU throughput, not
+  scheduling or lane count.
+
+So the remaining lever is faster lifted SPU code across the board (60% of
+the lane time is body b01376080, spread over ~10 routines): register
+promotion within lifted functions, or native replacements of several of
+those routines. Both are larger projects; not started. Diagnostics kept:
+`SPU_IBHIST=1` (targets, full-drain return pcs, fast-path cycles).
+
 ## Phase 111 - Native sorted walk in the race workloads; SPU interrupt cost (2026-10-21)
 
 **The race's sorted insertion runs natively.** Body 0x0133A700, blocks

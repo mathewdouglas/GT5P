@@ -21747,7 +21747,7 @@ index 9cc3670..5ca4416 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d0..209807c 100644
+index 0b235d0..23080a0 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,11 +21,12 @@
@@ -22125,7 +22125,7 @@ index 0b235d0..209807c 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2049,14 +2172,62 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2049,14 +2172,68 @@ void spu_indirect_branch(spu_context* ctx)
       * of a computed pointer (e.g. a packed handle like 0x7a028803) are ignored.
       * Without this, any indirect branch through such a value fails the lookup
       * and falls into branch-to-0. All lifted funcs live below SPU_LS_SIZE, so
@@ -22153,6 +22153,11 @@ index 0b235d0..209807c 100644
 +                        getenv("SPU_JOBTRACE") || getenv("LBP_HLE_JOBDONE") || getenv("SPU_JOBEXEC") ||
 +                        getenv("YDKJ_CRI_CHAIN") || getenv("SPU_IRQTRACE") || getenv("SPU_IB_SLOW"));
 +        const uint32_t pc = (uint32_t)ctx->pc;
++        static int s_ibh = -1;
++        unsigned long long _t0 = 0;
++        { extern void spu_ibhist_note(int, int, uint32_t, int);
++          if (s_ibh < 0) s_ibh = getenv("SPU_IBHIST") ? 1 : 0;
++          if (s_ibh) { spu_ibhist_note(0, ctx->image_id, pc, ctx->host_depth); _t0 = __rdtsc(); } }
 +        if (s_plain && pc != SPURS_PM_EXIT_TO_KERNEL_LS && pc != SPURS_PM_SELECT_WORKLOAD_LS &&
 +            pc != SPURS_TASKSET_PM_SYSCALL_LS && pc != 0xA00u && pc != SPU_JOB_RETURN_LS &&
 +            ctx->image_id != SPU_RESOLVER_ONLY_IMAGE_ID) {
@@ -22171,6 +22176,7 @@ index 0b235d0..209807c 100644
 +            if (!code_owner && !fn) fn = spu_lookup_fast(pc, ctx->image_id);
 +            if (fn) {
 +                if (g_spu_stack_reset_n) spu_check_stack_reset(ctx, fn);
++                if (_t0) { extern void spu_ibhist_cycles(unsigned long long); spu_ibhist_cycles(__rdtsc() - _t0); }
 +#if defined(__clang__)
 +                __attribute__((musttail)) return fn(ctx);
 +#else
@@ -22191,7 +22197,7 @@ index 0b235d0..209807c 100644
            static int s_it = -1; if (s_it < 0) s_it = getenv("SPU_IRQTRACE") ? 1 : 0;
            static int _r = 0;
            if (s_it && _r++ < 200)
-@@ -2084,10 +2255,21 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2084,10 +2261,21 @@ void spu_indirect_branch(spu_context* ctx)
              /* cellSpursModulePoll: report "no contention — keep running".
               * (One virtual SPU per workload here, so nothing ever preempts.) */
              unsigned n = ++g_spurs_pm_polls;
@@ -22215,7 +22221,7 @@ index 0b235d0..209807c 100644
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
          }
-@@ -2502,7 +2684,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2502,7 +2690,7 @@ void spu_indirect_branch(spu_context* ctx)
                    s_dumped = 1; } } }
      }
      if (fn) {
@@ -23068,7 +23074,7 @@ index 90f3221..ac8ed72 100644
                spu_halt(spu);
            }
 diff --git a/runtime/spu/spu_drain.c b/runtime/spu/spu_drain.c
-index 931d3b3..d02f7de 100644
+index 931d3b3..93c1081 100644
 --- a/runtime/spu/spu_drain.c
 +++ b/runtime/spu/spu_drain.c
 @@ -5,6 +5,12 @@
@@ -23093,7 +23099,7 @@ index 931d3b3..d02f7de 100644
  void* volatile    g_pm_flow_ctx = 0;
  
  #include <stdlib.h>
-@@ -46,22 +54,94 @@ void* volatile    g_pm_flow_ctx = 0;
+@@ -46,22 +54,132 @@ void* volatile    g_pm_flow_ctx = 0;
   * set the done bit on the pending records -- the faithful sync equivalent of
   * the completion interrupt. Env SPU_JOBDRAIN (default off while validating). */
  extern void spu_halt(spu_context*);
@@ -23137,6 +23143,44 @@ index 931d3b3..d02f7de 100644
 +    case 2: t_irq_lj = now; break;
 +    case 3: if (t_irq_lj) { __atomic_fetch_add(&s_irqstat[SPU_IST_UNWIND_CY], (long long)(now - t_irq_lj), __ATOMIC_RELAXED);
 +                            __atomic_fetch_add(&s_irqstat[SPU_IST_UNWINDS], 1, __ATOMIC_RELAXED); t_irq_lj = 0; } break;
++    }
++}
++/* SPU_IBHIST=1: every 10 s, the busiest targets of indirect branches
++ * (kind 0, spu_indirect_branch) and return pcs of full drains (kind 1,
++ * spu_drain_call_impl), by image and pc, with depth 0/nonzero. Diagnostic. */
++static int s_ibhist = -1;
++static volatile long long s_ib_cy, s_ib_cyn;
++void spu_ibhist_cycles(unsigned long long c) { __atomic_fetch_add(&s_ib_cy, (long long)c, __ATOMIC_RELAXED); __atomic_fetch_add(&s_ib_cyn, 1, __ATOMIC_RELAXED); }
++static struct { volatile uint32_t key; volatile long long n; } s_ibh[2][4096];
++void spu_ibhist_note(int kind, int image, uint32_t pc, int depth)
++{
++    if (s_ibhist < 0) s_ibhist = getenv("SPU_IBHIST") ? 1 : 0;
++    if (!s_ibhist) return;
++    uint32_t key = ((uint32_t)(image & 0x3FF) << 20) | (pc & 0x3FFFCu) | (depth ? 1u : 0u) | 0x80000000u;
++    uint32_t h = (key * 2654435761u) >> 20;
++    for (int i = 0; i < 16; i++) {
++        uint32_t k = s_ibh[kind][(h + i) & 4095].key;
++        if (k == key || (k == 0 && __atomic_compare_exchange_n(&s_ibh[kind][(h + i) & 4095].key, &k, key, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) || k == key) {
++            __atomic_fetch_add(&s_ibh[kind][(h + i) & 4095].n, 1, __ATOMIC_RELAXED); break; }
++    }
++    static volatile unsigned long long t0;
++    unsigned long long now = __rdtsc() >> 30, was = t0;   /* ~0.3 s units */
++    if (!was) { __atomic_compare_exchange_n(&t0, &was, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED); return; }
++    if (now - was < 32 || !__atomic_compare_exchange_n(&t0, &was, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return;
++    { long long c = __atomic_exchange_n(&s_ib_cy, 0, __ATOMIC_RELAXED), n = __atomic_exchange_n(&s_ib_cyn, 0, __ATOMIC_RELAXED);
++      fprintf(stderr, "[spu-ibhist] fast-path resolve: %.0f cycles each over %lld (rdtsc pair included)%c", n ? (double)c / n : 0.0, n, 10); }
++    for (int kd = 0; kd < 2; kd++) {
++        long long tot = 0; for (int i = 0; i < 4096; i++) tot += s_ibh[kd][i].n;
++        fprintf(stderr, "[spu-ibhist] %s: %lld in the window; top:%c", kd ? "full drains by return pc" : "indirect branches by target", tot, 10);
++        for (int r = 0; r < 16; r++) {
++            int best = -1; long long bn = 0;
++            for (int i = 0; i < 4096; i++) if (s_ibh[kd][i].n > bn) { bn = s_ibh[kd][i].n; best = i; }
++            if (best < 0) break;
++            uint32_t k = s_ibh[kd][best].key;
++            fprintf(stderr, "[spu-ibhist]   img %u pc 0x%05X depth%s: %lld%c", (k >> 20) & 0x3FF, k & 0x3FFFC, (k & 1) ? ">0" : "=0", bn, 10);
++            s_ibh[kd][best].n = -s_ibh[kd][best].n;   /* hide while ranking */
++        }
++        for (int i = 0; i < 4096; i++) { s_ibh[kd][i].n = 0; s_ibh[kd][i].key = 0; }
 +    }
 +}
 +static unsigned long long irqstat_ms(void)
@@ -23201,7 +23245,7 @@ index 931d3b3..d02f7de 100644
      /* A SPURS job returning to LS 0 is finished -- its crt tail-jumps to the
       * resident job manager, and with the job loaded at 0 that lands on its own
       * entry. Planting a return address in r0 catches the jobs that get there
-@@ -116,6 +196,21 @@ void spu_task_launch_check(spu_context* ctx, void* fn)
+@@ -116,6 +234,21 @@ void spu_task_launch_check(spu_context* ctx, void* fn)
                fflush(stderr);
            }
        } }
@@ -23223,7 +23267,7 @@ index 931d3b3..d02f7de 100644
      if (g_pm_flow_ctx == (void*)ctx && g_pm_flow_n < 8192)
          g_pm_flow_buf[g_pm_flow_n++] = ctx->pc;
  
-@@ -154,10 +249,7 @@ void spu_task_launch_check(spu_context* ctx, void* fn)
+@@ -154,10 +287,7 @@ void spu_task_launch_check(spu_context* ctx, void* fn)
   * adopted inside the callee cannot leak into the caller's continuation. A
   * persistent LS-0xA00 workload module (module_img_a00) is re-applied since the
   * plain restore would undo it. */
@@ -23235,7 +23279,7 @@ index 931d3b3..d02f7de 100644
  
  /* spu_ch_wake now has its real body in spu_channels.c (milestone 3). */
  
-@@ -171,6 +263,7 @@ void spu_img_restore(spu_context* ctx, int32_t saved_img)
+@@ -171,6 +301,7 @@ void spu_img_restore(spu_context* ctx, int32_t saved_img)
   * we log once and resume normal flow rather than jump into zeros. */
  #include <stdio.h>
  #include <stdlib.h>
@@ -23243,7 +23287,7 @@ index 931d3b3..d02f7de 100644
  
  /* ---- Deferred DMA-list stall-and-notify delivery --------------------------
   * Real MFC hardware processes a queued list command (the WWS job manager's
-@@ -221,11 +314,21 @@ unsigned spu_sn_defer_ticks(void)
+@@ -221,11 +352,21 @@ unsigned spu_sn_defer_ticks(void)
   * the irete). State the handler legitimately publishes lives in LS/channels
   * and is untouched. Per-ctx slots; no nesting (interrupts stay disabled
   * until iret). */
@@ -23268,7 +23312,7 @@ index 931d3b3..d02f7de 100644
  }
  
  /* Called from spu_indirect_branch on every dispatch. Restores + clears when
-@@ -236,17 +339,18 @@ static void spu_irq_regs_save(spu_context* ctx)
+@@ -236,17 +377,18 @@ static void spu_irq_regs_save(spu_context* ctx)
   * context's registers wholesale. A fresh run must never do that. */
  void spu_irq_regs_forget(spu_context* ctx)
  {
@@ -23293,7 +23337,7 @@ index 931d3b3..d02f7de 100644
                  /* The iret completed below the frame that took the interrupt:
                   * abandon the handler's host frames and resume there. */
                  spu_irq_frame* f = (spu_irq_frame*)ctx->irq_frame;
-@@ -255,9 +359,11 @@ int spu_irq_regs_maybe_restore(spu_context* ctx)
+@@ -255,9 +397,11 @@ int spu_irq_regs_maybe_restore(spu_context* ctx)
                  if (f && ctx->host_depth > f->depth) {
                      { static int s_it = -1; if (s_it < 0) s_it = getenv("SPU_IRQTRACE") ? 1 : 0;
                        static int _n = 0;
@@ -23306,7 +23350,7 @@ index 931d3b3..d02f7de 100644
                      longjmp(f->env, 1);
                  }
                  if (!f && ctx->host_depth > 0) {
-@@ -266,12 +372,14 @@ int spu_irq_regs_maybe_restore(spu_context* ctx)
+@@ -266,12 +410,14 @@ int spu_irq_regs_maybe_restore(spu_context* ctx)
                       * srr0 with the host stack empty, which is that frame. */
                      { static int s_it = -1; if (s_it < 0) s_it = getenv("SPU_IRQTRACE") ? 1 : 0;
                        static int _n = 0;
@@ -23322,7 +23366,7 @@ index 931d3b3..d02f7de 100644
                  return 1;
              }
              return 0;
-@@ -307,11 +415,14 @@ void (*spu_take_interrupt(spu_context* ctx,
+@@ -307,11 +453,14 @@ void (*spu_take_interrupt(spu_context* ctx,
      }
      ctx->srr0 = ctx->pc;             /* resume point for iret */
      ctx->int_enable = 0;
@@ -23339,7 +23383,7 @@ index 931d3b3..d02f7de 100644
                  ctx->gpr[13]._u32[0], ctx->gpr[15]._u32[0]); } }
      ctx->pc = target & SPU_LS_MASK;
      { static int _n = 0;
-@@ -345,8 +456,10 @@ void spu_depth_guard(spu_context* ctx)
+@@ -345,8 +494,10 @@ void spu_depth_guard(spu_context* ctx)
       * not "where are we" but "what cycle got us here" -- one pc names a point,
       * a ring names the loop. */
      enum { RING = 24 };
@@ -23352,7 +23396,7 @@ index 931d3b3..d02f7de 100644
      s_ring[s_n % RING] = ((uint32_t)ctx->pc & SPU_LS_MASK);
      s_n++;
  
-@@ -395,16 +508,16 @@ int spu_tailret_enabled(void)
+@@ -395,16 +546,17 @@ int spu_tailret_enabled(void)
  typedef void (*spu_drain_fn)(spu_context*);
  extern spu_drain_fn spu_lookup(uint32_t addr, int image_id);
  
@@ -23360,6 +23404,7 @@ index 931d3b3..d02f7de 100644
 +void spu_drain_call_impl(spu_context* ctx, uint32_t return_pc)
  {
 -    spu_depth_guard(ctx);
++    if (s_ibhist) spu_ibhist_note(1, ctx->image_id, return_pc, ctx->host_depth);
 +    if (!g_spu_fast || ctx->host_depth >= 1000u) spu_depth_guard(ctx);
      /* The frame an interrupt taken in THIS loop returns to. It stays armed
       * after the handler's first host function returns -- the handler keeps
@@ -23372,7 +23417,7 @@ index 931d3b3..d02f7de 100644
      for (;;) {
          while (g_spu_trampoline_fn) {
              if (g_spu_trampoline_fn == spu_indirect_branch &&
-@@ -415,9 +528,9 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
+@@ -415,9 +567,9 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
              }
              void (*fn)(spu_context*) = g_spu_trampoline_fn;
              g_spu_trampoline_fn = 0;
@@ -23385,7 +23430,7 @@ index 931d3b3..d02f7de 100644
              if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) {
                  void (*vf)(spu_context*) = spu_take_interrupt(ctx, fn);
                  if (!ctx->int_enable) {   /* taken (a take clears the enable; a deferral leaves it) */
-@@ -433,6 +546,7 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
+@@ -433,6 +585,7 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
                          vf(ctx);
                      } else {
                          /* iret fired deeper: registers restored, pc = srr0 */
@@ -23393,7 +23438,7 @@ index 931d3b3..d02f7de 100644
                          ctx->host_depth = f.depth;
                          ctx->image_id = f.image_id;
                          g_spu_trampoline_fn = spu_indirect_branch;
-@@ -452,10 +566,29 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
+@@ -452,10 +605,29 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
              spu_drain_fn fn = ctx->resident_ovl ? spu_lookup(pc, ctx->resident_ovl) : 0;
              if (!fn) fn = spu_lookup(pc, ctx->image_id);
              if (fn) {
@@ -23425,7 +23470,7 @@ index 931d3b3..d02f7de 100644
                  g_spu_trampoline_fn = spu_indirect_branch;
                  continue;
              }
-@@ -463,6 +596,7 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
+@@ -463,6 +635,7 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
          {
              extern void spu_restart_dispatch(spu_context*);
              SPU_DRAIN_POP_IRQ();
