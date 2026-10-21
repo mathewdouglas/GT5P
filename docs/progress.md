@@ -9,7 +9,7 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
-## Phase 109 - Controller during test runs; replay ghosting and audio reports (2026-10-21)
+## Phase 109 - Hood-camera audio (SPU denormals), controller during tests, replay ghosting report (2026-10-21)
 
 **Controller during tests.** A `PAD_HOLD` script used to replace port 0
 outright, so a controller did nothing during a scripted run. Now a connected
@@ -29,11 +29,43 @@ address, and they resolve to stale targets or to unwritten guest memory.
 Whether it predates Phase 108 is not checked (`RSX_HOT_METHODS=0
 RSX_IMM_MASK=0 RSX_FPK_FAST=0` would tell).
 
-**Audio cutting out in hood and chase cameras (open).** A scripted 1080p/2x
+**Audio cutting out in the hood camera: fixed.** A scripted 1080p/2x
 frame test (default camera) with `AUDIO_RATE=1 SPURS_JC_STATS=1`: 2 underruns
-in 60 s, 0% silent blocks, 3,189 jobs/s, chain busy 81-92%, longest job up to
-6.9 ms (a mixer block is 5.3 ms). Frame test 59.2 FPS, 1.9% late. The
-reported cut-outs were not reproduced with this camera.
+in 60 s, 0% silent blocks, 3,189 jobs/s, chain busy 81-92%. With the user
+switching to the hood camera during the same test (the controller merge
+above): 2,000 jobs/s at 0.47 ms each instead of 0.28, chain 96-97% busy,
+35-42% of blocks silent, about 6 underruns a second.
+
+`GT5P_SAMPLE=4 GT5P_SAMPLE_GRAIN=16` on the job thread: one lifted function,
+image j65DD2F53 block 0x1E8, was 40% of its samples in the hood camera (9%
+before the switch). It is a per-sample IIR filter: one float read from local
+store, five multiply-adds, written back, then a backward branch. (`SPURS_JC_SAMPLE`
+stopped reporting when the view changed; the per-thread sampler did not.)
+
+- First guess, the dispatcher trip on the loop's backward branch: the chain
+  pass in `lift_spu_jobs.py` now makes backward transfers within an image
+  direct tail calls too, with the dispatcher's interrupt check inline, never
+  for a branch to 0 (a job's end, which only the dispatcher notices).
+  `SPU_CHAIN_BACK=0` at lift time leaves them alone; at run time
+  (`g_spu_chain_back`, also cleared by `SPU_FAST=0` or a per-step diagnostic
+  switch) it sends them back through the dispatcher. 2,883 transfers. Hood
+  camera: no change (0.47 ms a job, block 0x1E8 still 2,003 samples of 4,764).
+- The cause: denormals. The filter's state decays toward zero; x86 handles
+  denormal floats with microcode assists, the SPU's single-precision unit
+  flushes them to zero. `runtime/spu/spu_fpmode.h` sets MXCSR flush-to-zero
+  and denormals-are-zero at the start of every host thread that runs SPU
+  code (SPURS kernel, workload groups, pool lanes, policy-module workers, job
+  chains, raw SPUs, async SPU threads); never on PPU threads. `SPU_FTZ=0`
+  leaves MXCSR alone. Hood camera: 3,190 jobs/s, 0.26-0.29 ms each, chain
+  82-92% busy, **0 underruns and 0% silent blocks** for the whole run; block
+  0x1E8 313 samples. The default camera's job thread: 86-87% -> 76-78% of a
+  core.
+
+Backward chaining kept on its own merit: default-camera A/B frame tests
+(`SPURS_LANE_CYC=1`): workloads 5/6 lane time 11.0-11.5 ms (on) against
+12.4-13.3 ms (`SPU_CHAIN_BACK=0`); frame test 59.1 FPS / 0.9% late against
+59.3 / 1.4%, walk 6.25 against 6.28 ms. `pso_async.py` and `debug_export.ps1`
+pass.
 
 ## Phase 108 - FIFO walk: hot methods first, fewer copies (2026-10-21)
 

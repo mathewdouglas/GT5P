@@ -202,10 +202,14 @@ XFER_RE = re.compile(
 # run body 0x0133A700, whose hot list walk went through the dispatcher on every
 # block. SPU_CHAIN_BODIES=0 at lift time leaves bodies as before.
 CHAIN_BODIES = os.environ.get("SPU_CHAIN_BODIES", "1") != "0"
+# Backward transfers too (Phase 109). SPU_CHAIN_BACK=0 at lift time leaves
+# them on the dispatcher; SPU_CHAIN_BACK=0 at run time does the same for a
+# lift that has them (g_spu_chain_back).
+CHAIN_BACK = os.environ.get("SPU_CHAIN_BACK", "1") != "0"
 
 
 def chain_forward(outdir):
-    """Turn transfers to a LATER block of the same image into direct tail calls.
+    """Turn transfers to another block of the same image into direct tail calls.
 
     The lifter ends every block by naming the next one in g_spu_trampoline_fn
     and returning to a dispatch loop, including when the next block is simply
@@ -213,23 +217,38 @@ def chain_forward(outdir):
     such blocks, so each audio sample cost three trips through the dispatcher
     and its per-step checks, which was over a quarter of the job thread's
     time. A forward transfer (taken or fallen into) becomes a guaranteed tail
-    call instead. Backward transfers still go through the dispatcher, so every
-    loop keeps passing the point where interrupts and halts are noticed.
+    call instead.
+
+    Backward transfers (a loop's closing branch, Phase 109) too: the mixer's
+    per-sample filter at 0x1E8 of image j65DD2F53 took 40% of the job thread
+    in the hood camera, a dispatcher trip per sample. They keep the
+    dispatcher's interrupt check inline and take the dispatcher while
+    g_spu_chain_back is 0. A branch to 0 is a job's end, which only the
+    dispatcher notices, so it is left alone.
     `spu_link` calls and indirect branches are left alone. Idempotent."""
     src = outdir / "spu_recomp.c"
+    text = src.read_text(encoding="utf-8")
+    own = {m.group(1) + m.group(2) for m in map(FUNC_RE.match, text.split("\n")) if m}
     out, cur, n = [], None, 0
-    for line in src.read_text(encoding="utf-8").split("\n"):
+    for line in text.split("\n"):
         m = FUNC_RE.match(line)
         if m:
             cur = int(m.group(2), 16)
         elif cur is not None and "spu_link(" not in line:
             def sub(x):
                 nonlocal n
-                if int(x.group(4), 16) <= cur:
+                target = int(x.group(4), 16)
+                if target > cur:
+                    n += 1
+                    return ("{ %sctx->pc = %s; __attribute__((musttail)) return %s(ctx); }"
+                            % (x.group(1), x.group(2), x.group(3)))
+                if not CHAIN_BACK or target == 0 or x.group(3) not in own:
                     return x.group(0)
                 n += 1
-                return ("{ %sctx->pc = %s; __attribute__((musttail)) return %s(ctx); }"
-                        % (x.group(1), x.group(2), x.group(3)))
+                return ("{ %sctx->pc = %s; if (__builtin_expect(!g_spu_chain_back || g_spu_stack_reset_n || "
+                        "(ctx->int_enable && (ctx->event_status & ctx->event_mask)), 0)) "
+                        "{ g_spu_trampoline_fn = %s; return; } __attribute__((musttail)) return %s(ctx); }"
+                        % (x.group(1), x.group(2), x.group(3), x.group(3)))
             line = XFER_RE.sub(sub, line)
         out.append(line)
     src.write_text("\n".join(out), encoding="utf-8", newline="\n")
@@ -241,7 +260,7 @@ def main():    # --chain: apply chain_forward to the job images already generate
     if "--chain" in sys.argv:
         for d in sorted(OUT.glob("j*")) + (sorted(OUT.glob("b*")) if CHAIN_BODIES else []):
             if d.is_dir():
-                print(f"  {d.name}: {chain_forward(d)} forward transfers made direct")
+                print(f"  {d.name}: {chain_forward(d)} transfers made direct")
         return
     dumps = sorted(p for p in DUMPS.glob("spujob_*.bin") if NAME_RE.match(p.name))
     if not dumps:
@@ -271,7 +290,7 @@ def main():    # --chain: apply chain_forward to the job images already generate
         n = lift(blob, prefix, outdir, extra=",".join(map(hex, sorted(seeds))) or None)
         total += n
         print(f"  {blob.name}: {n} functions -> {outdir.relative_to(ROOT)}"
-              f" ({chain_forward(outdir)} forward transfers made direct)")
+              f" ({chain_forward(outdir)} transfers made direct)")
         jobs.append((fp, int(size), prefix, i, blob.name))
 
     externs = "\n".join(
@@ -305,7 +324,7 @@ def main():    # --chain: apply chain_forward to the job images already generate
             seeds |= abs_tables(raw, lsa)
         n = lift(blob, prefix, outdir, base=lsa, extra=",".join(map(hex, sorted(seeds))))
         total += n
-        chained = f" ({chain_forward(outdir)} forward transfers made direct)" if CHAIN_BODIES else ""
+        chained = f" ({chain_forward(outdir)} transfers made direct)" if CHAIN_BODIES else ""
         print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}{chained}")
         externs += f"\nextern void {prefix}_spu_recomp_register(void);"
         regs += (f"\n\n    /* job body at 0x{ea:08X}, {size} bytes, runs at LS 0x{lsa:X} */\n"

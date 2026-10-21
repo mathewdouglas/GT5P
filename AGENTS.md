@@ -99,14 +99,17 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: controller during tests; replay ghosting and audio open (Phase 109).**
-Test runs now merge a connected controller and the keyboard into the
-`PAD_HOLD` script (`PAD_HOLD_MERGE=0` script only), so someone can change
-camera or take over. Open, from the user's play: the post-race replay shows
-about four overlaid frames plus a noise strip on the right edge (F8 reports
-from process 34220), and sound cuts in and out in hood and chase cameras.
-A scripted race with the default camera had 2 underruns in 60 s, no silent
-blocks, with the job chain 81-92% busy.
+**Latest: hood-camera audio fixed; controller during tests (Phase 109).**
+Sound cut out in the hood camera: the mixer's IIR filter (image j65DD2F53,
+0x1E8) ran on denormal floats, which x86 computes ~100x slower and the SPU
+flushes. Threads that run SPU code now set MXCSR FTZ/DAZ (`SPU_FTZ=0` off):
+hood camera 35-42% silent blocks and ~6 underruns/s -> 0. Backward transfers
+in job images and bodies are now direct tail calls too (`lift_spu_jobs.py`;
+`SPU_CHAIN_BACK=0` at lift or run time off): workloads 5/6 ~14% less lane
+time. Test runs merge a connected controller and the keyboard into the
+`PAD_HOLD` script (`PAD_HOLD_MERGE=0` script only). Open: the post-race
+replay shows about four overlaid frames and a noise strip on the right edge
+(F8 reports from process 34220).
 
 **FIFO walk trimmed (Phase 108).** Changes, each with an off switch:
 
