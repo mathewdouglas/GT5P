@@ -28,6 +28,7 @@
     "boot_from": "bdvd",
     "hdd_title": false,
     "spurs_synth_job_done": false,
-    "frame_pacer_sleep_lr": "0x00B24AF4"
+    "frame_pacer_sleep_lr": "0x00B24AF4",
+    "menu_listbox_vtable": "0x0124C290"
   }
 }

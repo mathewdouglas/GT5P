@@ -50,6 +50,7 @@
 extern "C" {
 extern volatile int g_pad_input_blocked;        /* cellPad.c */
 extern volatile uint32_t g_pad_menu_buttons;    /* cellPad.c: bit 16 = PS button */
+extern volatile uint32_t g_pad_inject_buttons;  /* cellPad.c: pressed for the title on port 0 */
 void pad_set_keyboard_enabled(int on);          /* cellPad.c */
 void rsx_d3d12_set_present_sync(int interval);  /* rsx_d3d12_backend.c */
 void gt5p_shader_indicator_enable(int on);      /* gt5p_shaderbusy.cpp */
@@ -63,7 +64,7 @@ extern int (*rsx_d3d12_on_escape)(void);      /* Escape in the game window */
 namespace {
 
 /* CELL_PAD_CTRL_* (cellPad.h) */
-const uint32_t kSelect = 1u << 0, kUp = 1u << 4, kRight = 1u << 5, kDown = 1u << 6, kLeft = 1u << 7,
+const uint32_t kSelect = 1u << 0, kStart = 1u << 3, kUp = 1u << 4, kRight = 1u << 5, kDown = 1u << 6, kLeft = 1u << 7,
                kCircle = 1u << 13, kCross = 1u << 14, kPs = 1u << 16,
                kL1 = 1u << 10, kR1 = 1u << 11;
 
@@ -815,6 +816,7 @@ bool hint_enabled()
 }
 
 volatile int s_in_options;     /* the title's Options screen is up */
+volatile int s_in_race;        /* a race is loaded (RaceRoot until another screen) */
 bool s_hint_shown;
 
 /* Which screen the title is on, from the screen scripts (.gpb) it reads.
@@ -832,6 +834,13 @@ void screen_seen(const char* b)
     if (!strcmp(b, "OptionRoot.gpb")) s_in_options = 1;
     else if (strcmp(b, "DLSGadgetRoot.gpb") &&
              (strstr(b, "Root.gpb") || strstr(b, "Template.gpb"))) s_in_options = 0;
+    /* A race reads RaceRoot with its layers (OnboardMeterRoot, the mode's
+     * QuickArcadeRoot, DLSGadgetRoot); any other screen root ends it. A mode
+     * whose race root is not listed just never counts as racing. */
+    if (!strcmp(b, "RaceRoot.gpb")) s_in_race = 1;
+    else if (strcmp(b, "DLSGadgetRoot.gpb") && strcmp(b, "OnboardMeterRoot.gpb") &&
+             strcmp(b, "QuickArcadeRoot.gpb") &&
+             (strstr(b, "Root.gpb") || strstr(b, "Template.gpb"))) s_in_race = 0;
 }
 
 /* Escape in the game window (rsx_d3d12_backend.c calls this on its window
@@ -854,6 +863,129 @@ void redraw()
     if (s_overlay) render_overlay();
     else InvalidateRect(s_wnd, NULL, FALSE);
 }
+
+/* ---- memory snapshots (a diagnostic) ----
+ *
+ * GT5P_MEMSNAP=<milestone>+<ms>[,...]: save every committed page of guest
+ * memory once at each of those times, and on F9 over the game, to
+ * scratch/memsnap/snapNN.bin as records of [u32 guest address, u32 length,
+ * bytes]. Comparing snapshots taken in two states (paused and running, say)
+ * finds the variable that tells them apart (scripts/diag/memsnap_diff.py).
+ * The files hold game memory: they stay in the gitignored scratch folder. */
+extern "C" uint8_t* vm_base;
+extern "C" long long pad_milestone_age_ms(const char* name);
+
+void memsnap_write()
+{
+    static int n = 0;
+    CreateDirectoryA("scratch", NULL);
+    CreateDirectoryA("scratch\\memsnap", NULL);
+    char path[96];
+    snprintf(path, sizeof path, "scratch\\memsnap\\snap%02d.bin", n++);
+    FILE* f = fopen(path, "wb");
+    if (!f || !vm_base) { if (f) fclose(f); return; }
+    unsigned long long total = 0;
+    for (unsigned long long a = 0; a < 0x100000000ull;) {
+        MEMORY_BASIC_INFORMATION mi;
+        if (!VirtualQuery(vm_base + a, &mi, sizeof mi)) break;
+        const unsigned long long end = (unsigned long long)((uint8_t*)mi.BaseAddress + mi.RegionSize - vm_base);
+        if (mi.State == MEM_COMMIT && !(mi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+            for (unsigned long long p = a; p < end && p < 0x100000000ull; p += 0x1000000) {
+                const uint32_t len = (uint32_t)((end - p) < 0x1000000 ? (end - p) : 0x1000000);
+                const uint32_t ga = (uint32_t)p;
+                fwrite(&ga, 4, 1, f); fwrite(&len, 4, 1, f); fwrite(vm_base + p, 1, len, f);
+                total += len;
+            }
+        }
+        a = end;
+    }
+    fclose(f);
+    fprintf(stderr, "[memsnap] %s: %llu MB at %llu ms\n", path, total >> 20, GetTickCount64());
+}
+
+void memsnap_poll()
+{
+    static int on = -1;
+    static std::vector<std::pair<std::string, long long>> at;
+    static std::vector<bool> done;
+    static bool f9_was;
+    if (on < 0) {
+        const char* e = getenv("GT5P_MEMSNAP");
+        on = e && *e;
+        if (on) {
+            std::string s = e;
+            size_t i = 0;
+            while (i < s.size()) {
+                size_t j = s.find(',', i); if (j == std::string::npos) j = s.size();
+                std::string tok = s.substr(i, j - i);
+                size_t plus = tok.find('+');
+                if (plus != std::string::npos) at.push_back({ tok.substr(0, plus), atoll(tok.c_str() + plus + 1) });
+                i = j + 1;
+            }
+            done.assign(at.size(), false);
+        }
+    }
+    if (!on) return;
+    for (size_t k = 0; k < at.size(); k++)
+        if (!done[k] && pad_milestone_age_ms(at[k].first.c_str()) >= at[k].second) { done[k] = true; memsnap_write(); }
+    const bool f9 = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+    if (f9 && !f9_was && GetForegroundWindow() == s_game) memsnap_write();
+    f9_was = f9;
+}
+
+/* GT5P_SETTINGS_TOGGLE_AT=<milestone>+<ms>[,...]: open or close the page at
+ * those times, for scripted runs (F1 and the PS button cannot be scripted). */
+void set_open(bool open);
+void toggle_poll()
+{
+    static int on = -1;
+    static std::vector<std::pair<std::string, long long>> at;
+    static std::vector<bool> done;
+    if (on < 0) {
+        const char* e = getenv("GT5P_SETTINGS_TOGGLE_AT");
+        on = e && *e;
+        for (std::string sv = on ? e : ""; !sv.empty();) {
+            size_t j = sv.find(','); std::string tok = sv.substr(0, j);
+            size_t plus = tok.find('+');
+            if (plus != std::string::npos) at.push_back({ tok.substr(0, plus), atoll(tok.c_str() + plus + 1) });
+            sv = j == std::string::npos ? "" : sv.substr(j + 1);
+        }
+        done.assign(at.size(), false);
+    }
+    if (!on) return;
+    for (size_t k = 0; k < at.size(); k++)
+        if (!done[k] && pad_milestone_age_ms(at[k].first.c_str()) >= at[k].second) { done[k] = true; set_open(!s_open); }
+}
+
+/* GT5P_WATCH=addr[,addr...]: print each guest word there whenever it
+ * changes (checked every UI tick, ~16 ms), to confirm a candidate found by
+ * memsnap_diff.py. */
+uint32_t guest_word(uint32_t a)
+{
+    uint32_t w;
+    memcpy(&w, vm_base + a, 4);
+    return _byteswap_ulong(w);
+}
+
+void watch_poll()
+{
+    static int on = -1;
+    static std::vector<uint32_t> addr, last;
+    if (on < 0) {
+        const char* e = getenv("GT5P_WATCH");
+        on = e && *e && vm_base;
+        for (const char* p = e; on && p && *p;) {
+            addr.push_back((uint32_t)strtoul(p, nullptr, 16)); last.push_back(0xDEADBEEF);
+            p = strchr(p, ','); if (p) p++;
+        }
+    }
+    if (!on) return;
+    for (size_t k = 0; k < addr.size(); k++) {
+        const uint32_t v = guest_word(addr[k]);
+        if (v != last[k]) { fprintf(stderr, "[watch] %llu ms %08X = %08X\n", GetTickCount64(), addr[k], v); last[k] = v; }
+    }
+}
+
 
 /* ---- window ---- */
 
@@ -879,6 +1011,57 @@ void place(bool force = false)
 
 bool s_release_wait;     /* closed; the title's input waits for all buttons up */
 
+/* ---- pausing a race (Phase 117) ----
+ *
+ * Opening the page during a race first presses Start for the title, which
+ * pauses it and shows its pause bar. Start toggles, so not when the title is
+ * already in a menu: the pause bar and the starting grid's menu are mListBox
+ * widgets whose word at +4 (past the vtable) is 3, and whose word at +8 is 7
+ * while shown, 3 while hidden (measured with GT5P_MEMSNAP and
+ * scripts/diag/memsnap_diff.py; the vtable is menu_listbox_vtable in
+ * config/targets.json). They live on the heap, so the page scans guest
+ * memory for them when it opens (tens of milliseconds).
+ * GT5P_SETTINGS_PAUSE=0: never press Start. */
+enum { kRaceUnknown = -1, kRaceRunning = 0, kRaceInMenu = 1 };
+int race_menu_state()
+{
+    static uint32_t vt = 1;
+    if (vt == 1) { const char* e = getenv("GT5P_LISTBOX_VTABLE"); vt = e ? (uint32_t)strtoul(e, nullptr, 16) : 0; }
+    if (!vt || !vm_base) return kRaceUnknown;
+    int hidden = 0, shown = 0;
+    for (unsigned long long a = 0x20000000ull; a < 0x40000000ull;) {
+        MEMORY_BASIC_INFORMATION mi;
+        if (!VirtualQuery(vm_base + a, &mi, sizeof mi)) break;
+        const unsigned long long end = (unsigned long long)((uint8_t*)mi.BaseAddress + mi.RegionSize - vm_base);
+        if (mi.State == MEM_COMMIT && !(mi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+            const uint32_t want = _byteswap_ulong(vt);
+            const uint32_t* w = (const uint32_t*)(vm_base + a);
+            const size_t n = (size_t)((end - a) / 4);
+            for (size_t i = 0; i + 2 < n; i++)
+                if (w[i] == want && _byteswap_ulong(w[i + 1]) == 3) {
+                    const uint32_t st = _byteswap_ulong(w[i + 2]);
+                    shown += st == 7; hidden += st == 3;
+                }
+        }
+        a = end;
+    }
+    if (s_dbg_screens > 0) fprintf(stderr, "[settings-ui] race menus: %d shown, %d hidden%c", shown, hidden, 10);
+    return shown ? kRaceInMenu : hidden ? kRaceRunning : kRaceUnknown;
+}
+
+ULONGLONG s_inject_until;      /* press Start for the title until then */
+
+void pause_race_if_running()
+{
+    static int on = -1;
+    if (on < 0) { const char* e = getenv("GT5P_SETTINGS_PAUSE"); on = !(e && e[0] == '0'); }
+    if (!on || !s_in_race) return;
+    if (race_menu_state() != kRaceRunning) return;
+    s_inject_until = GetTickCount64() + 150;
+    g_pad_inject_buttons = kStart;
+    if (s_dbg_screens > 0) fprintf(stderr, "[settings-ui] race running: Start pressed to pause it%c", 10);
+}
+
 void set_open(bool open)
 {
     if (open == s_open) return;
@@ -887,7 +1070,7 @@ void set_open(bool open)
     /* Closing keeps the title's pads at rest until every button is let go
      * (the loop below): the Circle or Cross that closed the page must not
      * reach the game as a new press. */
-    if (open) g_pad_input_blocked = 1;
+    if (open) { pause_race_if_running(); g_pad_input_blocked = 1; }
     else s_release_wait = true;
     if (open) {
         s_edit = gt5p_settings_file();
@@ -1235,6 +1418,10 @@ DWORD WINAPI ui_thread(LPVOID)
             s_hint_shown = want_hint;
         }
 
+        if (s_inject_until && GetTickCount64() >= s_inject_until) { g_pad_inject_buttons = 0; s_inject_until = 0; }
+        memsnap_poll();
+        watch_poll();
+        toggle_poll();
         if (s_open && !s_overlay) place();
         Sleep(16);
     }

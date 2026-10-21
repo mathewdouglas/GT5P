@@ -17,6 +17,8 @@
 # frames, mean FPS, median/p99/max frame interval, the share of frames later
 # than 20 ms (one vblank missed), and the FIFO walk's wall and CPU ms per
 # frame (from GT5P_FRAME_LOG). -SampleDelay <s> moves the start.
+# -ExtraHold "<PAD_HOLD entries>" appends presses to the drive (e.g.
+# "@QuickArcadeRoot+75000-75200:START").
 # -Cpu also reports per-thread CPU over the sampling window, named from the log
 # (guest thread names, host thread names), in scratch/pv/<tag>.cpu.txt.
 [CmdletBinding(PositionalBinding = $false)]
@@ -26,6 +28,7 @@ param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
       [ValidateRange(0,3600)][int]$GridIdleSeconds = 0, [switch]$Cpu,
       [ValidateRange(0,3600)][int]$RaceShots = 0, [switch]$FrameTest,
       [ValidateRange(0,3600)][int]$SampleDelay = 25,
+      [string]$ExtraHold = "",
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -80,6 +83,7 @@ foreach ($at in @(5000, 10000, 20000, 40000, 60000)) {
     $at += 1000 * $GridIdleSeconds
     $hold += ",@QuickArcadeRoot+$at-$($at+300):CROSS"
 }
+if ($ExtraHold) { $hold += ",$ExtraHold" }
 if ($FrameTest) {
     if (-not $PSBoundParameters.ContainsKey("SampleDelay")) { $SampleDelay = 45 }
     if (-not $PSBoundParameters.ContainsKey("Seconds")) { $Seconds = 60 }

@@ -4855,7 +4855,7 @@ index 5166a47..c627e66 100644
      if (!path || !sb)
          return CELL_EFAULT;
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c11..22db537 100644
+index f2b4c11..845507d 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -52,6 +52,7 @@
@@ -4866,7 +4866,7 @@ index f2b4c11..22db537 100644
  
  typedef struct {
      int  connected;
-@@ -75,6 +76,12 @@ typedef struct {
+@@ -75,6 +76,16 @@ typedef struct {
      u8   press_r1;
  } PadHostState;
  
@@ -4875,11 +4875,15 @@ index f2b4c11..22db537 100644
 + * PS/guide button. Both updated by each poll. */
 +volatile int g_pad_input_blocked;
 +volatile u32 g_pad_menu_buttons;
++/* Buttons the port's own overlay presses for the title, on port 0, even while
++ * the title's input is blocked (gt5p_settings_ui.cpp: Start to pause a race
++ * before the settings page opens). */
++volatile u32 g_pad_inject_buttons;
 +
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,23 +147,184 @@ static int pad_host_window_focused(void)
+@@ -140,23 +151,184 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
@@ -5023,7 +5027,7 @@ index f2b4c11..22db537 100644
 +        }
 +        if (n) { t0 = GetTickCount64(); s_pad_t0 = t0;
 +                 printf("[cellPad] PAD_HOLD: %d timed presses%c", n, 10); fflush(stdout); }
-+    }
+     }
 +    if (!n) return -1;
 +    /* PAD_HOLD_STOP_DRAWS="<ms>,<m>": after <ms>, wait for a frame of under m
 +     * draws (a plain dialog), then let go of everything as soon as the draw
@@ -5059,15 +5063,15 @@ index f2b4c11..22db537 100644
 +        }
 +        if (ev[i].unless[0] && pad_milestone_at(ev[i].unless)) continue;
 +        if (rel >= ev[i].from && rel < ev[i].to) btns |= ev[i].btn;
-     }
++    }
 +    return btns;
 +}
-+
+ 
 +/* Keyboard as port 0: -1 until read from PAD_NO_KEYBOARD, then 0/1. A port's
 + * settings screen can switch it while running (pad_set_keyboard_enabled). */
 +static int s_kbd_off = -1;
 +void pad_set_keyboard_enabled(int on) { s_kbd_off = on ? 0 : 1; }
- 
++
 +/* Port 0's keys, 0 when the game window is not focused or the keyboard is
 + * off (PAD_NO_KEYBOARD). */
 +static u16 pad_keyboard_buttons(void)
@@ -5077,7 +5081,7 @@ index f2b4c11..22db537 100644
      static const struct { int vk; u16 btn; } map[] = {
          { VK_UP,     CELL_PAD_CTRL_UP },      { VK_DOWN,  CELL_PAD_CTRL_DOWN },
          { VK_LEFT,   CELL_PAD_CTRL_LEFT },    { VK_RIGHT, CELL_PAD_CTRL_RIGHT },
-@@ -170,6 +338,40 @@ static void pad_poll_keyboard(void)
+@@ -170,6 +342,40 @@ static void pad_poll_keyboard(void)
      u16 btns = 0;
      for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++)
          if (GetAsyncKeyState(map[i].vk) & 0x8000) btns |= map[i].btn;
@@ -5118,7 +5122,7 @@ index f2b4c11..22db537 100644
  
      hs->buttons   = btns;
      hs->connected = 1;
-@@ -390,6 +592,256 @@ static void pad_shutdown_backend(void)
+@@ -390,6 +596,256 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -5375,7 +5379,7 @@ index f2b4c11..22db537 100644
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -407,7 +859,6 @@ static void pad_shutdown_backend(void)
+@@ -407,7 +863,6 @@ static void pad_shutdown_backend(void)
   * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
   * a real DualShock 3's own report rate), so no game can tell the difference,
   * including one sampling for button-press edges. */
@@ -5383,7 +5387,7 @@ index f2b4c11..22db537 100644
  
  static unsigned long long pad_now_ms(void)
  {
-@@ -421,13 +872,44 @@ static unsigned long long pad_now_ms(void)
+@@ -421,13 +876,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -5431,7 +5435,7 @@ index f2b4c11..22db537 100644
      s_last_ms = now;
      /* A real pad streams reports at roughly this rate whether or not anything
       * changed, and libpad buffers them; a fresh sweep is a fresh report for
-@@ -435,12 +917,67 @@ static void pad_poll_backend(void)
+@@ -435,12 +921,71 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT
@@ -5492,7 +5496,11 @@ index f2b4c11..22db537 100644
 +              memset(hs, 0, sizeof(*hs));
 +              hs->connected = c;
 +              hs->analog_lx = hs->analog_ly = hs->analog_rx = hs->analog_ry = 128;
-+          } }
++          }
++      if (g_pad_inject_buttons) {
++          s_host_state[0].connected = 1;
++          s_host_state[0].buttons |= (u16)(g_pad_inject_buttons & 0xFFFFu);
++      } }
 +done:
 +#if PAD_BACKEND_XINPUT
 +    ReleaseSRWLockExclusive(&poll_lock);

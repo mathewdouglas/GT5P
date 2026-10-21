@@ -757,6 +757,10 @@ int main(int argc, char* argv[])
       if (GT5P_PACER_LR[0] && !(pad && pad[0] == '1') && !getenv("PS3_USLEEP_SKIP_LR"))
           _putenv_s("PS3_USLEEP_SKIP_LR", GT5P_PACER_LR); }
 
+    /* The mListBox vtable, for the settings page's race-pause check
+     * (gt5p_settings_ui.cpp, Phase 117). */
+    if (GT5P_LISTBOX_VT[0] && !getenv("GT5P_LISTBOX_VTABLE")) _putenv_s("GT5P_LISTBOX_VTABLE", GT5P_LISTBOX_VT);
+
     /* Run a SPURS workload only while its ready count is nonzero, on as many
      * virtual SPUs as the count asks for. This title fills a job list first
      * and raises the count afterwards; run before that, the dealership's

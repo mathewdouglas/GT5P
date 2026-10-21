@@ -9,6 +9,46 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 117 - Opening the settings in a race pauses it (2026-10-22)
+
+The user asked that opening the settings during a race open the game's pause
+menu. Start pauses a race (a small bar: retry, Continue, exit) and Start
+again resumes it, so the page must know whether the race is already paused.
+No screen script is read when pausing.
+
+**Finding the pause state.** New diagnostics: `GT5P_MEMSNAP=<milestone>+<ms>,...`
+(or F9) saves every committed page of guest memory to `scratch/memsnap/`
+(~950 MB each; delete after), and `scripts/diag/memsnap_diff.py --a ... --b ...
+[--c ...] [--ptrs]` lists the words that are constant within each state but
+differ between them; `GT5P_WATCH=addr,...` logs changes to words live, and
+`race.ps1 -ExtraHold` adds presses to the drive. Two snapshots per state
+caught frame-flipping words (`0x0138D1D0` toggles every frame); four per
+state across two pauses left an object whose word at +8 past its vtable is 7
+paused, 3 running. Its vtable `0x0124C290` is `mListBox` (rtti.json): the
+pause bar's icon list. Of the ~13 mListBox objects in a race, two have 3 at
++4: the pause bar, and on the starting grid the grid's menu (7 shown there,
+gone once racing). The objects are on the heap at different addresses each
+boot, so the page scans guest memory (0x20000000-0x40000000) for the vtable
+when it opens.
+
+**Behaviour.** A race is RaceRoot until another screen root other than its
+layers (OnboardMeterRoot, QuickArcadeRoot, DLSGadgetRoot) is read. Opening
+the page in a race with a kind-3 mListBox present but none shown (racing)
+presses Start for the title for 150 ms through cellPad's new
+`g_pad_inject_buttons` (passes even while the title's input is blocked);
+shown (grid menu or already paused), or none found, presses nothing. Closing
+leaves the game on its pause bar. `GT5P_SETTINGS_PAUSE=0` disables it; the
+vtable is `menu_listbox_vtable` in config/targets.json (via main.cpp,
+`GT5P_LISTBOX_VTABLE`). `GT5P_SETTINGS_TOGGLE_AT=<milestone>+<ms>,...` opens
+or closes the page at those times for scripted runs.
+
+Verified on High Speed Ring (`race.ps1 -Tag pause8`): grid open pressed
+nothing; open while racing paused the race (timer frozen, pause bar after
+closing); open while paused pressed nothing and it stayed paused. Other race
+modes with a different race root are untested and never count as racing.
+A stray Start a few seconds after a scripted one appears in race drives
+regardless of this change (seen before it existed); not investigated.
+
 ## Phase 116 - Settings page as one of the game's settings popups (2026-10-22)
 
 The user sent the game's "Steering Settings" popup (closed and with a list

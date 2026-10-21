@@ -99,7 +99,15 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: settings page as a game settings popup (Phase 116).** Copies the
+**Latest: settings in a race pause it (Phase 117).** Opening the page
+while racing presses Start for the title (cellPad `g_pad_inject_buttons`),
+unless a pause bar or grid menu is shown: found by scanning guest memory for
+mListBox (`menu_listbox_vtable`). `GT5P_SETTINGS_PAUSE=0` off. New
+diagnostics: `GT5P_MEMSNAP` + `scripts/diag/memsnap_diff.py` (find state
+variables by memory diff), `GT5P_WATCH`, `GT5P_SETTINGS_TOGGLE_AT`,
+`race.ps1 -ExtraHold`.
+
+**Settings page as a game settings popup (Phase 116).** Copies the
 game's "Steering Settings" popup (value boxes, drop-down buttons and lists),
 pages switched with L1/R1. `settings_test.ps1` presses Page Down to reach
 the Shaders page.

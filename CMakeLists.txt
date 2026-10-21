@@ -52,6 +52,12 @@ string(JSON GT5P_PACER_LR ERROR_VARIABLE GT5P_PACER_LR_ERR GET "${GT5P_T}" frame
 if(GT5P_PACER_LR_ERR)
     set(GT5P_PACER_LR "")
 endif()
+# vtable of the title's mListBox widget: the settings page finds the race
+# pause bar by it (Phase 117); absent: none.
+string(JSON GT5P_LISTBOX_VT ERROR_VARIABLE GT5P_LISTBOX_VT_ERR GET "${GT5P_T}" menu_listbox_vtable)
+if(GT5P_LISTBOX_VT_ERR)
+    set(GT5P_LISTBOX_VT "")
+endif()
 message(STATUS "game build: ${GT5P_TARGET} (code end ${GT5P_CODE_END}, boot_from=${GT5P_BOOT_FROM})")
 
 # =============================================================================
@@ -183,7 +189,8 @@ set(GT5P_MAIN_DEFS
     "GT5P_TITLE_ID=\"${GT5P_TARGET}\""
     "GT5P_CODE_END=${GT5P_CODE_END}u"
     "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\""
-    "GT5P_PACER_LR=\"${GT5P_PACER_LR}\"")
+    "GT5P_PACER_LR=\"${GT5P_PACER_LR}\""
+    "GT5P_LISTBOX_VT=\"${GT5P_LISTBOX_VT}\"")
 if(GT5P_HDD_TITLE)
     list(APPEND GT5P_MAIN_DEFS "GT5P_HDD_TITLE=1")
 endif()
