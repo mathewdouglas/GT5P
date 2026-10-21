@@ -9,6 +9,34 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 116 - Settings page as one of the game's settings popups (2026-10-22)
+
+The user sent the game's "Steering Settings" popup (closed and with a list
+open) as the target look, and reported that the big title and the button
+labels did not fit. Measured from their screenshot: flat grey-28 panel,
+grey-76 rules, labels grey 190 right-aligned, value boxes near-black
+(0, 4, 0) with a (99, 101, 107) underline and values at grey 204, square
+drop-down buttons (black edge, glass face, white triangle; the selected
+row's has a (168, 0, 0) ring), grey-96 dotted rules between rows; the open
+list is grey 204 with grey-51 text, grey-127 separators, the highlighted
+entry a (154, 181, 206) -> (222, 244, 250) gradient, a short grey dash before
+the current value.
+
+The page is now that popup: "PC Settings" centred at the top, then a
+section bar (the Options screen's style, with L1/R1 knobs) that pages
+through Video, Shaders (split off Video: cache, background compilation,
+preload, pipelines, race preparation), Input, Game, Performance and Debug,
+then the rows, the help, and Restart/Close pill buttons. Cross/Enter opens a
+row's list placed so the current value sits on its box; Up/Down, Cross picks,
+Circle/Esc closes it. Left/Right still step values; L1/R1 (Q/W, Page Up/Down)
+or Left/Right on the bar switch pages. Button labels are now centred in the
+pills (the quit popup too). Restart-pending and environment notes sit in the
+row's empty left side. `GT5P_SETTINGS_UI_ALPHA` now sets how far the scene
+around the popups is dimmed (default 186, as the game).
+
+Checks: `settings_test.ps1` (updated for pages, adds a shot with a list
+open) and `-Legacy`, `quit_confirm.ps1` pass; shots at 720p and 1080p.
+
 ## Phase 115 - Settings page in the game's own style; Escape asks before quitting (2026-10-22)
 
 The user asked for the page to look exactly like an in-game menu, and for a

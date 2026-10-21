@@ -99,8 +99,13 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: game-style settings page; Escape asks (Phase 115).** The page
-copies the game's Options screen and pill buttons, measured from 1080p
+**Latest: settings page as a game settings popup (Phase 116).** Copies the
+game's "Steering Settings" popup (value boxes, drop-down buttons and lists),
+pages switched with L1/R1. `settings_test.ps1` presses Page Down to reach
+the Shaders page.
+
+**Game-style settings page; Escape asks (Phase 115).** The page
+copied the game's Options screen and pill buttons, measured from 1080p
 shots; Escape shows a copy of its Confirmation popup ("Quit Gran Turismo 5
 Prologue?", `GT5P_ESC_CONFIRM=0` closes at once). Test:
 `scripts/test/quit_confirm.ps1`.

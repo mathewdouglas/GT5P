@@ -64,7 +64,8 @@ namespace {
 
 /* CELL_PAD_CTRL_* (cellPad.h) */
 const uint32_t kSelect = 1u << 0, kUp = 1u << 4, kRight = 1u << 5, kDown = 1u << 6, kLeft = 1u << 7,
-               kCircle = 1u << 13, kCross = 1u << 14, kPs = 1u << 16;
+               kCircle = 1u << 13, kCross = 1u << 14, kPs = 1u << 16,
+               kL1 = 1u << 10, kR1 = 1u << 11;
 
 struct Choice { int value; const wchar_t* label; };
 
@@ -103,7 +104,7 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.vsync ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.vsync = v != 0; },
           [](int v) { rsx_d3d12_set_present_sync(v ? 1 : 0); } },
-        { L"VIDEO", L"Shader cache",
+        { L"SHADERS", L"Shader cache",
           L"Keep compiled shaders in the shadercache folder, so a screen seen before does not "
           L"stutter while they are rebuilt.",
           "RSX_SHADER_CACHE", kOnOff,
@@ -115,27 +116,27 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.shader_indicator ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_indicator = v != 0; },
           [](int v) { gt5p_shader_indicator_enable(v); } },
-        { L"VIDEO", L"Background shader compilation",
+        { L"SHADERS", L"Background shader compilation",
           L"Build new shaders on background threads, all at once, instead of stopping the "
           L"picture to build them one by one. A new screen shows at once, its last details a "
           L"moment later. Needs the shader cache.",
           "RSX_SHADER_ASYNC", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_precompile ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_precompile = v != 0; }, nullptr },
-        { L"VIDEO", L"Preload known shaders",
+        { L"SHADERS", L"Preload known shaders",
           L"Prepare learned menu, then race pipelines while the game starts and the movie "
           L"plays. Live draws take priority. First visits still learn. Needs shader cache "
           L"and background pipelines; uses more memory.",
           "RSX_SHADER_WARMUP", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_warmup ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_warmup = v != 0; }, nullptr },
-        { L"VIDEO", L"Background pipeline creation",
+        { L"SHADERS", L"Background pipeline creation",
           L"Build driver pipelines on a background worker to reduce render stalls. "
           L"First-seen details can appear a moment later while preparation finishes.",
           "RSX_PSO_ASYNC", kOnOff,
           [](const Gt5pSettings& s) { return s.pipeline_async ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.pipeline_async = v != 0; }, nullptr },
-        { L"VIDEO", L"Prepare race pipelines",
+        { L"SHADERS", L"Prepare race pipelines",
           L"Prepare the race pipelines learned on earlier visits during loading. "
           L"First visits can still compile new states. Needs background pipeline creation "
           L"and shader cache; may extend loading and use more memory.",
@@ -195,24 +196,32 @@ const std::vector<Item>& items()
 
 /* ---- layout ----
  *
- * The page fills the screen like the game's own Options screen, and the quit
- * question copies its "Confirmation" popup. Units are 1280 x 720 (the
+ * The page is one of the game's settings popups (its "Steering Settings"
+ * dialog), and the quit question its "Confirmation" popup: a flat grey-28
+ * panel over the dimmed scene, a centred title, rows of a right-aligned label,
+ * a black value box with a grey underline and a square drop-down button (red
+ * ring on the selected row), dotted rules between rows, and pill buttons
+ * between two grey-76 rules. Sections are pages, switched with L1/R1 (Q/W,
+ * Page Up/Down) or on the bar under the title. Units are 1280 x 720 (the
  * backbuffer's pixels over 1.5 at 1080p); sizes and greys were measured from
- * the game's 1080p screens (Phase 115). VIDEO is the left column, the other
- * sections the right; the pill buttons sit between two rules at the bottom. */
+ * the game's screens (Phases 115-116). */
 const int kW = 1280, kH = 720;
-const int kColX[2] = { 91, 648 }, kColW = 541;
-const int kTop = 158, kBarH = 28, kRowH = 27, kValOff = 330;
-const int kBtnW = 157, kBtnH = 37, kBtnY = 581, kBtnGap = 16;
-
-int column_of(const wchar_t* section) { return wcscmp(section, L"VIDEO") ? 1 : 0; }
+const int kPx0 = 250, kPx1 = 1030, kPy0 = 84, kPy1 = 640;     /* the panel */
+const int kBarY = 124, kBarH = 30, kRule1 = 168;              /* section bar, rule under it */
+const int kRowY = 186, kRowH = 54;                            /* first row, pitch */
+const int kFieldX = 650, kFieldW = 250, kFieldH = 32, kDropW = 33;
+const int kHelpY = 468, kRule2 = 536;
+const int kBtnW = 157, kBtnH = 37, kBtnY = 556, kBtnGap = 16;
 
 HWND s_game, s_wnd;
 bool s_open;
 bool s_overlay;                 /* drawn into the game's picture (this open) */
 double s_scale = 1;             /* overlay: backbuffer pixels per layout unit */
 int s_ox, s_oy;                 /* overlay: its top left in the backbuffer */
-int s_sel;
+int s_sel;                      /* row: 0 the section bar, then items, then buttons */
+int s_section;                  /* the page shown */
+bool s_drop;                    /* the selected item's list is open */
+int s_drop_sel;                 /* the highlighted choice in it */
 Gt5pSettings s_edit;   /* what the page shows and saves */
 Gt5pSettings s_boot;   /* the file as this run started with it */
 std::wstring s_status;
@@ -220,7 +229,7 @@ bool s_quit;                    /* the quit question is up */
 int s_quit_sel;                 /* 0 Cancel, 1 OK */
 volatile LONG s_quit_req;       /* Escape pressed in the game window */
 
-enum { kRowRestart = -1, kRowClose = -2 };
+enum { kRowRestart = -1, kRowClose = -2, kRowHead = -3 };
 
 bool legacy_ui_flag()
 {
@@ -237,39 +246,43 @@ bool restart_pending()
     return false;
 }
 
-/* Rows in order: the items, then the buttons ("Restart" when needed, "Close"). */
+/* The sections, in the order they first appear in items(). */
+const std::vector<const wchar_t*>& sections()
+{
+    static std::vector<const wchar_t*> v;
+    if (v.empty())
+        for (const Item& it : items()) {
+            bool seen = false;
+            for (const wchar_t* s : v) seen |= !wcscmp(s, it.section);
+            if (!seen) v.push_back(it.section);
+        }
+    return v;
+}
+
+/* Rows in order: the section bar, this page's items, then the buttons
+ * ("Restart" when needed, "Close"). */
 std::vector<int> rows()
 {
-    std::vector<int> r;
-    for (int i = 0; i < (int)items().size(); i++) r.push_back(i);
+    std::vector<int> r = { kRowHead };
+    const wchar_t* sec = sections()[s_section];
+    for (int i = 0; i < (int)items().size(); i++) if (!wcscmp(items()[i].section, sec)) r.push_back(i);
     if (restart_pending()) r.push_back(kRowRestart);
     r.push_back(kRowClose);
     return r;
 }
 
-/* Where each row sits; `head` is set on a row that starts a section (its bar
- * is drawn above it). Buttons are side by side, centred. */
-struct Slot { int x0, x1, y; bool head; };
+/* Where each row sits: items down the panel, buttons side by side, centred. */
+struct Slot { int x0, x1, y; };
 std::vector<Slot> layout(const std::vector<int>& r)
 {
     std::vector<Slot> out;
-    int col_y[2] = { kTop, kTop };
-    const wchar_t* sec[2] = { nullptr, nullptr };
-    int nbtn = 0;
-    for (int id : r) nbtn += id < 0;
+    int nbtn = 0, y = kRowY;
+    for (int id : r) nbtn += id == kRowRestart || id == kRowClose;
     int bx = kW / 2 - (nbtn * kBtnW + (nbtn - 1) * kBtnGap) / 2;
     for (int id : r) {
-        if (id >= 0) {
-            const wchar_t* s = items()[id].section;
-            const int c = column_of(s), x0 = kColX[c];
-            const bool head = s != sec[c];
-            if (head) { if (sec[c]) col_y[c] += 10; sec[c] = s; col_y[c] += kBarH + 4; }
-            out.push_back({ x0, x0 + kColW, col_y[c], head });
-            col_y[c] += kRowH;
-        } else {
-            out.push_back({ bx, bx + kBtnW, kBtnY, false });
-            bx += kBtnW + kBtnGap;
-        }
+        if (id == kRowHead) out.push_back({ kPx0 + 40, kPx1 - 40, kBarY });
+        else if (id >= 0) { out.push_back({ kPx0 + 40, kPx1 - 40, y }); y += kRowH; }
+        else { out.push_back({ bx, bx + kBtnW, kBtnY }); bx += kBtnW + kBtnGap; }
     }
     return out;
 }
@@ -309,6 +322,7 @@ void relaunch()
 }
 
 void set_open(bool open);
+void set_value(int id, int v);
 
 void change(int id, int dir)
 {
@@ -316,7 +330,13 @@ void change(int id, int dir)
     if (id == kRowRestart) { relaunch(); return; }
     const Item& it = items()[id];
     const int n = (int)it.choices.size();
-    const int v = it.choices[(choice_index(it) + dir + n) % n].value;
+    set_value(id, it.choices[(choice_index(it) + dir + n) % n].value);
+}
+
+/* Store an item's new value, apply it when it can be live, and say so. */
+void set_value(int id, int v)
+{
+    const Item& it = items()[id];
     it.set(s_edit, v);
     const bool over = gt5p_settings_overridden(it.env);
     if (!gt5p_settings_enabled()) s_status = L"GT5P_NO_SETTINGS is set: changes are not saved.";
@@ -331,7 +351,6 @@ void change(int id, int dir)
 
 /* The clear parts of a popup or tag; push_image paints them black, then white. */
 COLORREF kKey = RGB(255, 0, 255);
-int page_alpha();
 double s_paint_scale = 1;       /* device pixels per unit while painting */
 
 COLORREF grey(int v) { return RGB(v, v, v); }
@@ -422,152 +441,225 @@ void cursor(HDC dc, int x, int y)
     SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(b); DeleteObject(pen);
 }
 
-/* A section bar like the Options screen's "General": rules of grey 70 above
- * and below a dark gradient, a knob at each end, the title centred. */
-void section_bar(HDC dc, int x0, int x1, int y, const wchar_t* title)
+/* Text centred in a box, both ways (the button labels). */
+void text_in(HDC dc, HFONT f, int x0, int y0, int x1, int y1, COLORREF c, const wchar_t* s, UINT fmt = DT_CENTER)
 {
-    static HFONT f = font(19, FW_SEMIBOLD);
-    fill(dc, x0, y, x1, y + 1, grey(70));
+    HGDIOBJ o = SelectObject(dc, f);
+    SetTextColor(dc, c); SetTextAlign(dc, TA_LEFT | TA_TOP);
+    RECT r = { x0, y0, x1, y1 };
+    DrawTextW(dc, s, -1, &r, fmt | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(dc, o);
+}
+
+/* A pill button with its label. */
+void button(HDC dc, int x0, int y, const wchar_t* label, bool focused)
+{
+    static HFONT f = font(21, FW_NORMAL);
+    pill(dc, x0, y, x0 + kBtnW, y + kBtnH, focused);
+    text_in(dc, f, x0, y, x0 + kBtnW, y + kBtnH - 2, grey(232), label);
+}
+
+/* The popup's frame: the scene dimmed around it (key colour), a black edge,
+ * flat grey 28, and the dark header gradient at its top. */
+void panel(HDC dc, int x0, int y0, int x1, int y1)
+{
+    fill(dc, 0, 0, kW, kH, kKey);
+    fill(dc, x0 - 1, y0 - 1, x1 + 1, y1 + 1, grey(0));
+    fill(dc, x0, y0, x1, y1, grey(28));
+    vgrad(dc, x0, y0, x1, y0 + 26, [](double t) {
+        return t < 0.04 ? RGB(45, 45, 48) : t < 0.1 ? grey(27) : t < 0.3 ? grey(lerp(9, 4, (t - 0.1) / 0.2))
+                                                                          : grey(lerp(4, 28, (t - 0.3) / 0.7)); });
+}
+
+/* A section bar like the Options screen's "General", with the L1 and R1
+ * knobs that switch pages; red rules when it is the selected row. */
+void section_bar(HDC dc, int x0, int x1, int y, const wchar_t* title, bool sel)
+{
+    static HFONT f = font(19, FW_SEMIBOLD), fk = font(9, FW_BOLD);
+    fill(dc, x0, y, x1, y + 1, sel ? RGB(168, 0, 0) : grey(70));
     vgrad(dc, x0, y + 1, x1, y + kBarH - 1, [](double t) { return grey(lerp(3, 34, t)); });
-    fill(dc, x0, y + kBarH - 1, x1, y + kBarH, grey(70));
+    fill(dc, x0, y + kBarH - 1, x1, y + kBarH, sel ? RGB(168, 0, 0) : grey(70));
     for (int k = 0; k < 2; k++) {
         const int cx = k ? x1 - 22 : x0 + 22, cy = y + kBarH / 2;
-        stadium(dc, cx - 8, cy - 8, cx + 8, cy + 8, [](double t) { return grey(lerp(70, 18, t)); });
-        stadium(dc, cx - 6.5, cy - 6.5, cx + 6.5, cy + 6.5, [](double t) { return grey(lerp(14, 44, t)); });
+        stadium(dc, cx - 10, cy - 10, cx + 10, cy + 10, [](double t) { return grey(lerp(80, 18, t)); });
+        stadium(dc, cx - 8.5, cy - 8.5, cx + 8.5, cy + 8.5, [](double t) { return grey(lerp(14, 44, t)); });
+        text_in(dc, fk, cx - 10, cy - 10, cx + 10, cy + 10, grey(170), k ? L"R1" : L"L1");
     }
     std::wstring s = title;
-    for (auto& c : s) c = (wchar_t)(c == L'_' ? L' ' : c);
-    /* "VIDEO" -> "Video": the game titles its bars in mixed case. */
-    for (size_t i = 1; i < s.size(); i++) if (s[i - 1] != L' ') s[i] = (wchar_t)towlower(s[i]);
-    text(dc, f, (x0 + x1) / 2, y + 2, grey(180), s, TA_CENTER);
+    for (size_t i = 1; i < s.size(); i++) s[i] = (wchar_t)towlower(s[i]);   /* VIDEO -> Video */
+    text_in(dc, f, x0, y, x1, y + kBarH - 1, grey(180), s.c_str());
 }
 
-/* A button glyph like the game's: a dark disc with a light rim and the
- * symbol, for the prompts at the top right. */
-void button_glyph(HDC dc, int cx, int cy, bool cross)
+/* The square drop-down button: black edge (red ring, selected), glass face,
+ * white triangle. */
+void drop_button(HDC dc, int x, int y, bool sel)
 {
-    stadium(dc, cx - 12, cy - 12, cx + 12, cy + 12, [](double t) { return grey(lerp(120, 50, t)); });
-    stadium(dc, cx - 10.5, cy - 10.5, cx + 10.5, cy + 10.5, [](double t) { return grey(lerp(10, 40, t)); });
-    HPEN p = CreatePen(PS_SOLID, 2, cross ? RGB(110, 140, 220) : RGB(230, 90, 90));
-    HGDIOBJ op = SelectObject(dc, p), ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    if (cross) { MoveToEx(dc, cx - 6, cy - 6, NULL); LineTo(dc, cx + 6, cy + 6);
-                 MoveToEx(dc, cx + 6, cy - 6, NULL); LineTo(dc, cx - 6, cy + 6); }
-    else Ellipse(dc, cx - 6, cy - 6, cx + 7, cy + 7);
-    SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(p);
+    const int s = kDropW;
+    fill(dc, x, y, x + s, y + s, sel ? grey(66) : grey(5));
+    fill(dc, x + 1, y + 1, x + s - 1, y + s - 1, sel ? RGB(168, 0, 0) : grey(0));
+    vgrad(dc, x + 3, y + 3, x + s - 3, y + s - 3, [](double t) {
+        if (t < 0.5) { const double u = t / 0.5; return RGB(lerp(123, 74, u), lerp(121, 73, u), lerp(132, 74, u)); }
+        const double u = (t - 0.5) / 0.5;
+        return grey(u < 0.6 ? lerp(10, 3, u / 0.6) : lerp(3, 38, (u - 0.6) / 0.4)); });
+    POINT tri[] = { {x + s / 2 - 7, y + s / 2 - 3}, {x + s / 2 + 7, y + s / 2 - 3}, {x + s / 2, y + s / 2 + 5} };
+    HBRUSH b = CreateSolidBrush(grey(231)); HPEN p = CreatePen(PS_SOLID, 1, grey(231));
+    HGDIOBJ ob = SelectObject(dc, b), op = SelectObject(dc, p);
+    Polygon(dc, tri, 3);
+    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(b); DeleteObject(p);
 }
 
-/* The page, after the game's Options screen. */
+/* The open list, over the rows: light grey entries, the highlighted one a
+ * pale blue gradient, a dash before the current value. Placed so the
+ * current value sits on the value box. */
+const int kDropItemH = 38;
+int drop_top(int row_y, int cur, int n)
+{
+    int y = row_y - 3 - cur * kDropItemH;
+    if (y + n * kDropItemH > kRule2) y = kRule2 - n * kDropItemH;
+    if (y < kRule1) y = kRule1;
+    return y;
+}
+void drop_list(HDC dc, const Item& it, int row_y)
+{
+    static HFONT f = font(19, FW_NORMAL);
+    const int n = (int)it.choices.size(), cur = choice_index(it);
+    const int y0 = drop_top(row_y, cur, n);
+    const int x0 = kFieldX, x1 = kFieldX + kFieldW;
+    fill(dc, x0 + 3, y0 + 3, x1 + 3, y0 + n * kDropItemH + 3, grey(14));   /* shadow */
+    for (int i = 0; i < n; i++) {
+        const int y = y0 + i * kDropItemH;
+        if (i == s_drop_sel)
+            vgrad(dc, x0, y, x1, y + kDropItemH, [](double t) {
+                return RGB(lerp(154, 222, t), lerp(181, 244, t), lerp(206, 250, t)); });
+        else fill(dc, x0, y, x1, y + kDropItemH, grey(204));
+        fill(dc, x0, y + kDropItemH - 1, x1, y + kDropItemH, grey(127));
+        if (i == cur) fill(dc, x0 + 13, y + kDropItemH / 2, x0 + 20, y + kDropItemH / 2 + 2, grey(115));
+        text_in(dc, f, x0 + 30, y, x1 - 8, y + kDropItemH - 2, grey(51), it.choices[i].label, DT_LEFT);
+    }
+}
+
+/* The page: one of the game's settings popups. */
 void paint(HDC dc)
 {
-    static HFONT fHdrB = font(17, FW_BOLD), fHdrL = font(17, FW_LIGHT), fTitle = font(66, FW_NORMAL),
-                 fPrompt = font(21, FW_NORMAL), fRow = font(17, FW_NORMAL), fTag = font(12, FW_SEMIBOLD),
-                 fHelp = font(16, FW_NORMAL), fBtn = font(22, FW_NORMAL), fStatus = font(14, FW_NORMAL);
+    static HFONT fTitle = font(22, FW_NORMAL), fRow = font(19, FW_NORMAL), fTag = font(12, FW_SEMIBOLD),
+                 fHelp = font(15, FW_NORMAL), fStatus = font(13, FW_NORMAL);
     SetBkMode(dc, TRANSPARENT);
-    /* Black, lifting to grey 24 over the bottom fifth. A translucent page
-     * (GT5P_SETTINGS_UI_ALPHA) paints the black as the key, at that alpha. */
-    fill(dc, 0, 0, kW, 580, s_overlay && page_alpha() < 255 ? kKey : grey(0));
-    vgrad(dc, 0, 580, kW, kH, [](double t) { return grey(lerp(0, 24, t)); });
-
-    /* Header, title and its rule. */
-    { SIZE a, b; HGDIOBJ o = SelectObject(dc, fHdrB);
-      GetTextExtentPoint32W(dc, L"GRAN TURISMO 5 ", 15, &a); SelectObject(dc, fHdrL);
-      GetTextExtentPoint32W(dc, L"Prologue ", 9, &b); SelectObject(dc, o);
-      text(dc, fHdrB, 69, 42, grey(132), L"GRAN TURISMO 5 ");
-      text(dc, fHdrL, 69 + a.cx, 42, grey(132), L"Prologue ");
-      text(dc, fHdrB, 69 + a.cx + b.cx, 42, grey(132), L"spec III"); }
-    text(dc, fTitle, 99, 62, RGB(62, 64, 68), L"Settings");
-    fill(dc, 64, 130, 1216, 131, grey(180));
-    /* Prompts, top right. */
-    button_glyph(dc, 960, 42, true);  text(dc, fPrompt, 980, 29, grey(212), L"Change");
-    button_glyph(dc, 1090, 42, false); text(dc, fPrompt, 1110, 29, grey(212), L"Back");
-    /* Dotted rule between the columns, as between the Options panels. */
-    for (int y = 158; y < 540; y += 7) fill(dc, 640, y, 641, y + 2, grey(74));
+    panel(dc, kPx0, kPy0, kPx1, kPy1);
+    text_in(dc, fTitle, kPx0, kPy0 + 4, kPx1, kPy0 + 34, grey(178), L"PC Settings");
 
     const std::vector<int> r = rows();
     const std::vector<Slot> sl = layout(r);
     if (s_sel >= (int)r.size()) s_sel = (int)r.size() - 1;
+    fill(dc, kPx0, kRule1, kPx1, kRule1 + 1, grey(76));
+    fill(dc, kPx0, kRule2, kPx1, kRule2 + 1, grey(76));
+    int drop_row = -1;
     for (size_t i = 0; i < r.size(); i++) {
-        const int id = r[i], top = sl[i].y, x0 = sl[i].x0, x1 = sl[i].x1, vx = x0 + kValOff;
+        const int id = r[i], y = sl[i].y;
         const bool sel = (int)i == s_sel;
+        if (id == kRowHead) { section_bar(dc, sl[i].x0, sl[i].x1, y, sections()[s_section], sel); continue; }
         if (id < 0) {
-            pill(dc, x0, top, x1, top + kBtnH, sel);
-            text(dc, fBtn, (x0 + x1) / 2, top + 5, grey(232), id == kRowRestart ? L"Restart" : L"Close", TA_CENTER);
-            if (sel) cursor(dc, (x0 + x1) / 2 + 2, top + 17);
+            button(dc, sl[i].x0, y, id == kRowRestart ? L"Restart" : L"Close", sel);
+            if (sel) cursor(dc, sl[i].x0 + kBtnW / 2 + 2, y + 18);
             continue;
         }
-        if (sl[i].head) section_bar(dc, x0, x1, top - kBarH - 4, items()[id].section);
-        if (sel) pill(dc, x0 + 4, top + 1, x1 - 4, top + kRowH - 1, true);
         const Item& it = items()[id];
         const bool over = gt5p_settings_overridden(it.env);
         const bool later = !it.apply && !over && it.get(s_edit) != it.get(s_boot);
-        const COLORREF lc = over ? grey(96) : sel ? grey(240) : grey(160);
-        text(dc, fRow, x0 + 24, top + 3, lc, it.label);
-        const std::wstring val = it.choices[choice_index(it)].label;
-        text(dc, fRow, (vx + x1 - 20) / 2, top + 3, over ? grey(96) : grey(232), val, TA_CENTER);
-        const COLORREF ac = sel ? grey(235) : grey(90);
-        text(dc, fRow, vx, top + 3, ac, L"‹");
-        text(dc, fRow, x1 - 20, top + 3, ac, L"›", TA_RIGHT);
-        if (later) text(dc, fTag, vx - 10, top + 7, RGB(237, 60, 60), L"after restart", TA_RIGHT);
-        else if (over) text(dc, fTag, vx - 10, top + 7, grey(110), L"set by " + widen(it.env), TA_RIGHT);
+        /* A dotted rule under every row but the last. */
+        if (i + 1 < r.size() && r[i + 1] >= 0)
+            for (int x = kPx0 + 26; x < kPx1 - 26; x += 7)
+                fill(dc, x, y + kFieldH + 11, x + 2, y + kFieldH + 12, grey(96));
+        text_in(dc, fRow, kPx0 + 20, y, kFieldX - 24, y + kFieldH - 2, over ? grey(100) : grey(190), it.label, DT_RIGHT);
+        fill(dc, kFieldX, y, kFieldX + kFieldW, y + kFieldH, RGB(0, 4, 0));
+        fill(dc, kFieldX, y + kFieldH - 1, kFieldX + kFieldW, y + kFieldH, RGB(99, 101, 107));
+        text_in(dc, fRow, kFieldX + 14, y, kFieldX + kFieldW - 8, y + kFieldH - 2, over ? grey(100) : grey(204),
+                it.choices[choice_index(it)].label, DT_LEFT);
+        /* Notes sit in the row's empty left side. */
+        if (later)
+            text_in(dc, fTag, kPx0 + 30, y, kFieldX, y + kFieldH - 2, RGB(237, 60, 60), L"after restart", DT_LEFT);
+        else if (over)
+            text_in(dc, fTag, kPx0 + 30, y, kFieldX, y + kFieldH - 2, grey(110),
+                    (L"set by " + widen(it.env)).c_str(), DT_LEFT);
+        drop_button(dc, kFieldX + kFieldW + 12, y, sel);
+        if (sel && !s_drop) cursor(dc, kFieldX + kFieldW + 12 + kDropW / 2 + 1, y + kDropW / 2 + 2);
+        if (sel && s_drop) drop_row = (int)i;
     }
 
-    /* The selected item's help, centred like the Options descriptions. */
+    /* The selected item's help. */
     if (s_sel >= 0 && s_sel < (int)r.size() && r[s_sel] >= 0) {
-        RECT rc = { 160, 520, kW - 160, 568 };
+        RECT rc = { kPx0 + 40, kHelpY, kPx1 - 40, kRule2 - 6 };
         HGDIOBJ o = SelectObject(dc, fHelp);
-        SetTextColor(dc, grey(160)); SetTextAlign(dc, TA_LEFT | TA_TOP);
+        SetTextColor(dc, grey(150)); SetTextAlign(dc, TA_LEFT | TA_TOP);
         DrawTextW(dc, items()[r[s_sel]].help, -1, &rc, DT_WORDBREAK | DT_NOPREFIX | DT_CENTER);
         SelectObject(dc, o);
+    } else if (s_sel == 0) {
+        text_in(dc, fHelp, kPx0, kHelpY, kPx1, kHelpY + 24, grey(150), L"L1 / R1, or Left / Right here: the other settings pages");
     }
-    /* Buttons between the game's two bottom rules. */
-    fill(dc, 91, 574, 1189, 575, grey(70));
-    fill(dc, 64, 626, 1216, 627, grey(180));
-    if (!s_status.empty()) text(dc, fStatus, kW / 2, 640, grey(140), s_status, TA_CENTER);
+    if (!s_status.empty()) text_in(dc, fStatus, kPx0, kBtnY + kBtnH + 4, kPx1, kPy1 - 2, grey(130), s_status.c_str());
+    if (drop_row >= 0) {
+        const Item& it = items()[r[drop_row]];
+        drop_list(dc, it, sl[drop_row].y);
+        const int y0 = drop_top(sl[drop_row].y, choice_index(it), (int)it.choices.size());
+        cursor(dc, kFieldX + kFieldW - 70, y0 + s_drop_sel * kDropItemH + 18);
+    }
 }
 
-/* The quit question, a copy of the game's "Confirmation" popup: the scene
- * dimmed (key colour), a flat grey-28 panel with a dark header gradient,
- * the question, a rule, Cancel and OK. */
+/* The quit question, a copy of the game's "Confirmation" popup. */
 const int kQx0 = 360, kQx1 = 920, kQy0 = 175, kQy1 = 547, kQbtnY = 480;
 const int kQbtnX[2] = { 475, 648 };
 void paint_quit(HDC dc)
 {
-    static HFONT fTitle = font(23, FW_NORMAL), fMsg = font(23, FW_NORMAL), fBtn = font(24, FW_NORMAL);
+    static HFONT fTitle = font(22, FW_NORMAL), fMsg = font(22, FW_NORMAL);
     SetBkMode(dc, TRANSPARENT);
-    fill(dc, 0, 0, kW, kH, kKey);
-    fill(dc, kQx0 - 1, kQy0 - 1, kQx1 + 1, kQy1 + 1, grey(0));
-    fill(dc, kQx0, kQy0, kQx1, kQy1, grey(28));
-    vgrad(dc, kQx0, kQy0, kQx1, kQy0 + 26, [](double t) {
-        return t < 0.04 ? RGB(45, 45, 48) : t < 0.1 ? grey(27) : t < 0.3 ? grey(lerp(9, 4, (t - 0.1) / 0.2))
-                                                                          : grey(lerp(4, 28, (t - 0.3) / 0.7)); });
-    text(dc, fTitle, (kQx0 + kQx1) / 2, kQy0 + 6, grey(222), L"Confirmation", TA_CENTER);
-    text(dc, fMsg, (kQx0 + kQx1) / 2, 307, grey(236), L"Quit Gran Turismo 5 Prologue?", TA_CENTER);
+    panel(dc, kQx0, kQy0, kQx1, kQy1);
+    text_in(dc, fTitle, kQx0, kQy0 + 4, kQx1, kQy0 + 34, grey(178), L"Confirmation");
+    text_in(dc, fMsg, kQx0, 300, kQx1, 342, grey(236), L"Quit Gran Turismo 5 Prologue?");
     fill(dc, kQx0, 448, kQx1, 449, grey(76));
-    static const wchar_t* const label[2] = { L"Cancel", L"OK" };
-    for (int k = 0; k < 2; k++) {
-        const int x0 = kQbtnX[k], x1 = x0 + kBtnW;
-        pill(dc, x0, kQbtnY, x1, kQbtnY + kBtnH, s_quit_sel == k);
-        text(dc, fBtn, (x0 + x1) / 2, kQbtnY + 5, grey(232), label[k], TA_CENTER);
-    }
+    button(dc, kQbtnX[0], kQbtnY, L"Cancel", s_quit_sel == 0);
+    button(dc, kQbtnX[1], kQbtnY, L"OK", s_quit_sel == 1);
     cursor(dc, kQbtnX[s_quit_sel] + kBtnW / 2 + 2, kQbtnY + 18);
 }
 
 void activate(int dir);
+void press();
+void switch_section(int dir);
+void drop_pick();
 
-/* A click at layout position (mx, my): select the row, and change its value
- * when the click is on the value (left half back, right half on). */
+/* A click at layout position (mx, my). With the list open: pick the entry
+ * under it, or close the list. Otherwise: the section bar's knobs switch
+ * pages, a value box or drop-down button opens its list, a button presses. */
 void click(int mx, int my)
 {
     const std::vector<int> r = rows();
     const std::vector<Slot> sl = layout(r);
+    if (s_drop) {
+        if (s_sel >= 0 && s_sel < (int)r.size() && r[s_sel] >= 0) {
+            const Item& it = items()[r[s_sel]];
+            const int n = (int)it.choices.size(), y0 = drop_top(sl[s_sel].y, choice_index(it), n);
+            if (mx >= kFieldX && mx < kFieldX + kFieldW && my >= y0 && my < y0 + n * kDropItemH) {
+                s_drop_sel = (my - y0) / kDropItemH;
+                drop_pick();
+                return;
+            }
+        }
+        s_drop = false;
+        return;
+    }
     for (size_t i = 0; i < r.size(); i++) {
-        const int h = r[i] < 0 ? kBtnH : kRowH;
-        if (my >= sl[i].y && my < sl[i].y + h && mx >= sl[i].x0 && mx < sl[i].x1) {
+        const int id = r[i], y = sl[i].y;
+        if (id == kRowHead) {
+            if (my >= y && my < y + kBarH && mx >= sl[i].x0 && mx < sl[i].x1) {
+                s_sel = 0;
+                if (mx < sl[i].x0 + 60) switch_section(-1);
+                else if (mx >= sl[i].x1 - 60) switch_section(+1);
+                return;
+            }
+        } else if (id < 0) {
+            if (my >= y && my < y + kBtnH && mx >= sl[i].x0 && mx < sl[i].x1) { s_sel = (int)i; press(); return; }
+        } else if (my >= y && my < y + kFieldH && mx >= kPx0 && mx < kFieldX + kFieldW + 12 + kDropW) {
             s_sel = (int)i;
-            const int vx = sl[i].x0 + kValOff;
-            if (r[i] < 0) change(r[i], +1);
-            else if (mx >= vx) activate(mx < (vx + sl[i].x1 - 20) / 2 ? -1 : +1);
-            break;
+            if (mx >= kFieldX) press();
+            return;
         }
     }
 }
@@ -633,21 +725,19 @@ void push_image(int lw, int lh, void (*painter)(HDC), bool corner, int dim)
     DeleteObject(bm[0]); DeleteDC(dc);
 }
 
-int page_alpha();
-
-/* GT5P_SETTINGS_UI_ALPHA: the page's opacity, 0-255 (default 255, opaque as
- * the game's screens; lower lets the scene show through). */
-int page_alpha()
+/* GT5P_SETTINGS_UI_ALPHA: how far the scene around the popups is dimmed,
+ * 0-255 (default 186: the game's own popups leave it at about 27%). */
+int dim_alpha()
 {
     static int a = -1;
-    if (a < 0) { const char* e = getenv("GT5P_SETTINGS_UI_ALPHA"); a = e ? atoi(e) & 255 : 255; }
+    if (a < 0) { const char* e = getenv("GT5P_SETTINGS_UI_ALPHA"); a = e ? atoi(e) & 255 : 186; }
     return a;
 }
 
 void render_overlay()
 {
-    if (s_quit) { push_image(kW, kH, paint_quit, false, 186); return; }   /* scene at ~27%, as measured */
-    if (s_open && s_overlay) push_image(kW, kH, paint, false, page_alpha());
+    if (s_quit) push_image(kW, kH, paint_quit, false, dim_alpha());
+    else if (s_open && s_overlay) push_image(kW, kH, paint, false, dim_alpha());
 }
 
 /* The game's Options screen: a tag in its bottom right saying the port's
@@ -748,7 +838,8 @@ void set_open(bool open)
     else s_release_wait = true;
     if (open) {
         s_edit = gt5p_settings_file();
-        s_sel = 0;
+        s_sel = 1;          /* the page's first item */
+        s_drop = false;
         s_status = gt5p_settings_enabled() ? L"" : L"GT5P_NO_SETTINGS is set: changes are not saved.";
         s_overlay = !legacy_ui_flag() && rsx_d3d12_overlay_available();
         if (s_overlay) { render_overlay(); return; }
@@ -780,40 +871,82 @@ void quit_choose(int k)
     else set_quit(false);
 }
 
-/* Up/Down through the rows. The buttons count as one stop: from the items
- * Down lands on the first button, from a button Down wraps to the top and
- * Up returns to the last item. */
+/* The first button's row (the buttons are last). */
+int first_button(const std::vector<int>& r)
+{
+    int nb = 0;
+    for (int id : r) nb += id == kRowRestart || id == kRowClose;
+    return (int)r.size() - nb;
+}
+
+/* Up/Down through the rows: the section bar, the items, the buttons as one
+ * stop. From a button Down wraps to the bar and Up returns to the last item.
+ * With the list open, through its entries. */
 void move_sel(int d)
 {
+    if (s_drop) {
+        const std::vector<int> r = rows();
+        const int n = (int)items()[r[s_sel]].choices.size();
+        s_drop_sel = (s_drop_sel + d + n) % n;
+        return;
+    }
     const std::vector<int> r = rows();
-    const int n = (int)r.size();
-    int nb = 0;
-    for (int id : r) nb += id < 0;
-    const int first_btn = n - nb;
-    if (s_sel >= first_btn) s_sel = d > 0 ? 0 : first_btn - 1;
+    const int n = (int)r.size(), fb = first_button(r);
+    if (s_sel >= fb) s_sel = d > 0 ? 0 : fb - 1;
     else s_sel = (s_sel + d + n) % n;
-    if (s_sel > first_btn) s_sel = first_btn;
+    if (s_sel > fb) s_sel = fb;
 }
 
-/* Left/Right: change an item's value, or move between the buttons. */
+/* L1/R1: the previous or next page. */
+void switch_section(int dir)
+{
+    const int n = (int)sections().size();
+    s_section = (s_section + dir + n) % n;
+    s_drop = false;
+    if (s_sel != 0) s_sel = 1;
+}
+
+/* Left/Right: on the bar, switch pages; on an item, step its value; between
+ * the buttons, move. Nothing while the list is open. */
 void activate(int dir)
 {
+    if (s_drop) return;
     const std::vector<int> r = rows();
     if (s_sel < 0 || s_sel >= (int)r.size()) return;
+    if (r[s_sel] == kRowHead) { switch_section(dir); return; }
     if (r[s_sel] >= 0) { change(r[s_sel], dir); return; }
-    const int n = (int)r.size();
-    int nb = 0;
-    for (int id : r) nb += id < 0;
-    const int first_btn = n - nb;
-    s_sel = first_btn + ((s_sel - first_btn + dir + nb) % nb);
+    const int fb = first_button(r), nb = (int)r.size() - fb;
+    s_sel = fb + ((s_sel - fb + dir + nb) % nb);
 }
 
-/* Cross/Enter: change an item forward, or press a button. */
-void press()
+/* The highlighted list entry becomes the value. */
+void drop_pick()
 {
     const std::vector<int> r = rows();
+    s_drop = false;
+    if (s_sel < 0 || s_sel >= (int)r.size() || r[s_sel] < 0) return;
+    const Item& it = items()[r[s_sel]];
+    if (s_drop_sel >= 0 && s_drop_sel < (int)it.choices.size() && s_drop_sel != choice_index(it))
+        set_value(r[s_sel], it.choices[s_drop_sel].value);
+}
+
+/* Cross/Enter: on an item, open its list (or, open, pick); on the bar, the
+ * next page; on a button, press it. */
+void press()
+{
+    if (s_drop) { drop_pick(); return; }
+    const std::vector<int> r = rows();
     if (s_sel < 0 || s_sel >= (int)r.size()) return;
+    if (r[s_sel] == kRowHead) { switch_section(+1); return; }
+    if (r[s_sel] >= 0) { s_drop = true; s_drop_sel = choice_index(items()[r[s_sel]]); return; }
     change(r[s_sel], +1);
+}
+
+/* Circle/Escape: close the list if it is open, else the page. */
+void back()
+{
+    if (s_drop) s_drop = false;
+    else set_open(false);
 }
 
 LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
@@ -825,7 +958,9 @@ LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
         HBITMAP bm = CreateCompatibleBitmap(dc, kW, kH);
         HGDIOBJ o = SelectObject(mem, bm);
         SetGraphicsMode(mem, GM_ADVANCED);
+        kKey = RGB(0, 0, 0);   /* the window has no scene behind it */
         paint(mem);
+        kKey = RGB(255, 0, 255);
         BitBlt(dc, 0, 0, kW, kH, mem, 0, 0, SRCCOPY);
         SelectObject(mem, o); DeleteObject(bm); DeleteDC(mem);
         EndPaint(h, &ps);
@@ -851,7 +986,10 @@ LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
         case VK_LEFT:  activate(-1); break;
         case VK_RIGHT: activate(+1); break;
         case VK_RETURN: case VK_SPACE: press(); break;
-        case VK_ESCAPE: case VK_F1: case VK_BACK: set_open(false); break;
+        case VK_PRIOR: switch_section(-1); break;
+        case VK_NEXT:  switch_section(+1); break;
+        case VK_ESCAPE: case VK_BACK: back(); break;
+        case VK_F1: set_open(false); break;
         default: return 0;
         }
         redraw();
@@ -943,7 +1081,7 @@ DWORD WINAPI ui_thread(LPVOID)
          * window has the focus, a held arrow repeating. A key already held
          * when either opens (the Escape that asked) is not a press. */
         static const int keys[] = { VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_SPACE,
-                                    VK_ESCAPE, VK_BACK, VK_LBUTTON };
+                                    VK_ESCAPE, VK_BACK, VK_LBUTTON, VK_PRIOR, VK_NEXT, 'Q', 'W' };
         static uint8_t key_was[256];
         static ULONGLONG key_repeat_at;
         const bool modal = s_quit || (s_open && s_overlay);
@@ -987,7 +1125,9 @@ DWORD WINAPI ui_thread(LPVOID)
                 case VK_LEFT:  activate(-1); break;
                 case VK_RIGHT: activate(+1); break;
                 case VK_RETURN: case VK_SPACE: press(); break;
-                case VK_ESCAPE: case VK_BACK: set_open(false); break;
+                case VK_ESCAPE: case VK_BACK: back(); break;
+                case VK_PRIOR: case 'Q': switch_section(-1); break;   /* Q/W: the game's L1/R1 keys */
+                case VK_NEXT:  case 'W': switch_section(+1); break;
                 case VK_LBUTTON: {
                     int lx, ly;
                     if (mouse_units(&lx, &ly)) click(lx, ly);
@@ -1024,7 +1164,9 @@ DWORD WINAPI ui_thread(LPVOID)
             if (act & kLeft) activate(-1);
             if (act & kRight) activate(+1);
             if (act & kCross) press();
-            if (act & kCircle) set_open(false);
+            if (act & kL1) switch_section(-1);
+            if (act & kR1) switch_section(+1);
+            if (act & kCircle) back();
             if (act && s_open) redraw();
         }
         pad_was = pad;
