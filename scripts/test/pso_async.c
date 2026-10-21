@@ -63,6 +63,8 @@ static void pso_touch_file(const char* path){(void)path;}
 static u32 pso_warm_keep_only(const char* index){(void)index;return 0;}
 static void spack_race_begin(void){}
 static void spack_race_end(void){}
+static volatile LONG s_spack_active=1;   /* the menu pack is not under test */
+static void spack_begin(int scope){(void)scope;}
 static int pso_warm_read_recipe(const char* path,PsoWarmRecipe* r){
     if(!strstr(path,"0000000000000222.recipe"))return 0;
     memset(r,0,sizeof *r);r->hash=0x222;r->vs_hash=1;r->ps_hash=2;

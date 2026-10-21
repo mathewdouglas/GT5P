@@ -23,6 +23,20 @@ now judder instead of slowing the race.
 
 Presents per 5 s in normal racing: 199-300 (40-60 FPS).
 
+## Status (Phase 105)
+
+- Step 1 done: `scripts/test/race.ps1 -FrameTest` (60 s on High Speed Ring
+  after the rolling start; FPS, p99, share of intervals over 20 ms, walk
+  per frame). Same-build runs spread widely; compare several.
+- Step 2 done: the walk is CPU work, not parked waits (CPU within 2% of
+  wall time). Walk 12.5 -> 9.8 ms/frame after the method fast path and
+  NOP-loop parks. About 5.6 ms of it is draw recording (uploads ~2 ms,
+  constant snapshots ~1.5 ms); without draws the walk is 4.2 ms and the
+  frame test shows 58.8 FPS, 3.5% late. Next: cheaper draw recording.
+- Step 6 done in Phase 104.
+- Latest frame test: 54.8-55.7 FPS, 13.6-15.4% late, p99 41-45 ms (from
+  51.6-51.9 FPS, 27% late, p99 46-49 ms).
+
 ## Steps, in order
 
 Each step gets an env switch and an A/B measurement before it becomes the default.

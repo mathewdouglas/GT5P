@@ -236,7 +236,13 @@ static int sample_rip(HANDLE th, unsigned long long base, unsigned long long* rv
     CONTEXT c; memset(&c, 0, sizeof c); c.ContextFlags = CONTEXT_FULL;
     BOOL ok = GetThreadContext(th, &c);
     unsigned long long tag = 0;
-    if (ok && (c.Rip < base || c.Rip >= base + 0x10000000ull)) {
+    /* GT5P_SAMPLE_DLL=1: keep a sample that lands in a DLL where it is
+     * (module+offset) instead of unwinding to the executable: frames without
+     * unwind data fall back to a stack guess and named stale return
+     * addresses (the FIFO walker's "present_thread" bucket, Phase 105). */
+    static int dll_raw = -1;
+    if (dll_raw < 0) dll_raw = getenv("GT5P_SAMPLE_DLL") ? 1 : 0;
+    if (ok && !dll_raw && (c.Rip < base || c.Rip >= base + 0x10000000ull)) {
         for (int f = 0; f < 24; f++) {
             DWORD64 ib = 0;
             PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(c.Rip, &ib, NULL);
@@ -307,7 +313,9 @@ static DWORD WINAPI sampler_thread(LPVOID p)
             const double pct = 100.0 * (double)(thread_cpu_100ns(t->h) - t->cpu0) / 1e7 / secs;
             fprintf(stderr, "[ps-sample] round=%d tid=%lu cpu=%.0f%% %u samples, %u buckets, base 0x%llX\n",
                     round, (unsigned long)t->tid, pct, t->total, t->nb, base);
-            for (int r = 0; r < 60; r++) {
+            static int s_ptop = -1;   /* GT5P_SAMPLE_TOP=<n>: buckets printed per thread (60) */
+            if (s_ptop < 0) { const char* e = getenv("GT5P_SAMPLE_TOP"); s_ptop = e && atoi(e) > 0 ? atoi(e) : 60; }
+            for (int r = 0; r < s_ptop; r++) {
                 unsigned best = 0;
                 for (unsigned q = 1; q < t->nb; q++) if (t->b[q].n > t->b[best].n) best = q;
                 if (!t->nb || !t->b[best].n) break;
@@ -730,6 +738,51 @@ static DWORD WINAPI present_thread(LPVOID)
     double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0, c_p_wait = 0;
 /* PS3_TIMELINE also gets each present (P) and FIFO walk (R), with its length. */
 #define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_;     if (g_tl_on && (&acc == &p_pres || &acc == &p_fifo)) ps3_tl_rec(&acc == &p_pres ? 'P' : 'R', 0, (uint32_t)(d_ * 1e6)); } while (0)
+    /* The walk's own CPU time beside its wall time: thread cycles over a
+     * calibrated cycle rate. A walk whose CPU time is well under its wall
+     * time was descheduled or blocked inside the backend; the timeline's R
+     * event carries both (a = CPU us, b = wall us). */
+    double p_fifo_cpu = 0, f_walk = 0, f_walk_cpu = 0;
+    double cyc_per_s = 0;
+    { LARGE_INTEGER a, b; ULONG64 ca = 0, cb = 0;
+      QueryPerformanceCounter(&a); QueryThreadCycleTime(GetCurrentThread(), &ca);
+      do { QueryPerformanceCounter(&b); } while ((double)(b.QuadPart - a.QuadPart) / qf.QuadPart < 0.02);
+      QueryThreadCycleTime(GetCurrentThread(), &cb);
+      cyc_per_s = (double)(cb - ca) / ((double)(b.QuadPart - a.QuadPart) / qf.QuadPart); }
+    /* The cycle query is a system call per walk (3% of the walker when
+     * always on): only when something reads the result. */
+    const bool walk_cpu = prof || getenv("GT5P_FRAME_LOG") != nullptr;
+    auto walk_fifo = [&]() {
+        LARGE_INTEGER a, b; ULONG64 ca = 0, cb = 0;
+        const bool cyc = walk_cpu || g_tl_on;
+        QueryPerformanceCounter(&a); if (cyc) QueryThreadCycleTime(GetCurrentThread(), &ca);
+        cellGcm_rsx_process_fifo();
+        if (cyc) QueryThreadCycleTime(GetCurrentThread(), &cb); QueryPerformanceCounter(&b);
+        const double d = (double)(b.QuadPart - a.QuadPart) / qf.QuadPart;
+        const double cpu = cyc_per_s > 0 ? (double)(cb - ca) / cyc_per_s : 0;
+        p_fifo += d; c_p_fifo += d; p_fifo_cpu += cpu;
+        if (g_tl_on) ps3_tl_rec('R', (uint32_t)(cpu * 1e6), (uint32_t)(d * 1e6));
+        f_walk += d; f_walk_cpu += cpu;
+    };
+    /* GT5P_FRAME_LOG=<path>: one line per presented frame -- wall-clock time
+     * (Unix ms), then the FIFO walk's wall and CPU ms since the previous
+     * present. scripts/test/race.ps1 -FrameTest reads it for frame-time
+     * statistics over its sampling window. */
+    FILE* frame_log = nullptr;
+    if (const char* e = getenv("GT5P_FRAME_LOG")) {
+        frame_log = fopen(e, "w");
+        if (frame_log) setvbuf(frame_log, nullptr, _IOFBF, 1 << 16);
+    }
+    unsigned frame_log_n = 0;
+    auto log_frame = [&]() {
+        if (!frame_log) return;
+        FILETIME ft; GetSystemTimePreciseAsFileTime(&ft);
+        const unsigned long long t = ((unsigned long long)ft.dwHighDateTime << 32 | ft.dwLowDateTime);
+        const double unix_ms = (double)(t - 116444736000000000ull) / 10000.0;
+        fprintf(frame_log, "%.3f,%.3f,%.3f%c", unix_ms, f_walk * 1e3, f_walk_cpu * 1e3, 10);
+        f_walk = f_walk_cpu = 0;
+        if (++frame_log_n % 30 == 0) fflush(frame_log);
+    };
     if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); gt5p_start_shader_indicator(); }
     if (s_startup_ready) {
         if (rsx_ok && !s_rsx_live) {
@@ -791,11 +844,11 @@ static DWORD WINAPI present_thread(LPVOID)
             PROF_T(p_vbl, cellGcmTickVBlank());
             PROF_T(p_flip, cellGcmTickFlip());
             if (rsx_ok && cellGcm_take_flip_pending()) {
-                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
+                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++; log_frame();
                 gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump, c_p_vbl, c_p_flip, c_p_wait);
             }
             if (drain)
-                PROF_T(p_fifo, cellGcm_rsx_process_fifo());
+                walk_fifo();
             next_tick += vbl_period;
             fired++; p_ticks++;
             if (GetTickCount64() - now >= 100) { fired = 240; break; }
@@ -811,10 +864,10 @@ static DWORD WINAPI present_thread(LPVOID)
          * paces the guest to single-digit fps. */
         if (drain) {
             if (cellGcm_take_flip_pending() && rsx_ok) {
-                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
+                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++; log_frame();
                 gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump, c_p_vbl, c_p_flip, c_p_wait);
             }
-            PROF_T(p_fifo, cellGcm_rsx_process_fifo());
+            walk_fifo();
         }
         if (rsx_ok) {
             int closed = 0;
@@ -828,9 +881,9 @@ static DWORD WINAPI present_thread(LPVOID)
             const double gavg = gn ? g_rsx_gpu_ms_sum / gn : 0.0, gmax = g_rsx_gpu_ms_max;
             g_rsx_gpu_ms_sum = 0; g_rsx_gpu_ms_max = 0; g_rsx_gpu_n = 0;
             fprintf(stderr, "[present-prof] 5 s: ticks=%u presents=%u | vblank %.2fs flip %.2fs "
-                            "present %.2fs fifo %.2fs pump %.2fs | gpu %.2f ms avg %.2f max\n",
-                    p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_pump, gavg, gmax);
-            p_vbl = p_flip = p_pres = p_fifo = p_pump = p_wait = 0; p_ticks = p_pres_n = 0;
+                            "present %.2fs fifo %.2fs (cpu %.2fs) pump %.2fs | gpu %.2f ms avg %.2f max\n",
+                    p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_fifo_cpu, p_pump, gavg, gmax);
+            p_vbl = p_flip = p_pres = p_fifo = p_pump = p_wait = p_fifo_cpu = 0; p_ticks = p_pres_n = 0;
             p_last = GetTickCount64();
         }
     }

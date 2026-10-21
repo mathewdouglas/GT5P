@@ -9,6 +9,84 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 105 - Frame-time test, walker CPU split, NOP-loop parks (2026-10-21)
+
+Steps 1-3 of [plan-60fps.md](plan-60fps.md), as the user asked.
+
+**Frame-time test (step 1).** `race.ps1 -FrameTest` drives High Speed Ring
+with a moving car, waits 45 s (past the rolling start), and reads 60 s of
+per-frame records the present thread writes with `GT5P_FRAME_LOG=<csv>`
+(Unix ms, walk wall ms, walk CPU ms). It prints frames, FPS, median, p99,
+max, the share of intervals over 20 ms (a missed vblank) and the walk per
+frame, to `scratch/pv/<tag>.frames.txt`. `-SampleDelay` moves the window. Use
+it as the pass/fail number, not title-bar FPS. Run-to-run spread is wide at
+the same build (51.6-55.5 FPS, 15-30% late): AI cars and crashes change the
+scene. Compare walk ms/frame, which moves far less, and repeat runs.
+
+**Walker CPU split (step 2).** The present thread now times each FIFO walk
+with `QueryThreadCycleTime` as well as wall time (only when F3/`present-prof`,
+the frame log or the timeline is on); the timeline `R` event carries both and
+`tl.py` prints them. Result: the walk is CPU work, within 2% of wall time in
+every run. It is not parked waits. Baseline at this phase's start: 51.6-51.9
+FPS, 27% late, p99 46-49 ms, walk 11.9-12.5 ms/frame. Working set 2.68 GB.
+
+**Walk made cheaper (step 3).**
+
+- *Method fast path* (`GCM_WALK_FAST=0` off). 3D methods on subchannels 0/1
+  with no per-word debug switch set translate their IO address once per
+  1 MB page and read guest memory directly, instead of an IO translation, a
+  dozen switch checks and a `vm_read32` per word. Headers touching
+  `GET_REPORT` keep the general path. Walk 12.5 -> 10.0-10.6 ms/frame;
+  53.4-56.7 FPS, 10-20% late.
+- *NOP-loop parks* (`GCM_NOP_PARK=0` off). `GCM_WALK_STATS` counted 100-160
+  million method headers per 5 s in late race windows, all but ~20M of them
+  `0x00000100`: `NV4097_NO_OPERATION` with no arguments. `GCM_NOPRUN_DBG=1`
+  (new) shows they come in runs of 31, each closed by a JUMP back to the
+  run's start: the SPU jobs park the walker on a 128-byte block (31 NOPs and
+  a JUMP) at a ring's write head and overwrite the block to release it. The
+  walker recognised only a JUMP to itself as a park, so it lapped these
+  blocks ~5,500 times a frame. The JUMP back over an all-NOP block is now a
+  park like the self-JUMP, with the same wake, timeout and stuck rules. NOP
+  headers fell from ~130M to a few hundred per 5 s.
+  The time gained is small (walk 10.2 -> 9.8 ms in a same-build A/B), because
+  a NOP lap is cheap; the real gain is that the walker no longer spins
+  through guest memory the jobs are writing.
+- *Failed: skipping NOP runs.* Scanning a NOP run in one step made the walker
+  lap these blocks fast enough to burn its whole word budget per pass. The
+  circling watchdog then resynced to `put` and dropped the SPU lists: 3 FPS.
+  Removed. Prefetching the FIFO 512 bytes ahead gained nothing; removed.
+- `has_display` scans the frame's draws backward (it scanned all of them
+  forward at every present).
+
+**What the walk is now.** `RSX_PROF` (now also ranks by count) and a
+same-build run with `RSX_VTX_SKIP=1` (every draw dropped) split it: walk
+9.8 -> 4.2 ms/frame without draws, 58.8 FPS, 3.5% late. So **draw recording is
+~5.6 ms of the walk**: `DRAW_INDEX_ARRAY` costs ~2.8 us a call, ~1,800 calls a
+frame. `RSX_VTXSTAT`/`PERF`: uploads ~2 ms/frame (indexed triangles 1,500
+calls/frame, GPU-fetch region setup in `vgpu_finish` 0.32 s per 5 s), per-draw
+constant snapshots (`vp_record_cb`) ~1.5 ms, the rest record bookkeeping.
+Immediate-mode vertex words (0x1500-0x1508, 0x18C0/C4) are the most numerous
+methods (~23M per 5 s) but cheap each. The sampler under-attributes the
+backend here (its draw functions show ~10%); trust the drop test.
+
+**Also in this phase.**
+
+- The resident pipeline limit is 8192 (was 4096): menus keep ~1,450 and the
+  race set ~4,050 more; `race-prewarm` now reports `rejected=0`.
+- Menus and dealerships get their own shader pack,
+  `shadercache/menu-shaders-v1.pack`, loaded at the first script load and again
+  after a race. Second run: 318 shaders read in 0 ms, 538 hits, 0 new.
+- `GT5P_SAMPLE_DLL=1` keeps samples landing in DLLs (no unwind);
+  `GT5P_SAMPLE_TOP` now also applies to per-thread tables.
+- Checks: Acura (24-30 FPS) and Ferrari dealer pages draw with the NOP park;
+  `pso_async.py`, `shader_warmup.py`, `debug_export.ps1` pass.
+
+**Next for 60.** The walker's remaining CPU is draw recording: make
+`vp_record_cb` copy only changed constants, and cut per-draw upload and
+record work. Run in the frame test, the title alone (draws dropped) is
+already at 58.8 FPS with 3.5% late; the render-list jobs (step 4) are the
+other half.
+
 ## Phase 104 - What the memory really is; per-frame buffers sized to use (2026-10-21)
 
 The user asked why the port needs about 5 GB when the PS3 has 512 MB.

@@ -11,6 +11,12 @@
 # -RaceShots <n> saves a window shot every n seconds of sampling; the file
 # times against the HUD race timer show whether game time keeps up with real
 # time (the title advances its clock per frame, so a slow frame rate is slow motion).
+# -FrameTest is the standard frame-time test: it starts sampling 45 s after
+# the grid appears (past the rolling start, which the title runs at 30 FPS),
+# samples 60 s with a shot every 20 s, and writes scratch/pv/<tag>.frames.txt:
+# frames, mean FPS, median/p99/max frame interval, the share of frames later
+# than 20 ms (one vblank missed), and the FIFO walk's wall and CPU ms per
+# frame (from GT5P_FRAME_LOG). -SampleDelay <s> moves the start.
 # -Cpu also reports per-thread CPU over the sampling window, named from the log
 # (guest thread names, host thread names), in scratch/pv/<tag>.cpu.txt.
 [CmdletBinding(PositionalBinding = $false)]
@@ -18,7 +24,8 @@ param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
       [string]$Tag = "race", [int]$Seconds = 60, [switch]$IntroShots, [switch]$LoadingShots,
       [ValidateRange(0,3600)][int]$PitIdleSeconds = 0,
       [ValidateRange(0,3600)][int]$GridIdleSeconds = 0, [switch]$Cpu,
-      [ValidateRange(0,3600)][int]$RaceShots = 0,
+      [ValidateRange(0,3600)][int]$RaceShots = 0, [switch]$FrameTest,
+      [ValidateRange(0,3600)][int]$SampleDelay = 25,
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -73,9 +80,15 @@ foreach ($at in @(5000, 10000, 20000, 40000, 60000)) {
     $at += 1000 * $GridIdleSeconds
     $hold += ",@QuickArcadeRoot+$at-$($at+300):CROSS"
 }
+if ($FrameTest) {
+    if (-not $PSBoundParameters.ContainsKey("SampleDelay")) { $SampleDelay = 45 }
+    if (-not $PSBoundParameters.ContainsKey("Seconds")) { $Seconds = 60 }
+    if (-not $PSBoundParameters.ContainsKey("RaceShots")) { $RaceShots = 20 }
+}
 $set = @{ GT5P_NO_SETTINGS = "1"; FS_HIDE = "grim/file/contents"; PS3_VERBOSE = "0";
           GT5P_PROFVIEW = "0"; PAD_HOLD = $hold; GT5P_RESOLUTION = "720p";
           RSX_MSAA = "2"; GT5P_PRESENT_PROF = "1"; RSX_PSO_TIMING = "1" }
+if ($FrameTest) { $set["GT5P_FRAME_LOG"] = (Join-Path $dir "$Tag.frames.csv") }
 foreach ($v in $Vars) { if ($v) { $k, $val = "$v" -split "=", 2; $set[$k] = $val } }
 try {
     Stop-Stragglers
@@ -107,11 +120,13 @@ try {
             Save-RaceWindowShot $p (Join-Path $dir ("$Tag.intro{0:D2}.png" -f $s))
             Start-Sleep -Seconds 1
         }
-    } else { Start-Sleep -Seconds 25 }
+        if ($SampleDelay -gt 25) { Start-Sleep -Seconds ($SampleDelay - 25) }
+    } else { Start-Sleep -Seconds $SampleDelay }
     # Ignore navigation/idle presents: only progress during sampling counts.
     $profTail = New-LogTail "$dir/$Tag.err"
     Read-LogTail $profTail | Out-Null
     $sampleLog = ""
+    $tS0 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $rows = @()
     if ($Cpu) {
         $cpuA = @{}; foreach ($t in (Get-Process -Id $p.Id).Threads) { $cpuA[$t.Id] = $t.TotalProcessorTime.TotalSeconds }
@@ -152,7 +167,26 @@ try {
         $cpuReport | Set-Content "$dir/$Tag.cpu.txt"
         $cpuReport
     }
+    $tS1 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $rows | Export-Csv "$dir/$Tag.fps.csv" -NoTypeInformation
+    if ($FrameTest) {
+        Start-Sleep -Milliseconds 1500   # the log is flushed every 30 frames
+        $fr = @(Get-Content (Join-Path $dir "$Tag.frames.csv") | ForEach-Object {
+            $c = $_ -split ","; if ($c.Count -eq 3) { ,([double[]]$c) } } | Where-Object { $_[0] -ge $tS0 -and $_[0] -le $tS1 })
+        $iv = @(); for ($i = 1; $i -lt $fr.Count; $i++) { $iv += $fr[$i][0] - $fr[$i - 1][0] }
+        if ($iv.Count -gt 10) {
+            $sorted = $iv | Sort-Object
+            $pct = { param($q) $sorted[[Math]::Min($sorted.Count - 1, [int]($q * $sorted.Count))] }
+            $late = @($iv | Where-Object { $_ -gt 20 }).Count
+            $walk = ($fr | ForEach-Object { $_[1] } | Measure-Object -Average).Average
+            $walkCpu = ($fr | ForEach-Object { $_[2] } | Measure-Object -Average).Average
+            $span = ($fr[-1][0] - $fr[0][0]) / 1000.0
+            $txt = "frames {0} over {1:N1} s: {2:N1} FPS; interval median {3:N1} ms, p99 {4:N1} ms, max {5:N1} ms; late (>20 ms) {6:N1}%; walk {7:N2} ms/frame (cpu {8:N2})" -f `
+                $fr.Count, $span, (($fr.Count - 1) / $span), (& $pct 0.5), (& $pct 0.99), $sorted[-1], (100.0 * $late / $iv.Count), $walk, $walkCpu
+            $txt | Set-Content (Join-Path $dir "$Tag.frames.txt")
+            "FrameTest: $txt"
+        } else { "FrameTest: too few frames in the sampling window ($($fr.Count))" }
+    }
     Save-RaceWindowShot $p (Join-Path $dir "$Tag.win.png")
     $presentSamples = [regex]::Matches($sampleLog, '\[present-prof\][^\r\n]*presents=(\d+)')
     if ($presentSamples.Count -gt 0 -and

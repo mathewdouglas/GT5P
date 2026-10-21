@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-20, Phase 99)
+## Start here: state of play (2026-10-21, Phase 105)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 99 is the latest).
+has the evidence, newest phase first (Phase 105 is the latest).
 
 ### What works now
 
@@ -99,7 +99,19 @@ has the evidence, newest phase first (Phase 99 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: memory (Phase 104).** Private bytes overstate RAM: the NVIDIA
+**Latest: frame-time test and a cheaper FIFO walk (Phase 105).**
+`race.ps1 -FrameTest` is the 60-FPS pass/fail number: 60 s of HSR racing
+after the rolling start, with FPS, p99, % of intervals over 20 ms and walk
+per frame (`GT5P_FRAME_LOG`). The walk is CPU work, not waiting. A method
+fast path (`GCM_WALK_FAST=0` off) and NOP-loop parks (`GCM_NOP_PARK=0` off)
+take it from 12.5 to 9.8 ms/frame. The SPU jobs park the walker on 31 NOPs
+plus a JUMP back, which it used to lap ~5,500 times a frame; never skip
+those runs fast (the circling watchdog then drops the SPU lists). Frame
+test: 51.6 -> ~55 FPS, 27% -> ~14% late. Remaining walk: ~5.6 ms of draw
+recording (`RSX_VTX_SKIP=1` drops draws: 4.2 ms walk, 58.8 FPS). The
+resident pipeline cap is 8192; menus have their own shader pack.
+
+**Memory (Phase 104).** Private bytes overstate RAM: the NVIDIA
 driver backs every GPU allocation with equal page-file commit that is never
 resident, so read the working set (F8 now leads with it). Per-frame buffers
 follow measured peaks: `RSX_DRAW_CAP` 6144 (was 12288) and raw vertices 48 MB
@@ -538,6 +550,7 @@ The PPU-inline experiment was not adopted; the normal exe is rebuilt with
 | `movshot.ps1`, `winping.ps1` | boot with the movie | movie frames; whether the window answers messages |
 | `settings_test.ps1`, `settings_restart_test.ps1`, `badge_test.ps1` | F1 page, shader badge | UI checks |
 | `inp.ps1` | none | a windowed run for someone to drive, with a shot every 5 s |
+| `race.ps1` | High Speed Ring race | `-FrameTest` (60 s pass/fail frame times), `-RaceShots <n>` (HUD timer, game speed), `-Cpu`, `-IntroShots`, `-LoadingShots` |
 
 `scripts\diag\` holds the helpers:
 

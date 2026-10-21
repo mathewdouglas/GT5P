@@ -57,7 +57,7 @@ def desc(e):
     if k == 'W': return 'info wid%d cont=%d ready=%d' % (a, b >> 8, b & 255)
     if k == 'F': return 'flip buf%d %s' % (a, 'prepare' if b == 0 else 'fifo')
     if k == 'P': return 'present %d us' % b
-    if k == 'R': return 'fifo walk %d us' % b
+    if k == 'R': return 'fifo walk %d us (cpu %d us)' % (b, a)
     if k == 'S': return 'usleep asked %d us, slept %d us' % (a, b)
     if k == 'V': return 'vblank tick'
     return '%s %d %d' % (k, a, b)
@@ -110,4 +110,5 @@ for key in sorted(lanes):
     print('  wid%d spu%d: %d runs, %.2f ms/frame, mean %.2f ms' % (key[0], key[1], len(v), sum(v) / 1000 / (len(flips) - 1), sum(v) / len(v) / 1000))
 pr = [b for us, tid, k, a, b in ev if k == 'P']
 fw = [b for us, tid, k, a, b in ev if k == 'R']
-print('\npresent thread: present %.1f ms/frame, fifo walk %.1f ms/frame' % (sum(pr) / 1000 / (len(flips) - 1), sum(fw) / 1000 / (len(flips) - 1)))
+fc = [a for us, tid, k, a, b in ev if k == 'R']
+print('\npresent thread: present %.1f ms/frame, fifo walk %.1f ms/frame (cpu %.1f)' % (sum(pr) / 1000 / (len(flips) - 1), sum(fw) / 1000 / (len(flips) - 1), sum(fc) / 1000 / (len(flips) - 1)))
