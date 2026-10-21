@@ -36,11 +36,11 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-21, Phase 107)
+## Start here: state of play (2026-10-21, Phase 108)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 107 is the latest).
+has the evidence, newest phase first (Phase 108 is the latest).
 
 ### What works now
 
@@ -99,7 +99,20 @@ has the evidence, newest phase first (Phase 107 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: inline memory access, chained SPU bodies (Phase 107).** The build
+**Latest: FIFO walk trimmed (Phase 108).** Changes, each with an off switch:
+
+- Hot data methods (immediate vertex data, transform constants) skip the
+  dispatcher's long test chain (`RSX_HOT_METHODS=0`).
+- Immediate vertices copy only the attributes the vertex program reads
+  (`RSX_IMM_MASK=0`).
+- Fragment constants no longer clear a 32 KB block on every draw
+  (`RSX_FPK_FAST=0`).
+
+Walk 7.75 -> 6.65 ms per frame. The frame test is now at its ceiling:
+59.5 FPS, median 16.6 ms, p99 20 ms, 1% of frames late. `RSX_DRAWPROF=1`
+splits draw recording by stage.
+
+**Inline memory access, chained SPU bodies (Phase 107).** The build
 now defaults to `GT5P_VM_INLINE=ON`. Out-of-line `vm_read*`/`vm_write*` were
 about 65% of the race render thread's CPU (14.1 -> 5.8 ms a frame). The exe is
 176 MB, and changing the option recompiles every lifted chunk.

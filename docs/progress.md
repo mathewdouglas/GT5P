@@ -9,6 +9,51 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 108 - FIFO walk: hot methods first, fewer copies (2026-10-21)
+
+`RSX_DRAWPROF=1` (new) times the walker's draw recording by stage with the
+TSC and prints ms and calls per frame every 5 s. Draw recording is
+2.3-2.5 ms of a 7-11 ms walk: upload 1.0 (half of it `vgpu_finish`, the
+raw-vertex copy), constants 0.40, texture snapshots 0.25, the rest below
+0.2 each. The other ~5 ms is command handling. Present-thread samples with
+library samples credited to callers (`GT5P_SAMPLE_DLL` unset) show method
+dispatch about 19% of busy time, the walker loop 16%, and memcpy/memset in
+several callers.
+
+- **Hot methods first** (`RSX_HOT_METHODS=0` off). Immediate vertex data
+  (3F/2F/4UB/4F) and transform constants are about a third of the ~215,000
+  data words a frame, and sat 60-80 tests deep in
+  `rsx_process_method_impl`'s chain, behind its debug switches. They are now
+  handled first, same effects minus their debug prints, while none of the
+  switches that watch them is set. No earlier handler in the chain claims
+  those ranges (checked against every constant it tests).
+- **Immediate vertices copy only read attributes** (`RSX_IMM_MASK=0`, or
+  `RSX_VTX_MASK=0`, copies all). Each immediate vertex copied all sixteen
+  attribute registers (256 bytes) at emit and again at read. Both now copy
+  only the vertex program's inputs, the rule the vertex buffers already use.
+- **Fragment constants without a 32 KB clear** (`RSX_FPK_FAST=0` off). Every
+  draw zeroed a whole `rsx_fp_constant_block` (2048 slots, 32 KB) before
+  collecting a program's few inline constants: 16-29 MB a frame.
+  `rsx_fp_collect_constants_to` writes the first `FP_CB_CONSTS` straight
+  into the constant buffer, same count and error result. Constants 0.84 ->
+  0.48 us a draw.
+
+| Frame test (1080p/2x, HSR) | FPS | Late | p99 | Walk |
+| --- | --- | --- | --- | --- |
+| Hot/imm off (same build) | 59.0 | 1.0% | 20.1 ms | 7.75 ms |
+| Hot methods + imm mask | 59.2 | 1.6% | 21.6 ms | 6.65 ms |
+| + fragment constants | 59.5 | 1.1% | 20.1 ms | 6.66 ms |
+
+Frames are now at the ceiling in this test: median 16.6 ms, and FPS and late
+share sit within noise of each other. Walk per frame is the number to watch.
+HUD, mirror, track map, loading list and Ferrari dealer (30 FPS) draw
+correctly; game speed 1.015 over 40 s of shots.
+
+**Left in the walk:** `vgpu_finish` copies ~2.9 MB of raw vertices a frame
+(0.65 ms). Texture snapshots copy a volatile texture again at every draw
+that binds it (0.3 ms). The vertex cache compares (`vraw_cmp`) and the
+walker loop's per-header overhead remain.
+
 ## Phase 107 - Inline guest memory access; chained SPU job bodies (2026-10-21)
 
 With the pacer pad gone, full rendering still had 7-9% of frames over 20 ms.
