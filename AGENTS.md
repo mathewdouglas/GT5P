@@ -107,7 +107,7 @@ are 90% body 0x0133A700, 40% in one sorted-list walk at 0x43E8/0x43E0 (68-byte
 nodes, float key at +60). `spu_fi` is now SSE (bit-identical, `-DSPU_FI_SCALAR`
 for the old): race workloads 5/6 11.0-11.4 -> 10.0-10.5 ms. New tools:
 `SPU_IRQSTAT=1`, `SPU_EXP_AB=1` with `g_spu_exp` (`abcyc.py --key exp`),
-scratch-free `GT5P_SAMPLE_WID` tables. See Phase 110 for the plan.
+`scripts/diag/widprof.py` (sums `GT5P_SAMPLE_WID` tables by function and image). See Phase 110 for the plan.
 
 **Hood-camera audio fixed; controller during tests (Phase 109).**
 Sound cut out in the hood camera: the mixer's IIR filter (image j65DD2F53,
