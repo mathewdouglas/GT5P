@@ -43,6 +43,35 @@ saturating variant below; mode 0 looks right).
   frame with garbage on its right, the likely source of the replay's noise
   strip (Phase 109).
 
+**Continued: the road streaks are not the clamp's arithmetic.** A finer
+hash (`hash64`) isolates one program, guest fp 0x0B998E81, the main road
+material (event 5395 in the capture): saturation alone (MUL only, that
+program only) reproduces the streaks; the other two bucket-6 programs do not.
+Its only text difference is `h[2].xyz *= saturate(h[3].x)`, where h[3].x is
+the normal map's N.L.
+
+- `RSX_FP_SAT_VIS` (new, diagnostic): 1 shows a saturated source that was
+  negative as 50, 2 one above 1, 3 spells the clamp `min(max(x,0),1)`, 4
+  replaces the program's colour with its first saturated source (red 0..1,
+  green negative, blue above 1, white NaN). Mode 4 paints the whole road
+  solid red: N.L is inside 0..1 everywhere, no NaN. Yet modes 1 and 2
+  (identical results for in-range values) came out smooth, and mode 3 and
+  plain `saturate` streaky.
+- With an empty cache folder (`RSX_SHADER_CACHE=scratch/cold113`), plain
+  saturation was smooth on both the cold and the warm run; on the main
+  `shadercache/` it was streaky with warmup off, with recipes and race
+  prewarm off (`RSX_PSO_RECIPES=0 RSX_RACE_PREWARM=0`) and with the race pack
+  off (`RSX_SHADER_PACK=0`). The DXBC files, driver blobs (the hash covers
+  both shaders' bytecode) and the pack are all keyed by full text or
+  bytecode, and the library and fp profiles are not read in play, so no
+  stale entry has been identified. Frame rate does not track it either.
+- RenderDoc captures are not representative (the user notes they run
+  differently): their composites showed no streaks in either mode.
+
+Conflicting evidence; the mechanism is open. The user's rolling-start shot
+shows the streaks along the pit straight at 120 km/h from a trackside
+camera, so they are a texture-like artefact, not speed blur.
+
 Mode 3 of `RSX_FP_SOURCE_RANGE` (also skip texture-fetch operands) is a
 diagnostic only. The default stays 0. Tunnel lighting itself is not changed
 yet (Phase 94: material constant 0.01 times exposure 0.4).

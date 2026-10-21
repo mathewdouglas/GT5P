@@ -19646,7 +19646,7 @@ index 67a3db3..9a7be71 100644
  /* Force a present (useful for debugging). */
  void rsx_d3d12_backend_present(void);
 diff --git a/libs/video/rsx_fp_decompiler.c b/libs/video/rsx_fp_decompiler.c
-index 545670f..2592c58 100644
+index 545670f..d25a763 100644
 --- a/libs/video/rsx_fp_decompiler.c
 +++ b/libs/video/rsx_fp_decompiler.c
 @@ -25,6 +25,7 @@
@@ -19762,7 +19762,7 @@ index 545670f..2592c58 100644
  static const char* input_expr(u32 input_src)
  {
      static const char* tc[8] = {
-@@ -341,13 +426,16 @@ static const char* input_expr(u32 input_src)
+@@ -341,13 +426,21 @@ static const char* input_expr(u32 input_src)
      case 0x3: return "input.fog";      /* FOGC */
      default:
          if (input_src >= 0x4 && input_src <= 0xB) return tc[input_src - 0x4]; /* TC0..7 */
@@ -19773,6 +19773,11 @@ index 545670f..2592c58 100644
      }
  }
  
++/* RSX_FP_SAT_VIS=4: the program's first saturated source is recorded and its
++ * colour output replaced by it (red 0..1, green negative, blue above 1,
++ * white NaN). Reset per program in rsx_fp_decompile. */
++static int s_satdbg_used;
++
  /* Build the swizzled/negated/abs'd HLSL for one source into `buf`. */
  static void emit_src(const Src* s, u32 input_src, const float* k, int has_k,
 -                     int buffered, u32 constant_slot, char* buf, u32 bufsz)
@@ -19781,7 +19786,7 @@ index 545670f..2592c58 100644
  {
      char base[96];
      if (s->type == FP_REG_TYPE_TEMP) {
-@@ -368,6 +456,25 @@ static void emit_src(const Src* s, u32 input_src, const float* k, int has_k,
+@@ -368,6 +461,33 @@ static void emit_src(const Src* s, u32 input_src, const float* k, int has_k,
      char swz[160];
      snprintf(swz, sizeof(swz), "(%s).%s", base, s->swz);
  
@@ -19792,7 +19797,15 @@ index 545670f..2592c58 100644
 +     * This preserves the old spelling when no range modifier is present. */
 +    if (precision >= 1 && precision <= 4) {
 +        char value[240], absolute[256];
-+        if (precision == 4) snprintf(value, sizeof value, "saturate(%s)", swz);
++        /* RSX_FP_SAT_VIS (diagnostic): 1 = a saturated source that was
++         * negative becomes 50 (blows out), 2 = one above 1 does. */
++        static int vis = -1;
++        if (vis < 0) { const char* e = getenv("RSX_FP_SAT_VIS"); vis = e ? atoi(e) : 0; }
++        if (precision == 4 && vis == 1) snprintf(value, sizeof value, "((%s) < 0.0 ? (float4)50.0 : saturate(%s))", swz, swz);
++        else if (precision == 4 && vis == 2) snprintf(value, sizeof value, "((%s) > 1.0 ? (float4)50.0 : saturate(%s))", swz, swz);
++        else if (precision == 4 && vis == 3) snprintf(value, sizeof value, "min(max(%s, 0.0), 1.0)", swz);
++        else if (precision == 4 && vis == 4 && !s_satdbg_used) { s_satdbg_used = 1; snprintf(value, sizeof value, "rsx_satdbg(%s)", swz); }
++        else if (precision == 4) snprintf(value, sizeof value, "saturate(%s)", swz);
 +        else snprintf(value, sizeof value, "%s", swz);
 +        if (s->abs) snprintf(absolute, sizeof absolute, "abs(%s)", value);
 +        else snprintf(absolute, sizeof absolute, "%s", value);
@@ -19807,15 +19820,16 @@ index 545670f..2592c58 100644
      const char* pre = "";
      const char* post = "";
      if (s->abs)    { pre = "abs("; post = ")"; }
-@@ -420,6 +527,7 @@ static int rsx_fp_decompile_internal(
+@@ -420,6 +540,8 @@ static int rsx_fp_decompile_internal(
      int buffered, char* out, u32 out_size, u32* out_constant_count)
  {
      if (!ucode || !out || out_size == 0) return -1;
++    s_satdbg_used = 0;
 +    s_fp_uses_tc89 = 0;
  
      u32 buffered_constant_count = 0;
      if (buffered) {
-@@ -456,6 +564,7 @@ static int rsx_fp_decompile_internal(
+@@ -456,6 +578,7 @@ static int rsx_fp_decompile_internal(
      int wrote[2][FP_MAX_COLOR_TARGETS];
      memset(wrote, 0, sizeof wrote);
      int count = 0;
@@ -19823,7 +19837,7 @@ index 545670f..2592c58 100644
      u32 off = 0;
      u32 constant_slot = 0;
  
-@@ -539,15 +648,69 @@ static int rsx_fp_decompile_internal(
+@@ -539,15 +662,69 @@ static int rsx_fp_decompile_internal(
              has_k = 1;
          }
  
@@ -19894,7 +19908,7 @@ index 545670f..2592c58 100644
              c, sizeof(c));
          if (has_k)
              constant_slot++;
-@@ -610,7 +773,7 @@ static int rsx_fp_decompile_internal(
+@@ -610,7 +787,7 @@ static int rsx_fp_decompile_internal(
          }
  
          /* Build the RHS expression for this opcode. */
@@ -19903,7 +19917,7 @@ index 545670f..2592c58 100644
          int handled = 1;
          switch (opcode) {
          case OP_NOP: rhs[0] = '\0'; handled = 0; break;
-@@ -634,7 +797,16 @@ static int rsx_fp_decompile_internal(
+@@ -634,7 +811,16 @@ static int rsx_fp_decompile_internal(
           * part 4; two independent shader pairs confirmed). */
          case OP_RSQ: snprintf(rhs, sizeof(rhs), "rsqrt(abs((%s).x))", a); break;
          case OP_EX2: snprintf(rhs, sizeof(rhs), "exp2((%s).x)", a); break;
@@ -19921,7 +19935,7 @@ index 545670f..2592c58 100644
          case OP_COS: snprintf(rhs, sizeof(rhs), "cos((%s).x)", a); break;
          case OP_SIN: snprintf(rhs, sizeof(rhs), "sin((%s).x)", a); break;
          case OP_POW: snprintf(rhs, sizeof(rhs), "pow((%s).x, (%s).x)", a, b); break;
-@@ -672,8 +844,8 @@ static int rsx_fp_decompile_internal(
+@@ -672,8 +858,8 @@ static int rsx_fp_decompile_internal(
          case OP_SNE: snprintf(rhs, sizeof(rhs), "(float4)((%s) != (%s))", a, b); break;
          case OP_SEQ: snprintf(rhs, sizeof(rhs), "(float4)((%s) == (%s))", a, b); break;
          case OP_TEX:
@@ -19932,7 +19946,7 @@ index 545670f..2592c58 100644
                  snprintf(rhs, sizeof(rhs),
                           "rsx_tex%u.Sample(rsx_samp[%u], (%s).xyz)", tex_unit, tex_unit, a);
              else if (tex_cube_mask)
-@@ -689,6 +861,9 @@ static int rsx_fp_decompile_internal(
+@@ -689,6 +875,9 @@ static int rsx_fp_decompile_internal(
                   * the direction directly. */
                  snprintf(rhs, sizeof(rhs),
                           "rsx_tex%u.Sample(rsx_samp[%u], (%s).xyz)", tex_unit, tex_unit, a);
@@ -19942,7 +19956,7 @@ index 545670f..2592c58 100644
              else if (tex_cube_mask)
                  snprintf(rhs, sizeof(rhs),
                           "rsx_tex%u.Sample(rsx_samp[%u], (%s).xy / (%s).w)",
-@@ -702,7 +877,7 @@ static int rsx_fp_decompile_internal(
+@@ -702,7 +891,7 @@ static int rsx_fp_decompile_internal(
              /* Biased / explicit-LOD sample; bias or LOD is src1.x (RPCS3
               * TEXTURE_SAMPLE2D_BIAS / _LOD). GH3's fret buttons and fret lines
               * are TXB: unhandled, they sampled nothing and output alpha 0. */
@@ -19951,7 +19965,7 @@ index 545670f..2592c58 100644
              char tn[32];
              snprintf(tn, sizeof(tn), tex_cube_mask ? "rsx_tex%u" : "rsx_tex[%u]", tex_unit);
              snprintf(rhs, sizeof(rhs), "%s.%s(rsx_samp[%u], (%s).%s, (%s).x)", tn,
-@@ -739,6 +914,23 @@ static int rsx_fp_decompile_internal(
+@@ -739,6 +928,23 @@ static int rsx_fp_decompile_internal(
          }
  
          int has_dest = !(w0 & FP_OUT_NONE);
@@ -19975,7 +19989,7 @@ index 545670f..2592c58 100644
          if (handled && (has_dest || set_cond)) {
              u32 dst_idx = (w0 & FP_OUT_REG_MASK) >> FP_OUT_REG_SHIFT;
              int dst_half = (w0 & FP_OUT_HALF) ? 1 : 0;
-@@ -748,7 +940,7 @@ static int rsx_fp_decompile_internal(
+@@ -748,7 +954,7 @@ static int rsx_fp_decompile_internal(
  
              const char* sat = (w0 & FP_OUT_SAT) ? " _v = saturate(_v);" : "";
              /* NV40 per-instruction result-scale modifier (SRC1 word bits
@@ -19984,7 +19998,7 @@ index 545670f..2592c58 100644
               * result BEFORE saturate (RPCS3 FragmentProgramDecompiler.cpp
               * SetDst, RSXFragmentProgram.h SRC1.scale:3). Dropped entirely
               * until s32: draw 1625's two-tap box filter (÷2 on the final
-@@ -766,14 +958,14 @@ static int rsx_fp_decompile_internal(
+@@ -766,14 +972,14 @@ static int rsx_fp_decompile_internal(
              if (has_dest && is_uncond && !set_cond) {
                  /* Common unconditional path — kept byte-identical so the 39
                   * non-predicated programs in this capture emit unchanged. */
@@ -20001,7 +20015,37 @@ index 545670f..2592c58 100644
                  snprintf(buf, sizeof(buf),
                           "    { float4 _v = (float4)(%s)%s;%s\n",
                           rhs, scale_txt[res_scale], sat);
-@@ -877,7 +1069,7 @@ static int rsx_fp_decompile_internal(
+@@ -852,10 +1058,11 @@ static int rsx_fp_decompile_internal(
+         if (wrote[half_exports][t]) { targets = t + 1; break; }
+ 
+     if (targets == 1) {
+-        char tail[96];
++        char tail[160];
+         snprintf(tail, sizeof(tail),
+-                 "    float4 _o = %s[0];\n"
+-                 "    return (_o == _o) ? _o : (float4)0;\n}\n", export_file);
++                 "    float4 _o = %s[0];\n%s"
++                 "    return (_o == _o) ? _o : (float4)0;\n}\n", export_file,
++                 s_satdbg_used ? "    _o = rsx_satdbg_out();\n" : "");
+         out_puts(&o, tail);
+     } else {
+         /* Multiple render targets. The NaN guard is per target: a poisoned
+@@ -863,11 +1070,12 @@ static int rsx_fp_decompile_internal(
+          * are computed independently. */
+         out_puts(&o, "    PSOutput _out;\n");
+         for (u32 t = 0; t < targets; t++) {
+-            char line[192];
++            char line[256];
+             snprintf(line, sizeof(line),
+-                     "    float4 _o%u = %s[%u];\n"
++                     "    float4 _o%u = %s[%u];\n%s"
+                      "    _out.t%u = (_o%u == _o%u) ? _o%u : (float4)0;\n",
+                      t, export_file, fp_export_reg[half_exports][t],
++                     (s_satdbg_used && t == 0) ? "    _o0 = rsx_satdbg_out();\n" : "",
+                      t, t, t, t);
+             out_puts(&o, line);
+         }
+@@ -877,7 +1085,7 @@ static int rsx_fp_decompile_internal(
      /* Preamble: PSInput matches the backend's placeholder layout; temp/half
       * register files; texture+sampler banks for TEX. Built here, in front of
       * the body, now that the return type is known. */
@@ -20010,7 +20054,7 @@ index 545670f..2592c58 100644
      Out p = { preamble, sizeof(preamble), 0, 1 };
      preamble[0] = '\0';
      out_puts(&p,
-@@ -885,8 +1077,10 @@ static int rsx_fp_decompile_internal(
+@@ -885,8 +1093,10 @@ static int rsx_fp_decompile_internal(
          "    float4 position : SV_POSITION; float4 col0 : COLOR0; float4 col1 : COLOR1;\n"
          "    float4 fog : FOG;\n"
          "    float4 tc0:TEXCOORD0; float4 tc1:TEXCOORD1; float4 tc2:TEXCOORD2; float4 tc3:TEXCOORD3;\n"
@@ -20023,7 +20067,7 @@ index 545670f..2592c58 100644
      /* Texture bank. With no cube units (the default) emit the exact legacy
       * array declaration so 2D-only programs are byte-identical. When any unit
       * is a cubemap, declare each unit individually at its t-register so the
-@@ -897,7 +1091,8 @@ static int rsx_fp_decompile_internal(
+@@ -897,7 +1107,8 @@ static int rsx_fp_decompile_internal(
          char decl[64];
          for (u32 u = 0; u < 16; u++) {
              snprintf(decl, sizeof(decl), "%s rsx_tex%u : register(t%u);\n",
@@ -20033,16 +20077,35 @@ index 545670f..2592c58 100644
              out_puts(&p, decl);
          }
      }
-@@ -915,6 +1110,8 @@ static int rsx_fp_decompile_internal(
+@@ -915,7 +1126,15 @@ static int rsx_fp_decompile_internal(
              buffered_constant_count ? buffered_constant_count : 1u);
          out_puts(&p, constants_decl);
      }
 +    if (uses_tex_expand)
 +        out_puts(&p, "float4 rsx_expand_tex(float4 v, uint u) { return v * 2.0 - 1.0; }\n");
++    static const char satdbg_helpers[] =
++        "static float _sd;\n"
++        "float4 rsx_satdbg(float4 v) { _sd = v.x; return saturate(v); }\n"
++        "float4 rsx_satdbg_out() { if (_sd != _sd) return (float4)1;"
++        " return float4(saturate(_sd), saturate(-_sd), _sd > 1.0 ? 1.0 : 0.0, 1.0); }\n";
      if (targets == 1) {
++        if (s_satdbg_used) out_puts(&p, satdbg_helpers);
          out_puts(&p, "float4 main(PSInput input) : SV_TARGET {\n");
      } else {
-@@ -1157,6 +1354,92 @@ int rsx_fp_extract_consts(const u8* ucode, u32 max_bytes, float* out, int max_ou
+         out_puts(&p, "struct PSOutput {\n");
+@@ -925,8 +1144,9 @@ static int rsx_fp_decompile_internal(
+                      "    float4 t%u : SV_TARGET%u;\n", t, t);
+             out_puts(&p, member);
+         }
+-        out_puts(&p, "};\n"
+-                     "PSOutput main(PSInput input) {\n");
++        out_puts(&p, "};\n");
++        if (s_satdbg_used) out_puts(&p, satdbg_helpers);
++        out_puts(&p, "PSOutput main(PSInput input) {\n");
+     }
+ 
+     if (!o.ok || !p.ok) return -1;
+@@ -1157,6 +1377,92 @@ int rsx_fp_extract_consts(const u8* ucode, u32 max_bytes, float* out, int max_ou
   * on their values, so including them in the pipeline key made it change every
   * time the title re-patched a constant -- which is exactly what thrashed the
   * cache. */
