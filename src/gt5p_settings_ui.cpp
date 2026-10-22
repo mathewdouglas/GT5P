@@ -244,6 +244,7 @@ HWND s_game, s_wnd;
 bool s_open;
 bool s_overlay;                 /* drawn into the game's picture (this open) */
 double s_scale = 1;             /* overlay: backbuffer pixels per layout unit */
+double s_scale_x = 1;           /* the same across (s_scale x paint_ax()) */
 int s_ox, s_oy;                 /* overlay: its top left in the backbuffer */
 int s_sel;                      /* row: 0 the section bar, then items, then buttons */
 int s_section;                  /* the page shown */
@@ -445,6 +446,17 @@ void begin_capture(int id)
 /* The clear parts of a popup or tag; push_image paints them black, then white. */
 COLORREF kKey = RGB(255, 0, 255);
 double s_paint_scale = 1;       /* device pixels per unit while painting */
+double s_paint_ax = 1;          /* horizontal factor on top of it (paint_ax) */
+double s_paint_ox = 0;          /* device x of the layout's left edge (a centred page) */
+
+/* Ultrawide (RSX_ULTRAWIDE): the 16:9 backbuffer is stretched over a 21:9
+ * window, so overlays are painted 3/4 as wide to come out undistorted. */
+double paint_ax()
+{
+    static double ax = 0;
+    if (ax == 0) { const char* e = getenv("RSX_ULTRAWIDE"); ax = (e && e[0] && e[0] != '0') ? 0.75 : 1.0; }
+    return ax;
+}
 
 COLORREF grey(int v) { return RGB(v, v, v); }
 
@@ -483,8 +495,8 @@ struct DeviceSpace {
 template <class F> void vgrad(HDC dc, double x0, double y0, double x1, double y1, F colour)
 {
     DeviceSpace ds(dc);
-    const double s = s_paint_scale;
-    const int X0 = (int)(x0 * s + 0.5), X1 = (int)(x1 * s + 0.5);
+    const double s = s_paint_scale, sx = s * s_paint_ax;
+    const int X0 = (int)(x0 * sx + s_paint_ox + 0.5), X1 = (int)(x1 * sx + s_paint_ox + 0.5);
     const int Y0 = (int)(y0 * s + 0.5), Y1 = (int)(y1 * s + 0.5);
     for (int y = Y0; y < Y1; y++) fill(dc, X0, y, X1, y + 1, colour((y + 0.5 - Y0) / (Y1 - Y0)));
 }
@@ -494,13 +506,13 @@ template <class F> void vgrad(HDC dc, double x0, double y0, double x1, double y1
 template <class F> void stadium(HDC dc, double x0, double y0, double x1, double y1, F colour)
 {
     DeviceSpace ds(dc);
-    const double s = s_paint_scale;
-    const double X0 = x0 * s, X1 = x1 * s, Y0 = y0 * s, Y1 = y1 * s, r = (Y1 - Y0) / 2, cy = Y0 + r;
+    const double s = s_paint_scale, ax = s_paint_ax;
+    const double X0 = x0 * s * ax + s_paint_ox, X1 = x1 * s * ax + s_paint_ox, Y0 = y0 * s, Y1 = y1 * s, r = (Y1 - Y0) / 2, cy = Y0 + r;
     for (int y = (int)Y0; y < (int)(Y1 + 0.999); y++) {
         const double yc = y + 0.5, dy = yc - cy;
         if (dy * dy > r * r) continue;
-        const double half = sqrt(r * r - dy * dy);
-        fill(dc, (int)(X0 + r - half + 0.5), y, (int)(X1 - r + half + 0.5), y + 1,
+        const double half = sqrt(r * r - dy * dy), rx = r * ax;   /* the ends are ellipses when squeezed */
+        fill(dc, (int)(X0 + rx - half * ax + 0.5), y, (int)(X1 - rx + half * ax + 0.5), y + 1,
              colour((yc - Y0) / (Y1 - Y0)));
     }
 }
@@ -530,7 +542,7 @@ void shaded_tri(HDC dc, const double (&p)[3][2], const int (&g)[3])
     DeviceSpace ds(dc);
     const double s = s_paint_scale;
     double X[3], Y[3];
-    for (int k = 0; k < 3; k++) { X[k] = p[k][0] * s; Y[k] = p[k][1] * s; }
+    for (int k = 0; k < 3; k++) { X[k] = p[k][0] * s * s_paint_ax + s_paint_ox; Y[k] = p[k][1] * s; }
     const double area = (X[1] - X[0]) * (Y[2] - Y[0]) - (X[2] - X[0]) * (Y[1] - Y[0]);
     if (fabs(area) < 1e-6) return;
     auto bary = [&](double x, double y, double* w) {
@@ -840,8 +852,12 @@ void push_image(int lw, int lh, void (*painter)(HDC), bool corner, int dim)
     rsx_d3d12_backbuffer_size(&bw, &bh);
     if (bw <= 0 || bh <= 0) return;
     double sc = bh / 720.0;
-    if (lw * sc > bw) sc = bw / (double)lw;
-    const int w = (int)(lw * sc + 0.5), h = (int)(lh * sc + 0.5);
+    const double ax = paint_ax();
+    if (lw * sc * ax > bw) sc = bw / (double)lw / ax;
+    /* A full-screen page in ultrawide spans the whole backbuffer, its layout
+     * centred, so the dimmed scene around it reaches the window's sides. */
+    const double ox = (!corner && ax != 1.0) ? (bw - lw * sc * ax) * 0.5 : 0.0;
+    const int w = ox > 0 ? bw : (int)(lw * sc * ax + 0.5), h = (int)(lh * sc + 0.5);
     BITMAPINFO bi = {};
     bi.bmiHeader.biSize = sizeof bi.bmiHeader;
     bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h;
@@ -857,16 +873,17 @@ void push_image(int lw, int lh, void (*painter)(HDC), bool corner, int dim)
     }
     HGDIOBJ o = SelectObject(dc, bm[0]);
     SetGraphicsMode(dc, GM_ADVANCED);
-    XFORM x = { (FLOAT)sc, 0, 0, (FLOAT)sc, 0, 0 };
+    XFORM x = { (FLOAT)(sc * ax), 0, 0, (FLOAT)sc, (FLOAT)ox, 0 };
     SetWorldTransform(dc, &x);
-    s_paint_scale = sc;
+    s_paint_scale = sc; s_paint_ax = ax; s_paint_ox = ox;
     for (int k = 0; k < 2; k++) {
         SelectObject(dc, bm[k]);
         kKey = k ? RGB(255, 255, 255) : RGB(0, 0, 0);
+        if (ox > 0) { DeviceSpace ds(dc); fill(dc, 0, 0, w, h, kKey); }
         painter(dc);
     }
     kKey = RGB(255, 0, 255);
-    s_paint_scale = 1;
+    s_paint_scale = 1; s_paint_ax = 1; s_paint_ox = 0;
     GdiFlush();
     uint32_t* p = (uint32_t*)pass[0];
     const uint32_t* q = (const uint32_t*)pass[1];
@@ -882,10 +899,13 @@ void push_image(int lw, int lh, void (*painter)(HDC), bool corner, int dim)
     DeleteObject(bm[1]);
     void* bits = pass[0];
     if (corner) {   /* bottom right, in the game's own margin */
-        rsx_d3d12_overlay_set(bits, w, h, bw - w - (int)(40 * sc), bh - h - (int)(34 * sc));
+        /* In ultrawide, the corner of the title's centred 16:9 area. */
+        const int right = bw - (int)(bw * (1.0 - ax) * 0.5);
+        rsx_d3d12_overlay_set(bits, w, h, right - w - (int)(40 * sc * ax), bh - h - (int)(34 * sc));
     } else {
-        s_scale = sc; s_ox = (bw - w) / 2; s_oy = (bh - h) / 2;
-        rsx_d3d12_overlay_set(bits, w, h, s_ox, s_oy);
+        s_scale = sc; s_scale_x = sc * ax; s_oy = (bh - h) / 2;
+        rsx_d3d12_overlay_set(bits, w, h, (bw - w) / 2, s_oy);
+        s_ox = (bw - w) / 2 + (int)ox;   /* the layout's left edge, for the mouse */
     }
     DeleteObject(bm[0]); DeleteDC(dc);
 }
@@ -938,7 +958,8 @@ void paint_hint(HDC dc)
         memcpy(bits, px.data(), px.size());
         HGDIOBJ o = SelectObject(mdc, bm);
         BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-        AlphaBlend(dc, (int)((92 - 10) * sc + 0.5) - iw, (int)(4 * sc + 0.5), iw, hp, mdc, 0, 0, iw, hp, bf);
+        const int dw = (int)(iw * s_paint_ax + 0.5);   /* squeezed with the rest in ultrawide */
+        AlphaBlend(dc, (int)((92 - 10) * sc * s_paint_ax + 0.5) - dw, (int)(4 * sc + 0.5), dw, hp, mdc, 0, 0, iw, hp, bf);
         SelectObject(mdc, o);
         DeleteObject(bm);
     }
@@ -1474,7 +1495,7 @@ bool mouse_units(int* lx, int* ly)
     /* Client pixels to backbuffer pixels (the swap chain is stretched over
      * the window), then to layout units. */
     const double bx = c.x * (double)bw / rc.right, by = c.y * (double)bh / rc.bottom;
-    *lx = (int)((bx - s_ox) / s_scale); *ly = (int)((by - s_oy) / s_scale);
+    *lx = (int)((bx - s_ox) / s_scale_x); *ly = (int)((by - s_oy) / s_scale);
     return true;
 }
 

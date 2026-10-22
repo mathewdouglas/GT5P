@@ -59,6 +59,32 @@ at clip x = ±0.75.
 - HSR frame test (`uwFT`): 59.0 FPS, median 16.6 ms, p99 24.5 ms, 1.6% late,
   walk 7.0 ms.
 
+**Follow-ups.**
+
+- **Opening movie** (`uwMov`): already correct. With the UI aspect patched
+  it shows pillarboxed at 16:9 with black bars.
+- **F1 page and Options tag:** painted 3/4 as wide in ultrawide, so the
+  swap chain's stretch restores their shape.
+  - `paint_ax()` reads `RSX_ULTRAWIDE`. The world transform and the
+    device-space helpers (`vgrad`, `stadium` with elliptical ends,
+    `shaded_tri`, the tag's icon) take the factor; the mouse uses
+    `s_scale_x`.
+  - The full page spans the whole backbuffer with its layout centred
+    (`s_paint_ox`), so the dimmed scene reaches the window's sides.
+  - The tag sits in the corner of the game's centred 16:9 area.
+  - `settings_test.ps1` (16:9) still passes.
+- **My Page label cut-off, diagnosed (`uwdim3`, RenderDoc):**
+  - The labels (draw 965, program `0x0507F3C1`) multiply by a 1480x4 fade
+    mask at `TEXCOORD2.zw`. The vertex shader computes that coordinate as
+    (position - `c[131].xy`) x `c[131].zw`.
+  - The game sets the mask origin to `c[131].x` = -0.835. The icons' shader
+    gets the correct -0.585 (in `c[128]`). The label value is the strip's
+    left edge (pixel 211) scaled by 0.75 and converted to clip space without
+    the 240-pixel centring offset, so u passes 1.0 at clip x 0.335 (guest
+    1280).
+  - The value is computed in the game's text path. A fix means finding that
+    code; not done.
+
 **Known issues.**
 
 - **My Page icon row:** the labels end at guest x ~1280, so "2P Battle" is
@@ -66,8 +92,9 @@ at clip x = ±0.75.
   1706 x 0.75, which looks like a label fade mask placed by scaled
   coordinates without the centring offset. That is the game's own aspect
   handling, not a scissor; the row's scissor (398-1521) is right.
-- **Still stretched:** the F1 page (the port's overlay, drawn into the 16:9
-  backbuffer) and the opening movie.
+- **Still stretched at first:** the F1 page (the port's overlay, drawn into
+  the 16:9 backbuffer) and the opening movie. Both were fixed later in this
+  phase; see Follow-ups.
 
 ## Phase 122 - Ultrawide step 2, stage A: anamorphic 21:9 (2026-10-22)
 
