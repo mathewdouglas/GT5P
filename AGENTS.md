@@ -99,7 +99,15 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: rebindable keyboard (Phase 120).** The settings file has a
+**Latest: ultrawide step 1 (Phase 121).** The game's aspect ratio is one
+table entry, `aspect_16_9_float` (`0x01287DD0`), read once at boot by
+`func_007AE548`. Writing 64/27 there at load (`GT5P_POKE_BOOT=01287DD0=4017B426`)
+gives the race camera a 21:9 projection with the same vertical field of view,
+and the race HUD then lays itself out centred. Menus keep their full-width 2D
+layout. Next steps are in [docs/plan-ultrawide.md](docs/plan-ultrawide.md).
+New tools: `GT5P_POKE`, `GT5P_POKE_BOOT`, `RSX_CAP_VPFULL`.
+
+**Rebindable keyboard (Phase 120).** The settings file has a
 `[keyboard]` section and the F1 page a Keyboard tab (Cross/Enter, then the
 key; a key in use swaps; Defaults). Both go through `PAD_KEYMAP`
 (`cross=Z,...`). The code is `src/gt5p_keymap.*` and cellPad's

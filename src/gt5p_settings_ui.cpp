@@ -1104,6 +1104,50 @@ uint32_t guest_word(uint32_t a)
     return _byteswap_ulong(w);
 }
 
+/* GT5P_POKE=<milestone>+<ms>:addr=value[,addr=value...]: write guest words
+ * (hex, big-endian as the guest reads them) once that long after the screen
+ * opened; "!addr" rewrites that one on every poll after. A diagnostic, for
+ * testing what a variable does (Phase 121's aspect ratio). */
+void poke_poll()
+{
+    static int on = -1;
+    static std::string ms_name; static long long ms_at;
+    static std::vector<uint32_t> addr, val;
+    static std::vector<bool> keep;
+    static bool done;
+    if (on < 0) {
+        const char* e = getenv("GT5P_POKE");
+        on = e && *e && vm_base;
+        if (on) {
+            std::string s = e;
+            const size_t plus = s.find('+'), colon = s.find(':');
+            if (plus == std::string::npos || colon == std::string::npos) { on = 0; return; }
+            ms_name = s.substr(0, plus); ms_at = atoll(s.c_str() + plus + 1);
+            for (size_t i = colon + 1; i < s.size();) {
+                size_t j = s.find(',', i); if (j == std::string::npos) j = s.size();
+                std::string tok = s.substr(i, j - i);
+                const bool k = !tok.empty() && tok[0] == '!';
+                if (k) tok.erase(0, 1);
+                const size_t eq = tok.find('=');
+                if (eq != std::string::npos) {
+                    addr.push_back((uint32_t)strtoul(tok.c_str(), nullptr, 16));
+                    val.push_back((uint32_t)strtoul(tok.c_str() + eq + 1, nullptr, 16));
+                    keep.push_back(k);
+                }
+                i = j + 1;
+            }
+        }
+    }
+    if (!on || pad_milestone_age_ms(ms_name.c_str()) < ms_at) return;
+    for (size_t k = 0; k < addr.size(); k++) {
+        if (done && !keep[k]) continue;
+        const uint32_t be = _byteswap_ulong(val[k]);
+        memcpy(vm_base + addr[k], &be, 4);
+        if (!done) fprintf(stderr, "[poke] %llu ms %08X = %08X\n", GetTickCount64(), addr[k], val[k]);
+    }
+    done = true;
+}
+
 void watch_poll()
 {
     static int on = -1;
@@ -1598,6 +1642,7 @@ DWORD WINAPI ui_thread(LPVOID)
         if (s_inject_until && GetTickCount64() >= s_inject_until) { g_pad_inject_buttons = 0; s_inject_until = 0; }
         memsnap_poll();
         watch_poll();
+        poke_poll();
         toggle_poll();
         if (s_open && !s_overlay) place();
         Sleep(16);

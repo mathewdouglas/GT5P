@@ -899,6 +899,22 @@ int main(int argc, char* argv[])
         vm_shutdown();
         return EXIT_FAILURE;
     }
+    /* GT5P_POKE_BOOT=addr=value[,...]: write guest words (hex, as the guest
+     * reads them) into the loaded image before it runs. A diagnostic, for
+     * data the title reads once at start (Phase 121's aspect table). */
+    if (const char* e = getenv("GT5P_POKE_BOOT")) {
+        for (const char* p = e; p && *p;) {
+            char* q = nullptr;
+            const uint32_t a = (uint32_t)strtoul(p, &q, 16);
+            if (q && *q == '=') {
+                const uint32_t v = (uint32_t)strtoul(q + 1, &q, 16);
+                const uint32_t be = _byteswap_ulong(v);
+                memcpy(vm_base + a, &be, 4);
+                printf("[GT5P] poke 0x%08X = 0x%08X\n", a, v);
+            }
+            p = q ? strchr(q, ',') : nullptr; if (p) p++;
+        }
+    }
 
     ppu_hle_register_all();
     ppu_sysprx_register();

@@ -9,6 +9,68 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 121 - Ultrawide step 1: where the game's aspect ratio lives (2026-10-22)
+
+The user wants a 2560x1080 (21:9) mode. The plan is in
+[plan-ultrawide.md](plan-ultrawide.md); this is step 1, finding where the
+game's 16:9 comes from and what it drives.
+
+**Race render target.** At 1080p a race draws its scene into `0x01980000`
+with a 1280x1080 viewport (2x MSAA, pitch 10240; depth at `0x02420000`), and
+the game stretches it to 1920 itself. Widened for 21:9 that becomes about
+1707x1080.
+
+**The camera.** A new capture filter, `RSX_CAP_VPFULL=1`, keeps only draws
+whose scissor covers the whole target, so the rear-view mirror's camera is
+left out. With `RSX_CAP_VPC=01980000` it gives the main race camera's
+view-projection rows. Their lengths are x 1.2988 and y 2.3091, a ratio of
+0.5625 (9/16), which is a vertical field of view of 46.8 degrees.
+
+**In memory** (`GT5P_MEMSNAP` mid-race, searched for floats):
+
+- The camera keeps the same two scales at `0x01398518`/`0x01398520`,
+  followed by its view matrix.
+- A display block starts at `0x0138D294`. It holds the display size
+  1920x1080, then set A (size at `0x0138D29C`, aspect at `0x0138D2B0`) and
+  set B (size at `0x0138D2A4`, aspect at `0x0138D2AC`). Both aspects are
+  16/9.
+
+**What each aspect drives.** A new diagnostic, `GT5P_POKE=<milestone>+<ms>:addr=value`,
+writes guest words at run time; a leading `!` keeps rewriting one.
+
+- Writing 64/27 into `0x0138D2AC` alone mid-race turns the camera's ratio
+  into 0.4219 (27/64), with its vertical scale unchanged: a wider view and
+  the same vertical field of view. The race HUD and the mirror camera re-lay
+  themselves out for 21:9 too, pulled toward the centre by 3/4.
+- Writing `0x0138D2B0` alone changed nothing visible. Its role is unknown.
+- The crowd and barrier boards still drew to the outer edges of the
+  squeezed image. That is the region a 16:9 culling frustum would drop, so
+  culling probably follows the projection. This is not proven until the
+  frame is really drawn wide.
+
+**Who sets it.** A store watch at boot (`PPU_WWATCH=0138D290`) names the
+writers:
+
+- `func_007AE548` calls `func_0081DE00` (set A) and `func_0081DE10` (set B)
+  once, early in boot. Set A is also written from `0x007AE2B8`.
+- The value comes from a table chosen by a mode byte at `[0x01720F00]+0x2B`,
+  read through `0x00BC5A58`. Mode 1 gives 4/3 (`0x1287DE0`), mode 2 gives
+  16/9 (`0x1287DD0`, the case in practice) and anything else gives 1.0
+  (`0x1287DD8`).
+- The mode byte is presumably cellVideoOut's aspect: 1 is 4:3 and 2 is 16:9
+  in the SDK. A widened code scan finds no other reader of the table.
+
+**The patch.** A load-time poke, `GT5P_POKE_BOOT=01287DD0=4017B426` (new in
+`main.cpp`), writes 64/27 before the game runs.
+
+- The game's own setup then gives the camera 21:9 (ratio 0.4219) and the
+  race HUD lays itself out centred.
+- The main menu's 2D layout stays at the full width, so menus will need the
+  renderer's pillarboxing.
+- `0x0138D2B0` stays 16/9; it is written through another path.
+
+The address is now `aspect_16_9_float` in `config/targets.json`.
+
 ## Phase 120 - Rebindable keyboard keys (2026-10-22)
 
 **Follow-up: the Options tag's Select.** The "SELECT  PC settings" tag on
