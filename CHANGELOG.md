@@ -5,6 +5,28 @@ versions follow [SemVer](https://semver.org/). Nothing is tagged yet.
 
 ## [Unreleased]
 
+### Disc build (BCUS98158), October 2026: Phases 17 to 72
+
+Summarised here; the evidence is in [docs/progress.md](docs/progress.md).
+
+- A second target, the US disc release. Its per-build constants are in
+  `config/targets.json`, and its ps3recomp changes are in `patches/`.
+- It boots to the main menu, with the 3D scene, menu music and pads (SDL2,
+  XInput, keyboard). The opening movie plays through FFmpeg.
+- Dealerships draw, with car materials, shadows and cube maps; the page
+  freezes are fixed. Daytona's Race Mode page draws with an animated crew,
+  and a race loads and drives. Frame rates run from about 22 to 30 fps.
+- A settings file and an in-game settings page (F1), a profiler (F3), and a
+  "Compiling shaders" badge. Shaders compile on a worker pool and are
+  cached on disk.
+- Lifter fixes found on the way, which apply to any title:
+  - PPU: `stvlx`, `stvrx`, `lswi`, `stswi` and `vsum4sbs` were lifted as
+    no-ops; jump tables behind seeded case starts were dropped.
+  - SPU: `bisl $r0,$r0` wrote the link before reading the target;
+    indirect branch targets kept their low bits; loop entries reached only
+    through an address table were never lifted.
+- Test drivers in `scripts/test/` and diagnostics in `scripts/diag/`.
+
 ### Changed
 - Build against current ps3recomp `master` (`795ac34`) instead of the August
   snapshot branch `wip/gt5p-session-diagnostics`. Every toolkit PR this port

@@ -30,7 +30,11 @@ complex target, is 7,924 functions.
 
 ## Status
 
-**Pre-alpha. It boots and loads its own content. It does not draw a frame yet.**
+*This section is upstream's PSN build (NPUA80075), as last measured on
+2026-09-28. This fork's disc build (BCUS98158) is much further along: it runs
+from the menus into a race. See [This fork: the disc build](#this-fork-the-disc-build).*
+
+**NPUA80075: pre-alpha. It boots and loads its own content. It does not draw a frame yet.**
 
 | Area | State |
 |---|---|
@@ -49,6 +53,19 @@ comes next is in [ROADMAP.md](ROADMAP.md); versions in [CHANGELOG.md](CHANGELOG.
 
 ## This fork: the disc build
 
+F1 now offers **Background pipeline creation** and **Prepare race pipelines**,
+both enabled by default after restart. Race loading prepares previously learned
+states; unexpected driver pipelines build in the background. With **Preload known
+shaders** enabled, startup preparation runs alongside the opening movie,
+prioritizing live draws and learned menu states. First visits
+can still introduce new states. See [shader preparation](docs/shader-precompile.md#race-loading-and-background-pipelines)
+and [Phase 99](docs/progress.md#phase-99---prepare-the-cache-alongside-opening-screens-and-movie-2026-10-20)
+for validation and limits.
+
+The rear-view depth-clear fix remains enabled. Tunnel lighting, black barriers,
+road/racing-line issues and close Golf rim verification remain open. Material
+source-range experiments stay opt-in because they can streak the road.
+
 This is a fork of [sp00nznet/GT5P](https://github.com/sp00nznet/GT5P). Upstream
 targets the US PSN release, NPUA80075 v02.00. This fork adds a second target,
 the **US disc release, BCUS98158 v03.00**, which is a different executable:
@@ -56,23 +73,95 @@ more code, more imports, and a single `GT.VOL` volume in place of the `PDIPFS`
 tree. Everything above and below this section still describes NPUA80075 unless
 it says otherwise.
 
-**Disc build status: pre-alpha. It loads its start-up assets and then waits. It
-does not draw a frame, and the boot is not yet the same on every run.**
+**Disc build status (2026-10-20, Phase 93): playable from the menus into a
+race.** It boots to the main menu, the dealerships draw, and Arcade reaches
+Daytona's Race Mode page with an animated pit crew. A Single Race loads and
+drives. Dealerships run at about 22 to 30 fps; steady 60 fps in races remains
+open. The main race-start freeze and the 1080p
+menu's black tree rectangles have fixes; intermittent start stalls remain. MSAA depth now reaches depth of
+field, the crowd has coloured spectators, and race textures have more cache
+capacity. High Speed Ring's road filtering and cars appearing over the bridge
+are fixed, and native pipeline compilation is cached between sessions.
+Distant scenery now uses its mip chain to reduce grain, and loading-screen
+car names no longer lose glyph parts or show solid blocks. Road normal-map
+samples now honour signed expansion, and compressed scenery mip chains stop
+at their valid shorter-axis limit. `RSX_TEX_EXPAND=0` and
+`RSX_BC_MIP_LIMIT=0` restore those two faults for comparison.
+The opening logos also show at 1080p; `SCREEN_AS_TEX=1` restores the old
+size-only frame-copy substitution that hid them.
+Dark-region flicker in the menus/showroom also has a fix: dither textures on
+upper units now use the correct pixel coordinates (`RSX_UNNORM_HI=0` to compare).
+The reported dark High Speed Ring water matches RPCS3 in the user's comparison;
+its appearance is unchanged. The missing 1080p race-map outline is also fixed:
+MAIN texture uploads no longer sample overlapping LOCAL render targets
+(`RSX_RT_LOCATION=0` restores the old lookup). Missing replay controls and the
+reported dark tunnel remain under investigation.
+Runtime log Auto now stays quiet for IDE/redirected launches too, removing
+per-job logging that overloaded the sound job chain. Debug reports still work
+with this setting; Runtime log On explicitly enables expensive tracing.
+Guest PPU threads now default to separate physical cores (`PS3_PPU_CORES=3`
+restores previous placement), improving measured High Speed Ring throughput.
+A callback/condition lost-wake defect also has a regression-tested fix.
+The captured loading/driving freeze has a further fix: an incorrect SPU
+argument enabled profiling writes over the render-job queue. Correcting it
+preserves job pointers; a driven two-lap High Speed Ring run reached results
+without the long pause sequence (`SPURS_PM_ARG64=0` restores the defect).
+On supported CPUs, three busy audio images now use native fused arithmetic,
+reducing measured sound-worker CPU from 92% to 78% of a core in a High Speed
+Ring check. CPU/OS detection keeps the portable path on other machines;
+`GT5P_AUDIO_NATIVE=0` restores it for comparison. Remaining audio underruns
+and stable 60 fps remain open.
+The rest of this section and
+[AGENTS.md](AGENTS.md) ("Start here") give the details and what is open.
+
+For a bug report, first enable **F1 Settings → DEBUG → Debug export** (Off by
+default). When the fault occurs, open **F3 → Export debug report**, or press
+**F8 while F3 is visible**. Attach the ZIP from `logs/debug/`; the F3 panel also
+has **Open reports folder**. The option applies immediately. It retains recent
+logs only while enabled, so turn it on before reproducing the problem.
+Reports include settings/build details, frame history, thread/FIFO/SPU state
+and a best-effort game-window screenshot. While enabled, they also retain up
+to eight state samples taken during hitches over 250 ms (`hitches.txt`), so a
+report after recovery can include the stall itself. A blocked renderer may
+prevent the screenshot; the rest of the report can still save. The intermittent
+High Speed Ring grid-preview corruption remains under investigation.
+
+To prepare previously seen shaders before playing, enable **F1 Settings →
+VIDEO → Preload known shaders**, then restart. It defaults Off.
+This build first learns pipeline records during normal play; later launches
+prepare up to 4,096 recorded pipelines before guest execution, with progress
+in the window title. Keep Shader cache enabled. New tracks, cars and effects
+can still compile later: this does not discover every possible shader in the
+game. Startup takes longer and retains extra pipeline objects in memory.
+The existing asynchronous option is now named **Background shader compilation**.
+The London exports also show separate 1–2-second waits for guest command
+production with no shader compile work active; startup preload does not fix
+that unresolved stall.
+
+An [offline game-shader compiler](docs/shader-precompile.md) can now extract
+fragment programs from the executable and unpacked assets, then prepare their
+base and learned render-state variants before play. It uses the normal cache
+and compiler. This is broader than replaying known pipelines; vertex programs,
+generated programs, unsupported records and unseen states remain open.
+
+Experimental Windows Vulkan support is assessed in
+[docs/plan-vulkan.md](docs/plan-vulkan.md). The runtime has a Linux Vulkan
+backend to build on; Vulkan is not currently available as a GT5P renderer.
 
 | Area | NPUA80075 v02.00 | BCUS98158 v03.00 |
 |---|---|---|
 | Decrypt | RAP-derived key, `ps3sce` | RPCS3 `--decrypt`, no RAP needed |
-| PPU lift | 42,316 functions | 50,075 functions, clean compile |
+| PPU lift | 42,316 functions | 50,065 functions, clean compile |
 | Imports | 439 across 26 modules | 565 across 31 modules |
-| SPU | 12 images | Policy module and 12 job images, 0 dispatch misses |
-| Boot | 116 `PDIPFS` assets, 8 of 8 runs | 127 `GT.VOL` opens in 12 of 14 runs; 2 deadlock after 40 |
-| Where main stops | `sys_cond_wait` | `sys_cond_wait` in the good runs |
-| Graphics, audio, input | Not reached | Audio port opened, pad polled, flips cycle; no frame |
+| SPU | 12 images | Policy module, 12 job images and 7 job bodies (9,115 functions), 0 dispatch misses |
+| Boot | 116 `PDIPFS` assets, 8 of 8 runs | Main menu in about 14 s |
+| Graphics | Not reached | D3D12: menus, dealer showroom, pit, race; MSAA, shadow maps, sRGB, cube maps |
+| Audio, input, video | Not reached | Menu music; pads through SDL2, XInput or the keyboard; the opening movie through FFmpeg |
 
-In the good runs the disc build's file activity matches an RPCS3 boot of the
-same disc through about the first 11 seconds of game time: the same 24 paths in
-the same order. The two builds' asset counts are not comparable, because one
-counts distinct files and the other counts opens of one volume.
+Settings (resolution, MSAA, vsync and more) are in `gt5p_settings.toml` at
+the root and on an in-game page (F1). F3 shows a profiler.
+
+The table above this section is upstream's and still describes NPUA80075.
 
 What the disc build needs that upstream does not:
 
@@ -84,10 +173,16 @@ What the disc build needs that upstream does not:
 - **Local ps3recomp changes.** The disc build does not boot on stock ps3recomp.
   The changes are in
   [patches/ps3recomp-5244db9-local.patch](patches/ps3recomp-5244db9-local.patch),
-  against ps3recomp `5244db9`: per-instance SPURS event ports, a per-pass job
-  index, a switch for the runtime's stand-in job-completion event, and a
-  game-data check that reports new data truthfully. They have not been sent to
-  ps3recomp.
+  against ps3recomp `5244db9`. They touch 62 files and cover:
+  - SPURS and the job manager;
+  - the PPU and SPU lifters (jump tables, `bisl`, vector stores);
+  - the D3D12 RSX backend (render targets, MSAA, shadow compares, samplers,
+    vertex fetch);
+  - cellGcm, cellPad, the codecs, and the diagnostics the progress log
+    names.
+
+  Each change has an environment switch that undoes it. They have not been
+  sent to ps3recomp.
 
 Building the disc build, from a dump of your own disc:
 
@@ -105,6 +200,8 @@ python -c "import json; f=json.load(open('analysis/functions.json')); json.dump(
 PYTHONPATH=$T python scripts/gen_hle_stubs.py input/EMAIN.ELF analysis/hle_stubs.json
 python $T/ppu_lifter.py input/EMAIN.ELF --functions analysis/functions_code.json --output generated --code-end 0xE3EC24 --header-name ppu_recomp.h --source-name ppu_recomp.c --hle-stubs analysis/hle_stubs.json
 python scripts/setjmp_patch.py
+python scripts/spin_patch.py
+python scripts/ui_mask_patch.py
 python $T/gen_hle_nids.py --all --out src/gen/ppu_hle_nids.cpp
 scripts/build.cmd -DGT5P_TARGET=BCUS98158
 ```
@@ -113,7 +210,18 @@ The SPU registry for the disc build is committed
 (`src/gen/spu_workloads_bcus98158.c`), but the lifted SPU sources are not, as
 with everything under `generated/`. To produce them, build once, run with
 `SPU_DUMP_MISS=analysis/spu/dump` to capture the job images, then run
-`python scripts/lift_spu_jobs.py` and rebuild.
+`python scripts/lift_spu_jobs.py` and rebuild. The job bodies come straight
+from the executable (`wws_job_bodies` in `config/targets.json`). Re-run both
+lifts whenever ps3recomp's lifters change: Phases 69 and 72 fixed lifter
+bugs that only a re-lift picks up.
+
+Optional run-time pieces, fetched into `third_party/` (gitignored) and
+copied beside the exe by the build:
+
+- `scripts\get_sdl2.ps1`: controllers through SDL2;
+- `scripts\get_ffmpeg.ps1`: the opening movie.
+
+Then run `play.cmd`.
 
 Tools added for this work:
 
@@ -121,18 +229,21 @@ Tools added for this work:
 |---|---|
 | `python scripts/soak.py 8 40` | 8 headless boots of 40 s; one line of counts per run. Works for either build |
 | `python scripts/boot.py 40 NAME=VALUE` | One boot with a log summary; extra arguments set the game's environment |
+| `scripts\test\*.ps1` | Drive the game by milestones to a page (dealer, pit, race) and shoot or measure it; see [AGENTS.md](AGENTS.md) |
+| `scripts\diag\*.py` | Log readers, call-count instrumenters for lifted code, RenderDoc scripts |
 | `python scripts/threads.py` | What each guest thread was last doing, from a boot log |
 | `python scripts/cdis.py 0xADDR` | Full disassembly of a function |
 | `python scripts/find_setjmp.py` | Locate the guest `setjmp`/`longjmp` in a build where they are unknown |
 | `python scripts/rpcs3log.py RPCS3.log` | Summarise an RPCS3 log for comparison against a port run |
 
-The investigation is Phase 17 of [docs/progress.md](docs/progress.md), and
-[AGENTS.md](AGENTS.md) is the working brief for the disc build.
+The investigation is Phases 17 to 76 of [docs/progress.md](docs/progress.md)
+(newest first), and [AGENTS.md](AGENTS.md) is the working brief for the disc
+build. Its "Start here" section is the current state.
 
 ## Screenshots
 
-None yet — the title has not presented a frame. This section gets real output
-the day it does.
+None are committed: they are pictures of the game's own assets. The disc
+build presents frames, from the menus to a race.
 
 ## Getting Started
 
@@ -183,12 +294,38 @@ comment on each: resolution (720p or 1080p), antialiasing, vsync, the shader
 cache, the shader indicator, controllers and the keyboard. You can also edit
 it by hand and restart.
 
+Controllers can be disconnected and reconnected while playing; SDL device
+discovery runs independently of the game's input calls. Windows audio follows
+the default output within about half a second and retries if an output becomes
+unavailable. Diagnostic overrides: `PAD_HOTPLUG=0` uses polling on the calling
+thread; `AUDIO_HOTPLUG=0` keeps the initially opened output.
+
 While the game builds shaders the picture stops for a moment (several seconds
 the first time a screen is seen); a "Compiling shaders" badge in the corner
 says so. It can be turned off on the settings page. An environment variable for the same switch (shown in the file's
 comments) wins over it; delete the file to get the defaults back.
 `GT5P_SETTINGS=<path>` names another file, and `GT5P_NO_SETTINGS=1` ignores it,
 as `scripts/boot.py` and `scripts/soak.py` do.
+
+**Warming race shaders.** Run `scripts/test/race.ps1 -Track HighSpeedRing
+-Tag warm-hsr -Seconds 60` in PowerShell to load the pit and race and populate
+the local caches before playing. `-Track Daytona` selects Daytona instead;
+append `GT5P_RESOLUTION=1080p RSX_MSAA=2` for that configuration. The helper
+closes the game when finished. It warms materials seen during the run; other
+cars, views or tracks can still need new shaders on their first appearance.
+Add `-IntroShots` to save the race-start transition once per second for
+graphics checks; these shots finish before fps sampling begins.
+`-GridIdleSeconds 180` or `-PitIdleSeconds 180` adds a three-minute wait on
+that page with periodic window shots. The helper rejects FPS sampling with
+no actual presents; inspect the shots and racing timer to confirm race entry.
+Both shader bytecode and driver-compiled pipelines are cached locally.
+Driver updates invalidate pipeline blobs safely; rejected entries are rebuilt.
+`RSX_PSO_DISK=0` disables the driver cache, and disabling the shader cache in
+settings disables both. Keep `shadercache/`; do not download another machine's
+pipeline blobs.
+Repeated bytecode used by pipeline variants is also retained in memory, up to
+64 MiB (`RSX_DXBC_MEM=0` disables that layer). Loading a saved native pipeline
+does not count as compiling work on the badge.
 
 **Movies.** The opening movie is decoded with FFmpeg, loaded at run time. Run
 `scripts\get_ffmpeg.ps1` once (it fetches a pinned LGPL build into

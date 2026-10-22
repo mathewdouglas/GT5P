@@ -35,6 +35,9 @@
 
 #include "elf_loader.h"
 #include "gt5p_settings.h"
+#include "gt5p_debug_export.h"
+#include "gt5p_glyphs.h"
+#include "gt5p_keymap.h"
 
 /* The lifter's function table, defined in the generated sources. Declared here
  * rather than including generated/ppu_recomp.h: that header defines its own
@@ -79,6 +82,7 @@ void vm_write16(uint64_t a, uint16_t v);
 uint64_t vm_read64(uint64_t a);
 extern const char* g_hle_inflight[64];    /* per-thread: HLE currently executing */
 void gt5p_spu_register_all(void);         /* generated: src/gen/spu_workloads.c */
+void gt5p_audio_select_native(void);      /* CPU-dispatched audio images */
 void gt5p_start_present_thread(void);     /* src/gt5p_present.cpp */
 }
 
@@ -100,6 +104,16 @@ void gt5p_start_present_thread(void);     /* src/gt5p_present.cpp */
 #define GT5P_MAIN_STACK_SIZE 0x00100000u
 
 static ppu_context g_main_ctx;
+
+extern "C" void gt5p_debug_main(FILE* out)
+{
+    unsigned tid = (unsigned)g_main_ctx.thread_id;
+    fprintf(out, "Main PPU context: tid=%u hle=%s lr=%08llX ctr=%08llX\n",
+        tid, tid < 64 && g_hle_inflight[tid] ? g_hle_inflight[tid] : "-",
+        (unsigned long long)g_main_ctx.lr, (unsigned long long)g_main_ctx.ctr);
+    for (int r = 0; r < 32; r++) fprintf(out, "r%d=%016llX%s", r,
+        (unsigned long long)g_main_ctx.gpr[r], r % 4 == 3 ? "\n" : " ");
+}
 
 /* How the HLE libraries call back into lifted code (ps3emu/guest_call.h). The
  * runtime leaves the hook NULL and a library that finds it NULL skips its
@@ -652,6 +666,7 @@ static void window_closed(void)
 {
     printf("[GT5P] window closed; exiting\n");
     fflush(stdout); fflush(stderr);
+    gt5p_debug_shutdown();
     ExitProcess(0);
 }
 
@@ -708,12 +723,12 @@ int main(int argc, char* argv[])
      * not already set (see gt5p_settings.h). */
     gt5p_settings_load();
 
-    /* Someone started this by hand if its output is a console window rather
-     * than a file. Verbose logging serialises every guest thread on one lock
-     * (the sound stutters and the menu drops frames), so it is off for them
-     * unless asked for; the scripts redirect output and are not affected. */
+    /* Quiet for every launch path, including IDE output pipes and the debug
+     * export's log pipes. The runtime otherwise treats redirected stderr as
+     * an opt-in to per-job logging: thousands of writes/flushes per second
+     * contend with audio and rendering. PS3_VERBOSE=1 explicitly restores it. */
     const bool by_hand = GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) == FILE_TYPE_CHAR;
-    if (by_hand && !getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
+    if (!getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
 
     if (argc <= 1 && !locate_project_root()) {
         const char* msg =
@@ -728,6 +743,9 @@ int main(int argc, char* argv[])
     }
 
     rsx_d3d12_on_close = window_closed;
+    gt5p_debug_init();
+    gt5p_keymap_init();   /* the keyboard's bindings ([keyboard], PAD_KEYMAP) */
+    gt5p_glyphs_init();   /* button prompts for the device in use (GT5P_GLYPHS=0: off) */
 
     /* Schedule guest threads by their PS3 priority on two host cores, as the
      * console's two hardware threads would. Left to the host scheduler, about
@@ -735,6 +753,29 @@ int main(int argc, char* argv[])
      * did (docs/progress.md, Phase 22). Set PS3_PPU_PRIO_SCHED=0 to turn it
      * off. Must be set before the runtime creates its first thread. */
     if (!getenv("PS3_PPU_PRIO_SCHED")) _putenv_s("PS3_PPU_PRIO_SCHED", "2");
+    /* The current race workload benefits from separate physical PPU cores;
+     * the older shared-SMT placement bottlenecks command production. The
+     * runtime's topology path also keeps render lanes off both sibling CPUs.
+     * PS3_PPU_CORES=3 restores the previous placement (Phase 91).
+     * topo-ht also gives the guest both hardware threads of those two cores:
+     * with one each, the race clock ran at about half of real time (slow
+     * motion, Phase 102). PS3_PPU_CORES=topo for one thread per core. */
+    if (!getenv("PS3_PPU_CORES")) _putenv_s("PS3_PPU_CORES", "topo-ht");
+
+    /* The title's frame pacer pads each frame with a sleep up to the slowest
+     * of the last four (up to 50 ms) once one passes a vblank. On a console
+     * frame times vary by microseconds; here an SPU wait or a preempted
+     * thread does it, and the pad copies one slow frame onto the next few
+     * (Phase 106). Skip that sleep: the race clock follows the title's timer
+     * service, not frames, so game speed is unchanged. GT5P_PACER_PAD=1 keeps
+     * the title's padding. */
+    { const char* pad = getenv("GT5P_PACER_PAD");
+      if (GT5P_PACER_LR[0] && !(pad && pad[0] == '1') && !getenv("PS3_USLEEP_SKIP_LR"))
+          _putenv_s("PS3_USLEEP_SKIP_LR", GT5P_PACER_LR); }
+
+    /* The mListBox vtable, for the settings page's race-pause check
+     * (gt5p_settings_ui.cpp, Phase 117). */
+    if (GT5P_LISTBOX_VT[0] && !getenv("GT5P_LISTBOX_VTABLE")) _putenv_s("GT5P_LISTBOX_VTABLE", GT5P_LISTBOX_VT);
 
     /* Run a SPURS workload only while its ready count is nonzero, on as many
      * virtual SPUs as the count asks for. This title fills a job list first
@@ -852,10 +893,26 @@ int main(int argc, char* argv[])
      * runtime reports 720p unless told otherwise, and the game renders at what
      * it is told; it supported 1080p on the console. The present window
      * follows (gt5p_present.cpp). */
-    if (gt5p_settings().resolution == 1080) {
+    if (gt5p_settings().resolution >= 1080) {
         cellVideoOut_set_resolution(1 /* CELL_VIDEO_OUT_RESOLUTION_1080 */);
         printf("[GT5P] reporting a 1920x1080 display\n");
     }
+    /* 1440p and 2160p (4K): the game is told 1080p and lays out and frames
+     * everything as it would there; the backend renders its full-screen
+     * surfaces that many rows tall (RSX_RENDER_HEIGHT), so the picture is the
+     * same, natively sharper. The window is 2560x1440 / 3440x1440 ultrawide,
+     * or 3840x2160 / 5120x2160. GT5P_RENDER_NATIVE=0: render at 1080p and let
+     * the output pass scale it up instead. */
+    const int res = gt5p_settings().resolution;
+    const bool res1440 = res == 1440, res_hi = res > 1080;
+    if (res_hi && !getenv("RSX_OUTPUT_SIZE")) {
+        const char* uw = getenv("GT5P_ULTRAWIDE");
+        const bool w = uw && uw[0] && uw[0] != '0';
+        _putenv_s("RSX_OUTPUT_SIZE", res1440 ? (w ? "3440x1440" : "2560x1440") : (w ? "5120x2160" : "3840x2160"));
+    }
+    { const char* nat = getenv("GT5P_RENDER_NATIVE");
+      if (res_hi && !(nat && nat[0] == '0') && !getenv("RSX_RENDER_HEIGHT"))
+          _putenv_s("RSX_RENDER_HEIGHT", res1440 ? "1440" : "2160"); }
 
     lv2_register_all_syscalls(&g_lv2_syscalls);
 
@@ -867,6 +924,58 @@ int main(int argc, char* argv[])
         vm_shutdown();
         return EXIT_FAILURE;
     }
+    /* GT5P_POKE_BOOT=addr=value[,...]: write guest words (hex, as the guest
+     * reads them) into the loaded image before it runs. A diagnostic, for
+     * data the title reads once at start (Phase 121's aspect table). */
+    if (const char* e = getenv("GT5P_POKE_BOOT")) {
+        for (const char* p = e; p && *p;) {
+            char* q = nullptr;
+            const uint32_t a = (uint32_t)strtoul(p, &q, 16);
+            if (q && *q == '=') {
+                const uint32_t v = (uint32_t)strtoul(q + 1, &q, 16);
+                const uint32_t be = _byteswap_ulong(v);
+                memcpy(vm_base + a, &be, 4);
+                printf("[GT5P] poke 0x%08X = 0x%08X\n", a, v);
+            }
+            p = q ? strchr(q, ',') : nullptr; if (p) p++;
+        }
+    }
+
+    /* GT5P_ULTRAWIDE=1: a 21:9 picture. The title takes its aspect ratios once,
+     * at boot, from two constants (docs/plan-ultrawide.md): aspect_16_9_float
+     * for its cameras and the race HUD (64/27 there: a 21:9 projection, the
+     * same vertical field of view), ui_aspect_16_9_float for the menus' 2D
+     * layout (centred at 16:9 proportions). A third,
+     * scene_camera_aspect_16_9_float, is the scene cameras' (the main menu's
+     * background, the dealer, the pit), set through func_005E8020;
+     * GT5P_ULTRAWIDE_CAM=0 leaves it. The window is made 21:9 too
+     * (RSX_ULTRAWIDE, read by the backend). GT5P_ULTRAWIDE_UI=0 leaves the
+     * menus' constant alone (stretched menus). */
+    { const char* uw = getenv("GT5P_ULTRAWIDE");
+      if (uw && uw[0] && uw[0] != '0' && GT5P_ASPECT_ADDR[0]) {
+          const char* ui = getenv("GT5P_ULTRAWIDE_UI");
+          const char* cam = getenv("GT5P_ULTRAWIDE_CAM");
+          const char* addrs[3] = { GT5P_ASPECT_ADDR, (ui && ui[0] == '0') ? "" : GT5P_UI_ASPECT_ADDR,
+                                   (cam && cam[0] == '0') ? "" : GT5P_CAM_ASPECT_ADDR };
+          for (const char* as : addrs) {
+              if (!as[0]) continue;
+              const uint32_t a = (uint32_t)strtoul(as, nullptr, 16);
+              uint32_t cur; memcpy(&cur, vm_base + a, 4);
+              if (_byteswap_ulong(cur) == 0x3FE38E39u) {          /* 16/9, as expected */
+                  /* 64/27 (2560x1080, 5120x2160), or 43/18 for 3440x1440. */
+                  const uint32_t be = _byteswap_ulong(res1440 ? 0x4018E38Eu : 0x4017B426u);
+                  memcpy(vm_base + a, &be, 4);
+                  printf("[GT5P] ultrawide: 21:9 aspect at 0x%08X\n", a);
+              } else fprintf(stderr, "[GT5P] ultrawide: 0x%08X is not 16/9 (%08X); not patched\n", a, _byteswap_ulong(cur));
+          }
+          /* Rendered natively 21:9 (RSX_ULTRAWIDE=2) unless GT5P_ULTRAWIDE=
+           * anamorphic (=1: the swap chain stretches a 16:9 frame). */
+          if (!getenv("RSX_ULTRAWIDE")) _putenv_s("RSX_ULTRAWIDE", (uw[0] == 'a' || uw[0] == 'A') ? "1" : "2");
+          if (res1440 && !getenv("RSX_ULTRAWIDE_ASPECT")) _putenv_s("RSX_ULTRAWIDE_ASPECT", "2.3888889");
+          /* Full-screen 2D layers stretched to the 21:9 edges belong to the
+           * menus' centred layout. */
+          if (ui && ui[0] == '0' && !getenv("RSX_ULTRAWIDE_EDGES")) _putenv_s("RSX_ULTRAWIDE_EDGES", "0");
+      } }
 
     ppu_hle_register_all();
     ppu_sysprx_register();
@@ -879,6 +988,7 @@ int main(int argc, char* argv[])
      * build's jobs send their own (config/targets.json). */
     spurs_set_synth_job_done(GT5P_SPURS_SYNTH_DONE);
     gt5p_spu_register_all();   /* after the ELF load: fingerprints the loaded image */
+    gt5p_audio_select_native(); /* before any SPU job or lookup cache can run */
 
     uint32_t entry_addr = (uint32_t)elf.func_addr;
     auto entry_func = dispatch_lookup(entry_addr);
@@ -967,6 +1077,11 @@ int main(int argc, char* argv[])
 #endif
 
     gt5p_start_present_thread();
+
+    if (const char* only = getenv("GT5P_SHADER_PRECOMPILE_ONLY"); only && !strcmp(only, "1")) {
+        printf("[shader-library] offline preparation returned; guest entry was not executed\n");
+        return 0;
+    }
 
     printf("[GT5P] Executing 0x%08X (TOC 0x%08X)...\n\n",
            entry_addr, (uint32_t)elf.toc);

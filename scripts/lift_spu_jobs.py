@@ -60,6 +60,10 @@ PIC_TABLES = os.environ.get("SPU_PIC_TABLES", "1") != "0"
 # lifted unchanged. SPU_RESUME_SEEDS=0 lifts without them.
 RESUME_SEEDS = os.environ.get("SPU_RESUME_SEEDS", "1") != "0"
 
+# Absolute code-address tables in job bodies (Phase 72, abs_tables).
+# SPU_ABS_TABLES=0 lifts without their targets.
+ABS_TABLES = os.environ.get("SPU_ABS_TABLES", "1") != "0"
+
 
 def run(*args):
     r = subprocess.run([sys.executable, *map(str, args)],
@@ -82,6 +86,26 @@ def lift(blob, prefix, outdir, base=0, extra=None):
         *(["--resume-funcs", ",".join(map(hex, sorted(resume)))] if resume else []),
         *(["--regcache"] if REGCACHE else []))
     return int(n_funcs.group(1).replace(",", "")) if n_funcs else 0
+
+
+def abs_tables(raw, lsa):
+    """Targets of absolute code-address tables: quadwords whose four words are
+    each 0 or a word-aligned address inside the image, at least two of them
+    set. The render body's skinning keeps its software-pipelined loop entries
+    that way (LS 0x16330-0x16400 in 0x01376080) and reaches them by `lqa`,
+    `rotqbyi` and `bi`; 0x11520 was never lifted, so every skinned draw fell
+    to the SPU interpreter (Phase 72). Shuffle-pattern constants have their
+    low bits set and fail the alignment test."""
+    lo, hi = lsa + 0x10, lsa + len(raw)
+    found = set()
+    # The first 0x20 bytes are the body's header: entry OFFSETS, not addresses.
+    for o in range(0x20, len(raw) - 15, 16):
+        ws = [int.from_bytes(raw[o + i:o + i + 4], "big") for i in range(0, 16, 4)]
+        ok = [w == 0 or (w % 4 == 0 and lo <= w < hi) for w in ws]
+        if all(ok) and sum(1 for w in ws if w) >= 2:
+            found |= {w for w in ws if w}
+    # A target must hold an instruction, not more table.
+    return {t for t in found if int.from_bytes(raw[t - lsa:t - lsa + 4], "big") != 0}
 
 
 def resume_points(raw, base, funcs_json):
@@ -174,8 +198,18 @@ XFER_RE = re.compile(
     r"g_spu_trampoline_fn = (\w+_spu_func_([0-9A-F]{8})); return; \}")
 
 
+# Job bodies get the same treatment (Phase 107): the race's one-SPU workloads
+# run body 0x0133A700, whose hot list walk went through the dispatcher on every
+# block. SPU_CHAIN_BODIES=0 at lift time leaves bodies as before.
+CHAIN_BODIES = os.environ.get("SPU_CHAIN_BODIES", "1") != "0"
+# Backward transfers too (Phase 109). SPU_CHAIN_BACK=0 at lift time leaves
+# them on the dispatcher; SPU_CHAIN_BACK=0 at run time does the same for a
+# lift that has them (g_spu_chain_back).
+CHAIN_BACK = os.environ.get("SPU_CHAIN_BACK", "1") != "0"
+
+
 def chain_forward(outdir):
-    """Turn transfers to a LATER block of the same image into direct tail calls.
+    """Turn transfers to another block of the same image into direct tail calls.
 
     The lifter ends every block by naming the next one in g_spu_trampoline_fn
     and returning to a dispatch loop, including when the next block is simply
@@ -183,23 +217,38 @@ def chain_forward(outdir):
     such blocks, so each audio sample cost three trips through the dispatcher
     and its per-step checks, which was over a quarter of the job thread's
     time. A forward transfer (taken or fallen into) becomes a guaranteed tail
-    call instead. Backward transfers still go through the dispatcher, so every
-    loop keeps passing the point where interrupts and halts are noticed.
+    call instead.
+
+    Backward transfers (a loop's closing branch, Phase 109) too: the mixer's
+    per-sample filter at 0x1E8 of image j65DD2F53 took 40% of the job thread
+    in the hood camera, a dispatcher trip per sample. They keep the
+    dispatcher's interrupt check inline and take the dispatcher while
+    g_spu_chain_back is 0. A branch to 0 is a job's end, which only the
+    dispatcher notices, so it is left alone.
     `spu_link` calls and indirect branches are left alone. Idempotent."""
     src = outdir / "spu_recomp.c"
+    text = src.read_text(encoding="utf-8")
+    own = {m.group(1) + m.group(2) for m in map(FUNC_RE.match, text.split("\n")) if m}
     out, cur, n = [], None, 0
-    for line in src.read_text(encoding="utf-8").split("\n"):
+    for line in text.split("\n"):
         m = FUNC_RE.match(line)
         if m:
             cur = int(m.group(2), 16)
         elif cur is not None and "spu_link(" not in line:
             def sub(x):
                 nonlocal n
-                if int(x.group(4), 16) <= cur:
+                target = int(x.group(4), 16)
+                if target > cur:
+                    n += 1
+                    return ("{ %sctx->pc = %s; __attribute__((musttail)) return %s(ctx); }"
+                            % (x.group(1), x.group(2), x.group(3)))
+                if not CHAIN_BACK or target == 0 or x.group(3) not in own:
                     return x.group(0)
                 n += 1
-                return ("{ %sctx->pc = %s; __attribute__((musttail)) return %s(ctx); }"
-                        % (x.group(1), x.group(2), x.group(3)))
+                return ("{ %sctx->pc = %s; if (__builtin_expect(!g_spu_chain_back || g_spu_stack_reset_n || "
+                        "(ctx->int_enable && (ctx->event_status & ctx->event_mask)), 0)) "
+                        "{ g_spu_trampoline_fn = %s; return; } __attribute__((musttail)) return %s(ctx); }"
+                        % (x.group(1), x.group(2), x.group(3), x.group(3)))
             line = XFER_RE.sub(sub, line)
         out.append(line)
     src.write_text("\n".join(out), encoding="utf-8", newline="\n")
@@ -209,9 +258,9 @@ def chain_forward(outdir):
 def main():    # --chain: apply chain_forward to the job images already generated, without
     # lifting again.
     if "--chain" in sys.argv:
-        for d in sorted(OUT.glob("j*")):
+        for d in sorted(OUT.glob("j*")) + (sorted(OUT.glob("b*")) if CHAIN_BODIES else []):
             if d.is_dir():
-                print(f"  {d.name}: {chain_forward(d)} forward transfers made direct")
+                print(f"  {d.name}: {chain_forward(d)} transfers made direct")
         return
     policy_only = "--policy-only" in sys.argv
     dumps = sorted(p for p in DUMPS.glob("spujob_*.bin") if NAME_RE.match(p.name))
@@ -247,7 +296,7 @@ def main():    # --chain: apply chain_forward to the job images already generate
         n = lift(blob, prefix, outdir, extra=",".join(map(hex, sorted(seeds))) or None)
         total += n
         print(f"  {blob.name}: {n} functions -> {outdir.relative_to(ROOT)}"
-              f" ({chain_forward(outdir)} forward transfers made direct)")
+              f" ({chain_forward(outdir)} transfers made direct)")
         jobs.append((fp, int(size), prefix, i, blob.name))
 
     externs = "\n".join(
@@ -277,9 +326,12 @@ def main():    # --chain: apply chain_forward to the job images already generate
         seeds = {lsa + int.from_bytes(raw[0x10:0x14], "big")} | pic_continuations(raw, lsa)
         if PIC_TABLES:
             seeds |= pic_tables(raw, lsa)
+        if ABS_TABLES:
+            seeds |= abs_tables(raw, lsa)
         n = lift(blob, prefix, outdir, base=lsa, extra=",".join(map(hex, sorted(seeds))))
         total += n
-        print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}")
+        chained = f" ({chain_forward(outdir)} transfers made direct)" if CHAIN_BODIES else ""
+        print(f"  job body at 0x{ea:08X}: {n} functions -> {outdir.relative_to(ROOT)}{chained}")
         externs += f"\nextern void {prefix}_spu_recomp_register(void);"
         regs += (f"\n\n    /* job body at 0x{ea:08X}, {size} bytes, runs at LS 0x{lsa:X} */\n"
                  f"    spu_begin_image({img});\n"

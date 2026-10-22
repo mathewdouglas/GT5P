@@ -20,19 +20,33 @@
 
 struct Gt5pSettings {
     /* [video] */
-    int resolution = 720;       /* 720 or 1080: the display mode the game is told */
+    int resolution = 720;       /* 720, 1080, 1440 or 2160 (above 1080 the game is told 1080p) */
     int msaa       = 4;         /* samples for targets the game antialiases: 1 (off), 2, 4, 8 */
+    bool ultrawide = false;     /* 21:9 picture (GT5P_ULTRAWIDE, docs/plan-ultrawide.md) */
+    bool borderless = false;    /* a borderless window over the monitor (RSX_WINDOW_MODE) */
     bool vsync        = true;   /* wait for the monitor's vblank when presenting */
     bool shader_cache = true;   /* keep compiled shaders in shadercache/ between runs */
     bool shader_indicator = true;   /* "Compiling shaders" over the game while it is busy */
+    bool shader_warmup = false;     /* prepare recorded pipelines during startup in the background */
+    bool pipeline_async = true;    /* build driver pipelines on one background worker */
+    bool race_preload = true;      /* prepare learned race pipelines during loading */
     bool shader_precompile = true;  /* compile new shaders on background threads, all at once */
 
     /* [input] */
     bool sdl_controllers = true;    /* PlayStation / Switch / generic pads via SDL2.dll */
     bool keyboard        = true;    /* keyboard as pad 1 when no controller is connected */
+    int button_prompts   = 0;       /* 0 auto, 1 PlayStation, 2 Xbox, 3 Nintendo, 4 keyboard (gt5p_glyphs.h) */
+
+    /* [keyboard]: the key (Windows virtual-key code, 0 none) for each button,
+     * in gt5p_keymap.h's order: Cross Circle Square Triangle L1 R1 L2 R2 L3
+     * R3 Start Select Up Down Left Right. */
+    int keys[16] = { 'Z', 'X', 'A', 'S', 'Q', 'W', '1', '2', 0, 0,
+                     0x0D /* Enter */, 0x09 /* Tab */, 0x26, 0x28, 0x25, 0x27 /* arrows */ };
 
     /* [game] */
     bool skip_movie = false;    /* press through the opening movie (PAD_SKIP_MOVIE) */
+    bool smooth_colour = true;  /* 16-bit targets, no dither noise (RSX_HIGH_PRECISION) */
+    int anisotropy = 16;        /* 1 (trilinear), 4, 8 or 16: forced anisotropic filtering (RSX_ANISO) */
 
     /* [performance] */
     int vblank_hz100 = 5994;    /* the vblank clock, in 1/100 Hz: 5994 (console) or 6250 */
@@ -40,7 +54,8 @@ struct Gt5pSettings {
     bool fifth_spu_lane = false;    /* let the render lists use SPU 3 too (experimental) */
 
     /* [debug] */
-    int verbose_log = -1;       /* -1 auto (quiet when started by hand), 0 off, 1 on */
+    int verbose_log = -1;       /* -1 auto (quiet), 0 off, 1 on */
+    bool debug_export = false;  /* opt in to bounded recent logs and F3 reports */
 };
 
 /* The settings in effect, environment overrides included. Built-in defaults

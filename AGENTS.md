@@ -36,6 +36,796 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
+## Start here: state of play (2026-10-21, Phase 108)
+
+Read this section first when picking the work up in a new session on this
+machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
+has the evidence, newest phase first (Phase 108 is the latest).
+
+### What works now
+
+- Boots to the main menu (a save exists; a "Confirmation" popup shows on
+  News every boot), with the 3D scene behind it, about 30 fps.
+- Dealerships: every manufacturer page draws, cars and floor, 22 to 30 fps;
+  the page freeze is fixed (Phase 64).
+- Arcade, then Daytona: the Race Mode page (the "pit") draws, and the crew
+  walk and kneel (Phase 72), about 29 to 30 fps.
+- Single Race loads, and the track, ground and stands draw; about 30 fps
+  (Phases 69 and 70).
+- The opening movie plays when the TV content is visible (Phases 50, 67).
+  Menu sound plays.
+- 1080p is multisampled, and shadows are softened (Phase 71).
+- The 1080p Kyoto menu's black tree rectangles are fixed (Phase 74).
+- MSAA depth reaches depth of field, fixing excess menu blur (Phase 75;
+  `RSX_MSAA_DEPTH_COPY=0` restores the wrong, empty depth source).
+- The race crowd has coloured spectators (Phase 76, `RSX_FOG=0` restores
+  raw-coordinate replication). The texture cache now uses 1024 slots by
+  default; 512 dropped race texture binds (`RSX_TEX_SLOTS=512` to compare).
+- Controller discovery now runs on an SDL owner thread; detached handles are
+  retired before rescanning. WASAPI follows default-output changes and retries
+  lost devices (Phase 77). `PAD_HOTPLUG=0` and `AUDIO_HOTPLUG=0` disable these
+  paths. Isolated recovery checks: `scripts/test/hotplug.ps1`.
+- High Speed Ring's heavily speckled road is improved by correct samplers on
+  all 16 units and authored compressed-texture mips (Phase 78). Pipeline keys
+  ignore unused texture bindings and share identical fragment code across
+  addresses; native driver pipelines now persist beside DXBC in `shadercache/`.
+  `scripts/test/race.ps1 -Track HighSpeedRing` warms a local race cache.
+- Cars no longer draw over the High Speed Ring bridge (Phase 79): scene
+  depth survives shadow/colour-only passes, with real guest depth clears
+  kept in order. `RSX_DEPTH_KEEP=0` restores the fault. Verified at 1080p/2x
+  MSAA; `race.ps1 -IntroShots` captures the introduction. Shared shader
+  bytecode also stays in a bounded memory cache (`RSX_DXBC_MEM=0` bypasses).
+- Distant grass, hills and road now use the uploaded mip chain in per-draw
+  views (Phase 80); previously those views exposed only level zero.
+  `RSX_TEX_MIP_VIEWS=0` restores the grain. Loading-list fonts also reset
+  reused shadow-pass state before building their glyph atlas
+  (`RSX_MASK_STATE_RESET=0` restores missing glyph parts and white blocks).
+  `race.ps1 -LoadingShots` captures the list before it disappears.
+
+- Road normal maps now honour TEX `_bx2`, with typed per-channel expansion,
+  and compressed road textures stop at their valid mip count on the shorter
+  axis (Phase 81). Switches: `RSX_TEX_EXPAND=0`, `RSX_BC_MIP_LIMIT=0`.
+
+- Opening copyright, Sony and Polyphony screens now appear at 1080p (Phase
+  82). Size alone no longer substitutes the black frame copy for their
+  1920x1080 uploads. `SCREEN_AS_TEX=1` restores the old heuristic; actual
+  render-target/display sampling still resolves by address.
+
+- Dark areas no longer pulse together with the title's dither noise (Phase
+  83): texel-addressed 2D textures on units 4-15 now receive coordinate
+  conversion too. `RSX_UNNORM_HI=0` restores the dark dealership-floor flicker.
+  Verified at 1080p/2x MSAA, with menu, 720p and opening-logo checks.
+  `scripts/test/unnorm_hi.ps1` checks the actual backend helpers without a GPU.
+
+### Open work, in the order the user left it
+
+**Latest: anisotropic filtering (Phase 133).** The title asks for none
+(TEXTURE_CONTROL0 max-aniso 0). The bank's linear and trilinear samplers
+are now `D3D12_FILTER_ANISOTROPIC` (`RSX_ANISO`, default 16; F1 GAME >
+Texture filtering, `game.anisotropy`). The root signature is part of the
+pipeline key, so the first run after changing it rebuilds every pipeline:
+captures then show missing draws. That is the rebuild, not a fault.
+
+**Cockpit mirrors (Phase 132).** The cockpit view stamps its
+mirror shapes into the scene's stencil (REPLACE, ref 1/3) and draws each
+mirror through a stencil test. The glyph-mask redirect
+(`rsx_stencil_mask_pass`) took those stamps. It now applies only to the
+text's fill and erase ops (INVERT, INCR/DECR_WRAP, ZERO;
+`RSX_STENCIL_MASK_ANY=1` old). Draws that test stencil keep their zeta
+(`RSX_STENCIL_ZETA=0` old).
+
+**No dither, no banding (Phase 131).** The title's 8-bit colour
+targets are kept at 16 bits per channel (`RSX_HIGH_PRECISION`, `rsx_hp()`,
+`R16G16B16A16_UNORM`). Guest-memory fills, write-backs and readbacks
+convert. The title's dither noise is neutral (a sample of 0.5, expanding to
+0): unit 15 in materials, unit 1 in the final tone map
+(`RSX_GAME_DITHER=1` keeps it). Draws into the 8-bit display add a +-1-step
+triangular noise per host pixel (`RSX_FINAL_DITHER=0` off). Setting: F1
+GAME > Smooth colour (`game.smooth_colour`). Open, not caused by this: the
+cockpit view's mirrors are black in 8-bit too.
+
+**Race at full width, labels, dither (Phase 130).**
+
+- **Race at full width:** at 1440p and 4K the race scene (the title's
+  1280-wide surface, stretched to 1920) is rendered at the full host width.
+  Targets record the guest width they hold (`OffRT.gw`, `rt_gw()`), since
+  1280 and 1920 now have one host size (`RSX_RACE_FULLWIDTH=0` off).
+- **My Page labels:** the cut-off is fixed by the new required post-lift
+  step `scripts/ui_mask_patch.py`. `func_00768340` subtracted 1.0 instead
+  of the layout's share of the screen.
+- **Dither noise:** sampled at host pixels (`RSX_WPOS_NOISE_HOST=0` off).
+
+**4K (Phase 129).** `"2160p"` / `"4k"` renders natively at
+3840x2160 (5120x2160 at 21:9, 64/27). Depth buffers and the depth copy grow
+past 2048 rows, and zb surfaces may be up to 8192 per side. Warm HSR frame
+test: 59.2 FPS (59.3 ultrawide).
+
+**Native 1440p (Phase 128).** `"1440p"` now renders natively
+(`RSX_RENDER_HEIGHT=1440`): stage B's scaling is applied in y as well
+(`uw_host_h`/`uw_guest_h`, `rs_on()`), and WPOS y goes through
+`rsx_alphatest.w`. The game still lays out at 1080p, so the field of view is
+unchanged. `GT5P_RENDER_NATIVE=0` renders 1080p and upscales instead.
+
+**Borderless fullscreen and 1440p (Phase 127).** F1 VIDEO > Window
+(`video.window`, `RSX_WINDOW_MODE=borderless`) and Resolution 2560 x 1440
+(`"1440p"`, 3440x1440 at 21:9). The backend's output pass scales the
+render into a swap chain of another size (`RSX_OUTPUT_SIZE`,
+`RSX_OUTPUT_PASS=0` off, `RSX_OUTPUT_FILTER=linear`). 1440p renders at
+1080p (2580x1080 ultrawide: `RSX_ULTRAWIDE_ASPECT`, aspect 43/18).
+
+**Ultrawide scene cameras and opening screens (Phase 126).**
+The menu background, dealer and pit cameras take 16/9 from
+`scene_camera_aspect_16_9_float` (`0x01280924`), now patched too
+(`GT5P_ULTRAWIDE_CAM=0` off). Full-screen images uploaded to main memory
+(copyright, Sony, Polyphony) are pillarboxed by the vertex shader
+(`vp_posoffset.w = -0.75`, `RSX_ULTRAWIDE_PILLAR=0` off).
+
+**Ultrawide renders natively (Phase 125).** For 21:9 the
+backend makes the title's full-screen targets 4/3 wider (`uw_host_w`,
+`s_gw`/`s_gh` are the guest's display), scales viewports, scissors, depth
+clears, readbacks and WPOS, and presents 2560x1080 1:1 (`RSX_ULTRAWIDE=2`;
+`GT5P_ULTRAWIDE=anamorphic` is stage A).
+
+**Ultrawide setting (Phase 124).** F1 VIDEO > Aspect ratio, or
+`video.aspect = "21:9"`, turns ultrawide on (restart needed).
+
+**Ultrawide step 3 (Phase 123).** `GT5P_ULTRAWIDE=1` also patches
+the menus' UI aspect (`ui_aspect_16_9_float`), so the game centres menus at
+16:9. Full-screen dims and fades are stretched to the 21:9 edges by the
+vertex shader (`vp_posoffset.w`, `RSX_ULTRAWIDE_EDGES`). Open: the My Page
+label cut-off, and the F1 page and movie still stretched.
+
+**Ultrawide stage A (Phase 122).** Run it with
+`GT5P_ULTRAWIDE=1 GT5P_RESOLUTION=1080p`. The port patches the aspect at load
+and the backend makes the window 21:9 (`RSX_ULTRAWIDE`); the swap chain
+stretches the 16:9 frame over it. Races and the dealer are correct and
+nothing is culled at the edges. Menu 2D is stretched (step 3). Native-width
+targets are stage B.
+
+**Ultrawide step 1 (Phase 121).** The game's aspect ratio is one
+table entry, `aspect_16_9_float` (`0x01287DD0`), read once at boot by
+`func_007AE548`. Writing 64/27 there at load (`GT5P_POKE_BOOT=01287DD0=4017B426`)
+gives the race camera a 21:9 projection with the same vertical field of view,
+and the race HUD then lays itself out centred. Menus keep their full-width 2D
+layout. Next steps are in [docs/plan-ultrawide.md](docs/plan-ultrawide.md).
+New tools: `GT5P_POKE`, `GT5P_POKE_BOOT`, `RSX_CAP_VPFULL`.
+
+**Rebindable keyboard (Phase 120).** The settings file has a
+`[keyboard]` section and the F1 page a Keyboard tab (Cross/Enter, then the
+key; a key in use swaps; Defaults). Both go through `PAD_KEYMAP`
+(`cross=Z,...`). The code is `src/gt5p_keymap.*` and cellPad's
+`pad_keyboard_set_vk`. The key art follows the bindings.
+
+**Button prompts follow the controller (Phase 119).** Kenney's
+CC0 art (`assets/glyphs/kenney/`) is painted over the game's button
+textures, which are listed by content hash in `assets/glyphs/textures.txt`:
+the 52x52 Cross by "Enter", the 460x720 button-assignment diagram and
+its 14 red highlight rings (redrawn around the new icons). The
+backend hook is `rsx_tex_set_replacer`, and the cellPad device is
+`g_pad_device_family`. A PlayStation pad keeps the original art.
+Switches:
+
+- `GT5P_GLYPHS=auto|playstation|xbox|nintendo|keyboard|0` (F1: INPUT >
+  Button prompts);
+- `RSX_TEX_REPL_DUMP=<dir>` finds new hashes;
+- `GT5P_GLYPHS_CYCLE` tests the live switch.
+
+**Tunnel lighting fixed (Phase 118).** The title meters exposure from
+a 16x8 block it blits (NV3089) out of a GPU-only surface; our blit copied
+stale guest memory, so adaptation never ran. Such blits now record a
+readback in command order (`RSX_BLIT_READBACK=0` off). Draw records are
+reused: new draws must clear `readback`. Non-window-sized targets get their
+own depth buffer when they depth-test (`RSX_RT_OWN_DEPTH=0`), fixing the car
+reflection probe; its cube copies a face skipped while bound later in the
+frame (`RSX_CUBE_RT_ONCE=1` old). Tools: `rdoc_expo.py`, `rdoc_vlit.py`, `rdoc_smalldraws.py`,
+`GT5P_WATCH=addr>off`, `RSX_SKIPDBG_FP`.
+
+**Settings in a race pause it (Phase 117).** Opening the page
+while racing presses Start for the title (cellPad `g_pad_inject_buttons`),
+unless a pause bar or grid menu is shown: found by scanning guest memory for
+mListBox (`menu_listbox_vtable`). `GT5P_SETTINGS_PAUSE=0` off. New
+diagnostics: `GT5P_MEMSNAP` + `scripts/diag/memsnap_diff.py` (find state
+variables by memory diff), `GT5P_WATCH`, `GT5P_SETTINGS_TOGGLE_AT`,
+`race.ps1 -ExtraHold`.
+
+**Settings page as a game settings popup (Phase 116).** Copies the
+game's "Steering Settings" popup (value boxes, drop-down buttons and lists),
+pages switched with L1/R1. `settings_test.ps1` presses Page Down to reach
+the Shaders page.
+
+**Game-style settings page; Escape asks (Phase 115).** The page
+copied the game's Options screen and pill buttons, measured from 1080p
+shots; Escape shows a copy of its Confirmation popup ("Quit Gran Turismo 5
+Prologue?", `GT5P_ESC_CONFIRM=0` closes at once). Test:
+`scripts/test/quit_confirm.ps1`.
+
+**Settings page in the game's picture (Phase 114).** F1/PS now
+draws the page into the frame (backend `rsx_d3d12_overlay_set`, blended
+before present), styled like the game's popups; on the game's own Options
+screen a "SELECT PC settings" tag opens it with Select. Escape no longer
+closes the game while it is up. Switches: `GT5P_SETTINGS_UI_LEGACY=1` /
+`RSX_OVERLAY=0` (old window), `GT5P_OPTIONS_HINT=0`, `GT5P_SETTINGS_UI_ALPHA`;
+`GT5P_SETTINGS_UI_DBG=1` prints each screen script. `settings_test.ps1
+[-Legacy]`. Still open: the dark tunnel interior.
+
+**Barrier fixed; stale pipeline blobs found (Phase 113).** The
+native pipeline blob key left out the root signature (static samplers), so
+blobs from older builds served old sampler setups: this, not saturation, was
+the road streaking of Phases 94/97. The key now includes it
+(`RSX_PSO_KEY_RS=0` old key); fragment source saturation is the default
+(`RSX_FP_SOURCE_RANGE=0` legacy), fixing the black barrier (user-confirmed).
+The tunnel interior is still dark. Diagnostics: `RSX_FP_SATLOG`,
+`RSX_FP_SAT_OPS`, `RSX_FP_SAT_PROG`, `RSX_FP_SAT_VIS`.
+
+**Native sorted walk; SPU interrupts measured (Phase 111).** The
+race workloads' sorted-list insertion (body 0x0133A700, 0x43E8) now runs
+natively (`src/gt5p_spu_native.c`, hooked by the new required post-lift step
+`scripts/spu_native_patch.py`): workloads 5/6 ~11.2 -> ~9.2 ms a pass in an
+A/B within one boot; `GT5P_SPU_NATIVE=2` checks every walk against the
+lifted code (0 mismatches in millions). The dealer's SPU interrupts are only
+~2.5% of render-lane CPU (`SPU_IRQSTAT=1` now reports cycles): not worth
+reworking. The rest of its 40% runtime share is call/return dispatch.
+
+**SPU profile, where rewrites would pay (Phase 110).** Ferrari
+dealer render workloads 0/1 take ~29-30 ms a lane pass (SPU-bound at 30
+FPS): 60% body b01376080 (0xF8C0 18%, rest spread), 40% runtime, with ~33,000
+SPU interrupts/s from the job manager's tag-update events. Race workloads 5/6
+are 90% body 0x0133A700, 40% in one sorted-list walk at 0x43E8/0x43E0 (68-byte
+nodes, float key at +60). `spu_fi` is now SSE (bit-identical, `-DSPU_FI_SCALAR`
+for the old): race workloads 5/6 11.0-11.4 -> 10.0-10.5 ms. New tools:
+`SPU_IRQSTAT=1`, `SPU_EXP_AB=1` with `g_spu_exp` (`abcyc.py --key exp`),
+`scripts/diag/widprof.py` (sums `GT5P_SAMPLE_WID` tables by function and image). See Phase 110 for the plan.
+
+**Hood-camera audio fixed; controller during tests (Phase 109).**
+Sound cut out in the hood camera: the mixer's IIR filter (image j65DD2F53,
+0x1E8) ran on denormal floats, which x86 computes ~100x slower and the SPU
+flushes. Threads that run SPU code now set MXCSR FTZ/DAZ (`SPU_FTZ=0` off):
+hood camera 35-42% silent blocks and ~6 underruns/s -> 0. Backward transfers
+in job images and bodies are now direct tail calls too (`lift_spu_jobs.py`;
+`SPU_CHAIN_BACK=0` at lift or run time off): workloads 5/6 ~14% less lane
+time. Test runs merge a connected controller and the keyboard into the
+`PAD_HOLD` script (`PAD_HOLD_MERGE=0` script only). Open: the post-race
+replay shows about four overlaid frames and a noise strip on the right edge
+(F8 reports from process 34220).
+
+**FIFO walk trimmed (Phase 108).** Changes, each with an off switch:
+
+- Hot data methods (immediate vertex data, transform constants) skip the
+  dispatcher's long test chain (`RSX_HOT_METHODS=0`).
+- Immediate vertices copy only the attributes the vertex program reads
+  (`RSX_IMM_MASK=0`).
+- Fragment constants no longer clear a 32 KB block on every draw
+  (`RSX_FPK_FAST=0`).
+
+Walk 7.75 -> 6.65 ms per frame. The frame test is now at its ceiling:
+59.5 FPS, median 16.6 ms, p99 20 ms, 1% of frames late. `RSX_DRAWPROF=1`
+splits draw recording by stage.
+
+**Inline memory access, chained SPU bodies (Phase 107).** The build
+now defaults to `GT5P_VM_INLINE=ON`. Out-of-line `vm_read*`/`vm_write*` were
+about 65% of the race render thread's CPU (14.1 -> 5.8 ms a frame). The exe is
+176 MB, and changing the option recompiles every lifted chunk.
+`lift_spu_jobs.py` now chains forward transfers in job bodies as well as job
+images (`--chain` updates an existing `generated/`; `SPU_CHAIN_BODIES=0`
+skips). This cut the race's one-SPU workloads 5/6 (body `0x0133A700`, the
+frame's critical path) from 17 to ~6 ms. Frame test: 59 FPS, 3% late, p99
+~27 ms. `GT5P_SAMPLE_WID=<wid>` profiles one workload's SPU code.
+
+**The title's frame pacer (Phase 106).** The render thread pads each
+frame with a sleep up to the slowest of its last four once one passes a
+vblank (`func_007AF300`, sleep returns to `0x00B24AF4`). Our ms-scale jitter
+made it copy every hitch onto the next frames. That sleep is now skipped
+(`frame_pacer_sleep_lr` in `config/targets.json`; `GT5P_PACER_PAD=1` keeps
+it). Frame test 55 -> ~58 FPS, ~14% -> 7-9% late, p99 ~43 -> ~30 ms. Game
+speed is unchanged, and the rolling start still runs at 30.
+`scripts/diag/rtsplit.py` splits render-thread frames (timeline `C`/`Q`).
+
+**Frame-time test and a cheaper FIFO walk (Phase 105).**
+`race.ps1 -FrameTest` is the 60-FPS pass/fail number: 60 s of HSR racing
+after the rolling start, with FPS, p99, % of intervals over 20 ms and walk
+per frame (`GT5P_FRAME_LOG`). The walk is CPU work, not waiting. A method
+fast path (`GCM_WALK_FAST=0` off) and NOP-loop parks (`GCM_NOP_PARK=0` off)
+take it from 12.5 to 9.8 ms/frame. The SPU jobs park the walker on 31 NOPs
+plus a JUMP back, which it used to lap ~5,500 times a frame; never skip
+those runs fast (the circling watchdog then drops the SPU lists). Frame
+test: 51.6 -> ~55 FPS, 27% -> ~14% late. Remaining walk: ~5.6 ms of draw
+recording (`RSX_VTX_SKIP=1` drops draws: 4.2 ms walk, 58.8 FPS). The
+resident pipeline cap is 8192; menus have their own shader pack.
+
+**Memory (Phase 104).** Private bytes overstate RAM: the NVIDIA
+driver backs every GPU allocation with equal page-file commit that is never
+resident, so read the working set (F8 now leads with it). Per-frame buffers
+follow measured peaks: `RSX_DRAW_CAP` 6144 (was 12288) and raw vertices 48 MB
+(`RSX_VTXGPU_MB`, was 96). Race working set 2.84 -> 2.59 GB, FPS unchanged.
+The 1 GB mapped view in the process is NVIDIA's own shader cache file.
+
+**Race-start stalls (Phase 103).** The user's 0.6-1.3 s race-start
+stalls were the replay thread reading shader bytecode one file at a time from
+a 54,000-file cache: 4.9 ms per cold read, with little RAM free to keep them
+warm. Races now record their shaders into `shadercache/race-shaders-v1.pack`
+and read it back in one read at loading (`RSX_SHADER_PACK=0` off): replay
+shader reads 9.1 s -> 0.8 s per run. Race preparation was also turned away by
+the 4096 resident cap (menu 1449 + race 3922); `RSX_PSO_RACE_EVICT=1` makes room
+but adds 12.6 s of loading, so it is opt-in. See Phase 103.
+
+**Race slow motion fixed (Phase 102).** The race clock ran at
+0.38-0.55 of real time: the title advances its simulation from a timer that
+its IDLE-priority timer service ("Main Thread", loop at `0x913270`) fires, and
+two guest CPUs left it too little time. Guest threads now get both hardware
+threads of two cores (`PS3_PPU_CORES=topo-ht`, default; `=topo` previous):
+clock 0.97. **The rolling start is meant to be 30 FPS (user).** Vblank ticks
+run on their own thread (`GT5P_VBLANK_THREAD=0` reverts); they had waited out
+13-17 ms FIFO walks. The generic vertex buffer is 64 MB per half
+(`RSX_VPVB_MB`; 320 old): about 1 GB less private memory. F8 reports add
+process memory and buffer peaks. `race.ps1 -RaceShots <n>` with the HUD timer
+measures game speed. Race windows of 40-56 FPS remain. See Phase 102.
+The roadmap to a locked 60 with upscaling headroom is
+[docs/plan-60fps.md](docs/plan-60fps.md).
+
+**Toward 60 FPS in races (Phase 101), not reached yet.** One-SPU SPURS
+workloads now run on lane threads instead of blocking the kernel
+(`SPURS_SINGLE_ASYNC=0`). Guest spin waits on SPU progress yield via a new
+required post-lift step, `scripts/spin_patch.py` (`GT5P_SPIN_YIELD=0`); they
+had starved Main Thread (host IDLE priority) on the two guest CPUs. Per-frame
+vertex/index/constant buffers are mirrored in video memory by a copy list each
+frame (`RSX_VRAM_FRAME=0`). Timeline frames 25.8 -> 17.5 ms in a race window;
+introduction GPU time 12-15 -> 6-10 ms. The introduction still locks to 30 FPS
+(render list passes ~14 ms, FIFO walk ~17 ms/frame). `race.ps1 -Cpu` and
+`scripts/diag/rdoc_gputime.py` are the new measurement tools. See Phase 101.
+
+**Review fixes (Phase 100).** Startup preload now prepares the learned
+menu set, then the race set, and stops; race loading cancels it
+(`RSX_SHADER_WARMUP_SCAN=1` restores the full directory scan). Draw-miss
+pipelines no longer stay in the resident set (`RSX_PSO_RETAIN_DEMAND=1`);
+`RSX_PSO_RESIDENT_MAX` lowers the cap. Recipes unused for 14 days of play are
+pruned and both indexes compacted newest-first at worker start
+(`RSX_PSO_RECIPE_KEEP_DAYS=0` disables). Texture staging buffers are freed
+after 120 idle frames (`RSX_TEX_UPLOAD_KEEP=0` keeps them). Audio uses device
+notifications instead of 500-ms polling (`AUDIO_HOTPLUG_POLL=1`). Measured at
+1080p/2x HSR with preload on: about 265 MB less mean private memory, startup
+preparation 9.3 s instead of 36.7 s, no race recipes rejected. The open
+rendering bugs below were deliberately left alone. See Phase 100.
+
+**Background startup warmup (Phase 99).** With startup warmup and async
+pipelines enabled, the present owner queues the preparation pass and releases
+startup immediately. The existing below-normal worker services live draws
+first, learned opening/menu recipes next, then the remaining recipes. Race
+loading interrupts the remaining startup pass. Membership:
+`shadercache/warmup-v1/menu-v1.txt`, learned during boot/menu visits; preserve it.
+`RSX_SHADER_WARMUP_BACKGROUND=0` or `RSX_PSO_ASYNC=0` selects legacy blocking
+startup. Precompile-only completion remains blocking. No new F1 toggle: existing
+Preload known shaders help now describes background behavior. One native call
+cannot be preempted; first visits still learn and may show late details.
+`pso99-movie` shows copyright and movie frames while preparation runs for 27 s;
+`pso99-menu-priority`/`pso99-menu-ui` prepare 132 menu records first, then reach
+visible Kyoto/menu UI. WARP scheduler/shutdown, four real preload fixtures and
+23 settings/export checks pass. See Phase 99 for limits and evidence.
+
+**Latest: race loading preparation / async pipelines (Phase 98).** F1 now has
+Background pipeline creation (`video.pipeline_async`, `RSX_PSO_ASYNC`) and
+Prepare race pipelines (`video.race_preload`, `RSX_RACE_PREWARM`), both default
+On. Guest native pipeline creation uses one bounded worker; pending draws use
+the existing asynchronous-shader policy. Limits: 256 queue jobs, 64 MiB copied
+sources, 4096 resident pipelines. Both switches accept 0 for rollback.
+The loading script waits up to 30 s for the learned race set while render/audio
+continue (`RSX_RACE_PREWARM_WAIT_MS=0` disables waiting). This is a shared set
+of observed race states, not per-track exhaustive discovery; first visits can
+still show late details. Index: `shadercache/warmup-v1/race-v1.txt`; preserve it.
+The learn run records 1059 recipes; `pso98-warm2` makes all ready with zero
+rejections during loading, reaches gameplay at 1080p/2x. The user accidentally
+closed the preceding warm run; do not diagnose it as a crash. FPS samples are
+not controlled benchmarks. Synthetic production-queue WARP, settings/export,
+F1/restart, startup-preload and texture/mirror regressions pass. F8 now reports
+queue state and copied-source memory; pipeline counts include cached driver
+creations. See Phase 98 for ownership, timeout, shutdown and validation limits.
+
+**Latest: rolling-start reports and saturation (Phase 97).** Five F8 ZIPs
+from process 1592 are in `logs/debug/` (19:23:58-19:25:32). Intro submission
+gaps reach 852 ms; the final report has a 704 ms gap and 118 new pipelines
+without additional completed bytecode. `scripts/diag/debug_pacing.py` reads
+the ZIPs directly. Cached driver calls now enter busy/timing diagnostics;
+`RSX_PSO_HITCH_MS` defaults to 50 ms (0 disables log lines). Phase 98 adds
+asynchronous driver creation; this earlier phase was diagnosis. User warmup is
+on; measurement scripts
+normally disable settings and must explicitly enable it for comparisons.
+Source saturation can now be tested independently: `RSX_FP_SOURCE_RANGE=0`
+or unset is legacy, `1` full experimental ranges, `2` saturation only. The
+saturation-only run still streaks roads; rollback has normal asphalt. Keep
+both candidates opt-in. GPU arithmetic tests pass, not full rendering acceptance. Exact barrier appearance and tunnel lighting remain open; road streaks
+also remain. Retained RPCS3 road replay is not a matching tunnel reference.
+
+**Latest: wheel volume textures (Phase 96).** The Golf's spinning-wheel
+material uses 32x16x8 and 64x64x8 textures. The backend previously uploaded
+only their first plane and sampled XY. It now decodes/uploads full volumes,
+uses Texture3D/XYZ and keys profiles by volume units (`RSX_TEX3D=0` rollback;
+`RSX_TEX_DIMDBG=1` traces dimensions). CPU and WARP tests pass; a live race
+capture confirms full resources and wheel bindings. Close Golf side-view
+acceptance is still required; a fully covered wheel-centre pixel is not proof
+of correct gaps. See Phase 96 and `scripts/test/volume_textures.ps1`.
+Tunnel lighting remains open; keep the existing tunnel captures.
+
+**Latest: mirror depth-clear reuse (Phase 95).** The speed-hint glyph mask
+reuses scene depth at `02420000`; stale cached mask ownership discarded the
+mirror-protecting depth-zero clear. Real scene depth clears now survive that
+reuse (`RSX_DEPTH_CLEAR_REUSE=0` rolls back). Helper regression and all 17
+export cases pass; a live post-bridge shot retains the mirror sky. Bounded
+trace: `RSX_CLEAR_TRACE=1`. Tunnel lighting and blue Golf rims remain open.
+Retained tunnel captures are `scratch/rdoc/graphics94-manual_frame{10164,10650}.rdc`;
+do not ask for another tunnel drive. The exit capture's wheel shader uses
+procedural spinning-wheel coverage and is a different material from the Golf.
+The user supplied two Golf captures (`graphics95-golf_frame{7330,8018}.rdc`). Since Phase 109 a connected controller
+and the focused window's keys play over a `PAD_HOLD` script (`PAD_HOLD_MERGE=0`: script only).
+`RSX_FP_SOURCE_RANGE=1` remains experimental. A default-off run also showed
+road streaks, so Phase 94's apparent correlation was not exclusive evidence.
+Tests: `scripts/test/depth_clear_reuse.ps1`, `scripts/test/debug_export.ps1`.
+
+**Latest: audio worker headroom (Phase 93).** Profiling identifies three hot
+audio images, especially image 4's DSP loops. Windows/Clang builds compile
+private FMA copies of images 4/7/9, selected before SPU workers start only when
+CPU and OS support AVX/FMA. `GT5P_AUDIO_NATIVE=0` restores the portable images.
+A quiet HSR race measured 78.2% of a core on the sound worker against 92.0%
+portable in 25-second CPU windows. See Phase 93 for underrun and FPS limits.
+Native arithmetic matches scalar `fmaf` across six million tested lanes;
+dispatch/registry tests cover unsupported hardware and exact image matching.
+No generated source is tracked; wrappers live under `build/`.
+The user's screenshots show about 12 GB RAM in use without the game, 15 GB
+with it on this 16 GB system. Memory pressure may contribute to pauses, but
+the screenshots do not prove paging caused a particular freeze.
+
+**Latest: captured render-queue corruption fixed (Phase 92).** The runtime
+duplicated the workload pointer into both halves of SPU r4, accidentally
+enabling WWS profiling against the live job queue. Lane 4's final profiling
+write clipped the first two job pointers from `2A...` to `0A...`; those jobs
+then left unfilled FIFO blocks. A retained pause capture identifies the exact
+missing block, descriptor, profiling writeback address and matching payload.
+Passing the actual argument high/low words disables profiling when its high
+word is zero, preserving the queue. `SPURS_PM_ARG64=0` restores the defect.
+`scripts/test/spurs_arg.py` reproduces both progress-row/first-job overwrites
+and clipped pointer bits with the real lifted routines and synthetic memory;
+corrected/default modes and a separate valid profiling buffer pass.
+Corrected 1080p/2x HSR reached ResultRoot after the driven two-lap race,
+with no 350-ms stall snapshot in 240 seconds of sampling. The user reports
+that it ran much better. A default-path Daytona run completed 180 seconds
+without the ring deadlock, with one brief caught-up-FIFO gap; the car ended
+stopped off-track, so its 60-FPS median is not a driving benchmark.
+Earlier Phase 64's "bookkeeping" interpretation
+was incomplete: those writes are optional profiling with a bad pointer.
+Read Phase 92 before revisiting ring-size/shared-ring theories. Phase 93 reduces
+sound-worker load; remaining audio underruns and stable 60 FPS are open.
+
+**Loading freezes and core placement before Phase 92 (Phase 91).** An inline graphics
+callback could signal before syscall 107 queued its waiter. It now pumps after
+queuing/releasing the mutex (`PS3_COND_DEFER_GCM=0` restores old ordering);
+`scripts/test/cond_callback.py` reproduces the old defect and passes the fix.
+At that phase loading freezes and one/two/one-second driving pauses still occurred.
+The user reports driving freezes later in lap two and just before lap one's
+finish line; a fixed lap-transition trigger is unproven. `snapshot91`'s final
+shot reaches lap 2 at 0'23.088 without a stall snapshot, but not a full finish.
+Follow output-ring head/label ownership and the parked command's producer next;
+never skip unfilled FIFO commands. Default PPU placement is now
+`PS3_PPU_CORES=topo`; `=3` restores the previous shared-core placement.
+Individual 1080p HSR medians: 33.50 FPS legacy, 46.50 topology, 54.07 topology
+plus callback fix; these sample changing scenes, not a precise A/B gain.
+Modern dealership checks remain about 30 FPS either way. Priority mapping stays
+enabled. Diagnostics: `GT5P_STALL_MS=350`, `GT5P_STALL_STACKS=1`,
+`PS3_SC_CONTEXT=1`, `PS3_COND_TRACE_ID=106`. Read Phase 91 before repeating
+experiments; failed FMA/label-wait experiments were removed.
+
+**Eiger lag, audio chopping and recurring freeze (Phase 90).** Report
+process 40872 reproduces London's 1/2/1-second command-production gaps with
+shader busy/pending both zero and no device loss. Its `spurs-jc` thread is
+97-99% of a core. This run also captured 156 MB of verbose per-job logging;
+`PS3_VERBOSE` was unset, so redirected IDE/export output enabled it implicitly.
+Startup now defaults `PS3_VERBOSE=0` for every output type; F1 Runtime log On
+or explicit `PS3_VERBOSE=1` still restores full tracing. Debug export remains
+useful with Runtime log Auto/Off. Paired 1080p dealer runs recorded 25 audio
+underruns with verbose logging versus zero with the corrected default, and
+chain job time fell from roughly 80-98% to 40-50%. These are not Eiger FPS
+measurements. A quiet 1080p High Speed Ring race still reaches 95-98% chain
+busy with five audio underruns, so race-mixer throughput is also open. Quiet
+runs still hit unfinished FIFO blocks: the rendering freeze is open and must
+not be described as fixed by logging/precompilation.
+
+**Xbox/keyboard prompt assessment:** [docs/plan-input-glyphs.md](docs/plan-input-glyphs.md)
+records current bindings and the proposed asset/input/settings work. No prompt
+atlas or font codepoint has been identified yet, and no glyph setting is enabled.
+Keyboard currently acts as a fallback only; automatic device switching also
+requires input arbitration while a controller stays connected.
+
+**Experimental Vulkan feasibility:** [docs/plan-vulkan.md](docs/plan-vulkan.md)
+assesses the existing Linux-only runtime backend, Windows integration, GT5P
+feature gaps and acceptance gates. This is a plan, not an enabled renderer.
+The next proposed task is isolated Windows bring-up; D3D12 remains the default.
+
+
+**Offline game-shader preparation (Phase 89).**
+`scripts/precompile_shaders.py` and [docs/shader-precompile.md](docs/shader-precompile.md)
+are the workflow. SHDS fragment tables were located in the ELF and unpacked
+MDL3 assets. The disc inventory has 14465 records / 8142 distinct raw payloads
+in 1115 bundles; the executable alone has 52 records / 51 payloads. Do not
+track catalogs, bytecode, external unpacker source/keys or the source index.
+GTToolsSharp is an external local unpacker, not a source dependency.
+
+Preparation uses the real backend text generator/async compiler before guest
+entry and exits (`GT5P_SHADER_PRECOMPILE_ONLY=1`). Normal play learns source-state
+profiles in `shadercache/fp-profiles-v2/` (`RSX_SHADER_PROFILES=0` disables).
+The default offline pass applies up to 64 learned profiles with matching
+texture-unit usage; `--profile-limit 256` increases coverage and
+`--all-profile-combinations` is a slower broad cross-product. Base-only
+preparation barely helped the dealership test: do not claim that inventory
+size proves useful cache coverage. The same decoded programs with observed
+states avoided compiler work: a paired 1080p dealership route with an offline
+scene catalog produced 191 new DXBC entries versus 294 without it (35% fewer).
+Both used 15 s settle; this is not an FPS benchmark or London verification.
+The player's normal cache now has about 35000 newly prepared DXBC entries.
+Native PSOs,
+vertex programs, runtime-generated/fixed-up programs and unseen states remain
+open. Some raw payloads fail validation or have out-of-bounds register
+references; these are logged/skipped, not complete coverage.
+
+`RSX_FP_CATALOG` optionally records live raw programs for local matching. Its
+hot-path seen cache is essential; an initial filesystem lookup on every draw
+dropped throughput badly and was fixed before shipping. It defaults off.
+Tests: `scripts/test/shader_library.py` (synthetic) and
+`scripts/test/shader_library_runtime.py` (real compiler, isolated scratch cache).
+`--compile-only` resumes an existing catalog, preserving completed entries.
+
+**London pauses and startup preload (Phase 88).** Two exports from
+process 13712 (`27320247aa00`) overlap the same stall sequence. Early hitch
+samples often have shader compilation active; the later 1/2/1-second gaps
+have busy=0/pending=0, almost all time in idle waiting, and a FIFO parked on
+an unfinished `FFFFFFFF` command block. Render SPURS groups are idle with no
+ready work. This narrows the long freeze to command production, not a proven
+shader or GPU fault; the producer/guest scheduling cause remains open. Do not
+skip the unfinished block to force progress. Use
+`scripts/diag/debug_reports.py logs/debug --pid 13712` for the evidence.
+
+F1 VIDEO now offers **Preload known shaders**, default Off,
+`video.shader_warmup` / `RSX_SHADER_WARMUP=1`; restart required. Normal play
+records derived pipeline recipes under `shadercache/warmup-v1/` (never track
+them); `RSX_PSO_RECIPES=0` disables recipes. Preload prepares up to 4096 known
+pipelines before guest execution and retains them for normal lookups. New
+variants still compile later; this is not exhaustive shader discovery. Keep
+the shader cache enabled. Old caches learn recipes on the first new-build run.
+The old "Precompile shaders" option is now "Background shader compilation";
+its TOML key/behavior is unchanged. Verified: 333 known PSOs loaded in 344 ms,
+256+ memory hits en route to a working 1080p dealership; invalid recipe and
+truncated bytecode safely skipped. More startup time and RAM; leave opt-in.
+Checks: `scripts/test/shader_warmup.py`, `scripts/test/settings_test.ps1`,
+`scripts/test/debug_export.ps1`. Full London race comparison still needed.
+
+**Earlier test reports (Phase 87):** the user reports stutters and a recoverable
+black/frozen image during ordinary driving while physics continues, missing
+replay controls even after input, and a dark High Speed Ring tunnel. These are
+open. Five exports from process 35540 show both expensive early presents and
+later 1/2/1-second delivery gaps not explained by the old timing categories.
+Do not call either a shader-compilation diagnosis. New exports include
+`hitches.txt`: up to eight live state samples during gaps over 250 ms, only
+while Debug export is On (`GT5P_HITCH_CAPTURE=0` disables). Report v2 adds idle,
+vblank and flip timings. `scripts/diag/debug_reports.py logs/debug --pid 35540`
+summarises the original reports without extracting game images.
+
+The missing 1080p track-map outline has a measured fix: MAIN texture offsets
+must not alias LOCAL render targets (`RSX_RT_LOCATION=0` restores the fault).
+The source outline was intact; the GPU sampled an old 1920x1080 target instead.
+A moving 1080p race now shows the outline. Replay controls and tunnel lighting
+have not been verified fixed by this change.
+
+**Also open: High Speed Ring at 1080p can corrupt during the grid preview.** The
+user's new screenshots show large pale planes and broken grid text after an
+initially correct preview. This is still open; the screenshots alone cannot
+establish whether presents stopped or which data became corrupt. Phase 86 adds
+an opt-in diagnostic export: F1 settings, DEBUG, Debug export On; then F3,
+Export debug report (or F8 while F3 is visible). Attach the ZIP from
+`logs/debug/`. Enable it before reproducing to retain recent logs. It applies
+live and defaults Off; `GT5P_DEBUG_EXPORT=0` disables it, and no environment
+value can enable it without the settings option. Tests: `scripts/test/debug_export.ps1`.
+
+**High Speed Ring water appearance is closed (Phase 85):** the user compared
+it with RPCS3 and confirmed the same dark appearance there. No colour or
+filtering change was shipped. Capture diagnostics now save sampler registers
+with each draw rather than consulting later live state; see Phase 85.
+
+The preceding Daytona idle-grid blackout stopped
+reproducing for the user once heavy shader compilation ended. A warm three-minute
+grid idle followed by a moving Daytona race passed (Phase 84); cold-cache
+reliability is unverified. High Speed Ring still reproduced the older race-start
+stall. `race.ps1 -GridIdleSeconds 180 -IntroShots` records the idle/entry sequence
+and now rejects an FPS sample interval with no actual presents.
+
+The previous report is **menu/dealership flicker**, most apparent in the dark
+lower-left dealership floor. Phase 83 corrects the spatial dither coordinates:
+a ten-frame control restores the broad near-black pulses; the fixed patch's
+brightness range is about 91% smaller. This fixes coherent brightness flicker;
+ordinary fine-edge aliasing at 2x MSAA is a separate quality limit. Read Phase
+83 for the GPU evidence and comparison commands.
+
+The previous report is **High Speed Ring's remaining road-surface bands**,
+compared with RPCS3 (ignore the reference screenshot's HDR brightness).
+Phase 81 fixes ignored TEX `_bx2` normal expansion (`RSX_TEX_EXPAND=0`
+restores it) and excess compressed mip levels (`RSX_BC_MIP_LIMIT=0`).
+The lighting atlas itself matches RPCS3. Its reusable local reference is
+`scratch/rdoc/hsrroad-reference.rrc.gz`: replay it with RPCS3's
+`--rsx-capture` option instead of repeating live race navigation. It was
+saved with Alt+C and inspected under RenderDoc. Read Phase 81 for exact
+pixels, diagnostic files and validation limits. The final 1080p preview
+capture verifies signed normal decoding and reference mip counts; full-race
+verification was blocked by start stalls, also seen with both switches off.
+Earlier reports were **pixelly backgrounds and broken loading fonts**,
+following High Speed Ring's loading/compilation, 60 fps and race graphics
+request (Phases 78-80). The font atlas, scenery mip views, bridge
+occlusion, road corruption and redundant pipeline builds have
+fixes; a verified 720p/2x-MSAA race measured a median 41 fps over 25 s, not 60.
+Other black materials/geometry in the race remain to investigate. Beware
+benchmarking the starting-grid preview: Start at `QuickArcadeRoot+5000`, with
+retries, and inspect the final shot for the racing HUD. Dropping all draws
+also removes the HUD, so that alone cannot confirm the race actually started.
+The PPU-inline experiment was not adopted then; since Phase 107 the build
+defaults to `GT5P_VM_INLINE=ON`. Phase 79 records the earlier observations.
+
+0. **Phases 76 to 73 (2026-10-18), read them first.** The race start froze every
+   time; fixed in the walker (11 of 12 races clean at 1080p). The user's
+   four reports, by state:
+   - **1080p menu black slab**: fixed in Phase 74. The title sets A2C
+     without the AA bit (`0xFFFF0010`); the cutout substitute now follows
+     A2C alone (`RSX_A2C_REQUIRE_AA=1` restores the old rule). Phase 73's
+     contrary trace never reached the menu scene; do not use it as evidence.
+   - **Dealer floor reflects the menu's trees**: not visible on one direct
+     menu-to-Acura visit after Phase 74's fix; pit round trip still unverified.
+   - **Race crowd smeared**: fixed in Phase 76. Missing fixed-function
+     `FOGC.y` turned the generated spectator atlas into fog-colour silhouettes.
+     A separate 512-slot texture limit dropped race binds; default is now 1024.
+   - **Race freeze and noise**: fixed, except for a rarer second shape
+     (Phase 73, "Open").
+   Test at the user's settings: `GT5P_RESOLUTION=1080p RSX_MSAA=2`. Drive
+   into the race with `"PAD_HOLD=$DaytonaHold,$DaytonaRaceHold,$DaytonaStartHold"`.
+1. **Texture-load warning (promised to the user, not started).** When a
+   texture cannot be read, show an on-screen badge like "Compiling shaders"
+   and log a line. Cases: an unmapped address, an unsupported format, slot
+   exhaustion. The badge to copy is `src/gt5p_shaderbusy.cpp`, which reads
+   `g_rsx_shader_busy` from the backend. It needs an env switch, like every
+   new behaviour.
+2. **Parked; the user is trying to reproduce it.** Go to the Race Mode page,
+   then back to the main menu: black slabs appear in the menu scene. Then
+   the dealer floor reflects the menu's trees. That suggests stale render
+   targets or cube faces reused by address; this is unverified.
+   `scripts\test\roundtrip.ps1 -Pit` drives menu, pit, menu, dealer. Its
+   Circle to close the menu popup (`@PitSceneRoot+23000`) comes too early,
+   so move it later. On the last runs, an Arcade round trip alone showed
+   nothing.
+3. **Loading-screen text fixed in Phase 80:** glyph-mask draws inherited
+   `zonly` from reused shadow draw records and went to depth-only targets.
+   A warm shader cache did not prevent it. The 720p and 1080p lists now draw
+   completely; see Phase 80 for captures and the switches that were ruled out.
+4. **Speed and long-standing items:** the "Next" bullet at the end of the
+   list below, and [docs/plan-30fps.md](docs/plan-30fps.md).
+
+### Local state of this machine
+
+- **ps3recomp** is at `../ps3recomp-gt5p-master`, based on `5244db9`, with
+  local changes in 63 files. `patches/ps3recomp-5244db9-local.patch` is
+  their backup. After every change there, refresh it with bash, not
+  PowerShell, whose `>` re-encodes the file:
+
+  ```bash
+  cd ../ps3recomp-gt5p-master && git diff > ../GT5P/patches/ps3recomp-5244db9-local.patch \
+    && git apply --check -R ../GT5P/patches/ps3recomp-5244db9-local.patch
+  ```
+
+- **`generated/` is current.** It was lifted with the PPU lifter of
+  Phase 69 and the SPU lifter of Phase 72, and `build/gt5p.exe` is built
+  from it. A ps3recomp lifter change needs a re-lift:
+  - PPU: the README steps, then `scripts/setjmp_patch.py`,
+    `scripts/spin_patch.py` and `scripts/ui_mask_patch.py` (all required;
+    `--check` reports);
+  - SPU: `.venv\Scripts\python scripts\lift_spu_jobs.py`, which takes
+    about 20 s and rewrites `src/gen/spu_workloads_bcus98158.c` (diff it),
+    then `scripts/spu_native_patch.py` (required; also after `--chain`).
+
+  Then grep `generated/` for `/* TODO:` lines other than `.word`.
+- **Instrumentation helpers patch `generated/` in place.** Before any real
+  build, check that no `generated/*.fnc_orig`, `*.spc_orig` or
+  `generated/spu_lifted/*/*.sfc_orig` files are left; `--restore` puts the
+  originals back.
+- **`shadercache/`**: never move or delete it. For a cold test, use
+  `RSX_SHADER_CACHE=<empty dir>`.
+- **`scratch/`** is gitignored working space:
+  - Cleanup on 2026-10-19 sent 14.38 GiB of redundant output/backups to the
+    Recycle Bin. Some historical capture paths no longer exist; see
+    [docs/scratch-maintenance.md](docs/scratch-maintenance.md). Reusable RPCS3
+    references, recent race evidence and shader caches were preserved.
+  - `scratch/pv/` holds run logs and shots.
+  - It also holds the old copies of the scripts now in `scripts/test` and
+    `scripts/diag`. **The tracked copies are canonical.**
+  - One-off hooks written for Phase 72 (`palette_hook.py`,
+    `palcopy_hook.py`, `bonemat_hook.py`) have guest addresses baked in.
+- **`analysis/`** holds:
+  - `rtti.json` (class names for vtables);
+  - `b01376080.bin` and `.dis` (the SPU geometry job and its disassembly);
+  - `spu/body_*.bin` (the job bodies).
+- **Another session owns** `scripts/instrument_alloc.py` and
+  `src/gt5p_allocwatch.cpp`: never stage those.
+
+### Build, play, test
+
+- Build: `$env:CMAKE_BUILD_PARALLEL_LEVEL="4"; cmd /c "scripts\build.cmd -DGT5P_TARGET=BCUS98158"`
+  (PowerShell). Never put a compile definition on the whole target.
+- Play: `play.cmd`. F1 opens settings, F3 the profiler.
+- Automated runs: `scripts\test\*.ps1`. Each one launches the exe with
+  `GT5P_NO_SETTINGS=1`, `FS_HIDE=grim/file/contents` and `PS3_VERBOSE=0`.
+  Each follows `[milestone]` lines, not fixed sleeps, and kills the game in
+  a `finally`. Logs and shots go to `scratch\pv\<tag>.*`. Any extra
+  `NAME=VALUE` argument becomes an environment variable for the game. Quote
+  values that contain commas (`"PPU_WWATCH_REGS=26,27"`): PowerShell splits
+  them otherwise.
+
+| Script | Drives to | Use |
+| --- | --- | --- |
+| `milestone.ps1` | (library) | `$ToDealers`, `$DealerHold`, `$DaytonaHold`, `$DaytonaRaceHold`, `$FerrariHold`, `Wait-Milestone`, `Stop-Stragglers` |
+| `winshot.ps1` | Acura dealer page | `-Tag t -Settle 20 -Shots 3 -Gap 3`: window shots (PrintWindow) |
+| `pitshot.ps1` | Daytona Race Mode page | The same. For the race: `"PAD_HOLD=$DaytonaHold,$DaytonaRaceHold"` after dot-sourcing `milestone.ps1`, with `-Settle 70` |
+| `roundtrip.ps1` | menu, Arcade or pit, menu, dealer | `-Pit`, `-Every 3` (a shot every 3 s), `-NoArcade`, `-MenuOnly` (stop after menu shot) |
+| `dealer.ps1`, `revisit.ps1` | any dealer, or N in a row | `-Moves "DOWN,RIGHT,..." -Enter`; Ferrari is `DOWN,RIGHT,RIGHT,RIGHT,RIGHT` |
+| `perf.ps1` | dealer page | fps and CPU, median of `-N` runs; `-Ferrari`, `-Watch <s>` for stalls |
+| `cpu3.ps1` | dealer page | CPU per host thread, named by guest thread |
+| `pvshot.ps1`, `capshot.ps1` | dealer page | hold a page for `RSX_CAP`; `capshot` saves the backbuffer |
+| `rdcap.ps1` | any (`-Hold`) | a RenderDoc capture of the `RSX_CAP` frame (`RENDERDOC_CMD` overrides the path) |
+| `movshot.ps1`, `winping.ps1` | boot with the movie | movie frames; whether the window answers messages |
+| `settings_test.ps1`, `settings_restart_test.ps1`, `badge_test.ps1` | F1 page, shader badge | UI checks |
+| `inp.ps1` | none | a windowed run for someone to drive, with a shot every 5 s |
+| `race.ps1` | High Speed Ring race | `-FrameTest` (60 s pass/fail frame times), `-RaceShots <n>` (HUD timer, game speed), `-Cpu`, `-IntroShots`, `-LoadingShots` |
+
+`scripts\diag\` holds the helpers:
+
+- Log readers:
+  - `maplook.py` and `lanesum.py`: sample profiles against `build/gt5p.map`;
+  - `tl.py`: `PS3_TIMELINE`;
+  - `abcyc.py`: `SPU_FAST_AB` runs;
+  - `ab.py`: A/B boots.
+- Instrumenters (all with `--restore`):
+  - `fncount_patch.py <lo-hi>...`: per-10-s call counts for PPU functions
+    in an address range;
+  - `spufn_count.py <body>`: the same for every lifted function of one SPU
+    body;
+  - `spcheck_patch.py <func>...`: callees that leak a stack frame.
+- `find_bodies.py`: finds SPU job bodies.
+- `rdoc_*.py`: run inside `qrenderdoc --python`, with `RDOC_CAP` and
+  `RDOC_OUT` set.
+
+### How the last bugs were found (Phases 68 to 72)
+
+Measure first, then narrow. These were the steps:
+
+1. Call counters, to see whether code runs at all.
+2. `SPU_DMA_RANGE` with `_AFTER`, `_HIST` and `HIST_LS`, to see what an SPU
+   job reads and writes.
+3. `PPU_WWATCH*`, to find who stores a value.
+4. `RSX_CAP` with `RSX_CAP_AFTER=<milestone>,<ms>` manifests (`a0=`, `fp=`,
+   textures per draw), to see what a draw used.
+5. RenderDoc, for pixel history.
+6. A perturbation test: halve the palette and see whether the picture
+   changes. That one separates "data wrong" from "data unused".
+
+Three bugs this way were lifter bugs that compile cleanly and fail
+silently. A dropped jump table and `bisl $r0,$r0` were found by asking
+"does this code ever run?", not by reading it.
+
+### The user's standing rules
+
+- Commit **and push** to `origin` at the end of every turn.
+- No game data, keys, decrypted executables, generated source or decompiled
+  code in tracked files. Never `--no-verify`, never `git add -f`.
+- RPCS3 is GPLv2: learn from it, never copy from it.
+- Use `PS3_VERBOSE=0` for anything measured.
+- One `gt5p.exe` at a time.
+- Never pipe a run script into `Select-Object -First`.
+- No desktop screen grabs; shoot the game window (PrintWindow).
+- Every new behaviour gets an env switch.
+- Never arm the page guard from boot on a hot page: the menus drop to
+  11 fps.
+- Don't spawn sub-agents unless asked.
+- Use they/them for the user. Give short status updates during long work.
+
 ## Measured on the disc build
 
 Measured 2026-10-12 with ps3recomp `master` tools. The game dump is at
@@ -120,16 +910,18 @@ re-verified against the disc executable.
 
 ## Where the disc build stands
 
-As of 2026-10-12 the disc build lifts, compiles, boots and issues frames.
-Details and evidence are in Phases 17 to 44 of
-[docs/progress.md](docs/progress.md); read 44 down to 19 in that order.
-Each corrects the one before.
+This is the running record, oldest findings first, newest at the end of
+the list (Phase 72). For the current state, read "Start here" above. Some
+bullets near the top describe stages long since passed. They are kept
+because later phases refer to them; where they conflict with a later
+bullet, the later one is right.
 
-- **A save exists now, so the title boots straight to the main menu**
-  (no agreement, no "Confirmation"). `scratch/menu.ps1` scrolls an
-  agreement that is no longer shown; with the save, drive the dealership
-  with `scratch\inp.ps1 90 "PAD_HOLD=28000-28300:CROSS,34000-34300:CROSS,46000-46300:CROSS"`.
-  Move `gamedata/dev_hdd0` aside to get the first-boot screens back.
+- **A save exists, so the title boots straight to the main menu** (no
+  agreement). Since a car was bought, a "Confirmation" popup shows on News
+  every boot. The routes in `scripts\test\milestone.ps1` close it
+  (`$ToDealers`, `$DaytonaHold`). Move `gamedata/dev_hdd0` aside to get the
+  first-boot screens back. The old `scratch/menu.ps1` and
+  `scratch/auto.ps1` drive those first-boot screens and are not tracked.
 - **The Car Dealer page draws (Phase 42).** Choosing a manufacturer shows
   the cars on the showroom floor with the page's 2D layer, as on RPCS3. The
   backend had been dropping about 4,000 of each frame's 4,300 draws: its
@@ -160,7 +952,7 @@ Each corrects the one before.
   `GT5P_THREADS=2` and `GT5P_PEEK=016FA5E0,0139A880` are the tools.
   **Test runs follow milestones (Phase 54):** `[milestone] <screen>` lines,
   `PAD_HOLD` presses relative to one (`@TopMenuTemplate+8000-8300:CROSS`,
-  `!<other>` for a retry), and `scratch\milestone.ps1` (`$DealerHold`,
+  `!<other>` for a retry), and `scripts\test\milestone.ps1` (`$DealerHold`,
   `Wait-Milestone`) used by `perf.ps1`, `cpu3.ps1` and `capshot.ps1`. The
   page is up about 29 s after launch; `perf.ps1` counts and cuts short
   stalled runs (`-Watch <s>` to look for them).
@@ -175,7 +967,7 @@ Each corrects the one before.
   depth buffer (`RSX_ZONLY=0` to undo), and units bound to it with a depth
   format compare in the shader (`RSX_SHADOW=0`: always lit;
   `RSX_SHADOW_SHOW=1..6` views the term; `RSX_CAP` dumps the map;
-  `RSX_CAP_ZB=<n>` and `scratch\capshot.ps1` capture a dealership frame).
+  `RSX_CAP_ZB=<n>` and `scripts\test\capshot.ps1` capture a dealership frame).
   Debug views must skip programs that only have the unit bound, and the car
   pass writes three targets (`_out.t0`). Also from Phase 49:
 
@@ -194,9 +986,9 @@ Each corrects the one before.
   Frames are quantised to vblanks, so present-thread work must drop below
   about 33 ms for 30 fps.
   The job lanes are threads made per dispatch, so a
-  per-thread CPU table misses about 3 cores: use `scratch/cpu3.ps1` and
+  per-thread CPU table misses about 3 cores: use `scripts/test/cpu3.ps1` and
   `GT5P_SAMPLE=all` (or `GT5P_SAMPLE=4` for the busiest live threads), then
-  `scratch/maplook.py build/gt5p.map <log>`. `scratch/perf.ps1 -Tag <t> -N 3`
+  `scripts/diag/maplook.py build/gt5p.map <log>`. `scripts/test/perf.ps1 -Tag <t> -N 3`
   repeats the Phase 43 measurement and prints the median (Phase 44).
 - Guest PPU threads stay on mask 3 (both hardware threads of core 0): it
   measured faster than two separate cores or no pinning (Phase 44.1).
@@ -282,10 +1074,10 @@ Each corrects the one before.
   tick jitter), `AUDIO_GAPDBG=1` (each dropout with the ring at that
   moment), `AUDIO_LEADDBG=1` (where the title writes), `SPURS_JC_STATS=1`
   (job rate and cost), `SPURS_JG_GAPDBG=<ms>` (late guard notifies),
-  `SPURS_JC_SAMPLE=<chain>` with `scratch/maplook.py` and a `/MAP` link
+  `SPURS_JC_SAMPLE=<chain>` with `scripts/diag/maplook.py` and a `/MAP` link
   (where the walker's time goes).
 - **Do not launch with `GT5P_MAINSTACK` set when judging sound or smoothness.**
-  It suspends guest threads every N seconds; `scratch/inp.ps1` used to set
+  It suspends guest threads every N seconds; `scripts/test/inp.ps1` used to set
   it to 5 and that alone was an 85 ms dropout every 5 s.
 - `scripts/lift_spu_jobs.py` now post-processes the job images it lifts
   (forward transfers become direct tail calls); `--chain` applies that to
@@ -316,7 +1108,7 @@ Each corrects the one before.
   The entries below about that fault are history; keep them for the record of
   what was ruled out.
 - To test for it, do not rely on `bootcheck`: run with `GT5P_ARENA_TRACE=1`
-  and look for a fill pass larger than its dry run (`scratch/ab.py` counts
+  and look for a fill pass larger than its dry run (`scripts/diag/ab.py` counts
   them). `SPURS_JG_TRACE=1` prints each guard notify, guard opening and job.
 
 - 20 of 20 boots: 129 `GT.VOL` opens, 27 paths, about 610 flips in 20 s. The
@@ -370,7 +1162,7 @@ Each corrects the one before.
 - The crash that used to follow was `cellHttpUtilParseUri` zero-filling 2.7 KB
   of guest stack (Phase 27). When an HLE function takes a guest structure,
   check its size against the SDK before trusting a host-side `memset`.
-- `scratch/inp.ps1 <secs>` runs a windowed boot for someone to drive, with a
+- `scripts/test/inp.ps1 <secs>` runs a windowed boot for someone to drive, with a
   capture every 5 s. `scratch/auto.ps1 <tag>` builds and drives it unattended
   with `PAD_HOLD` (timed button presses, no keyboard or focus needed).
 - Frame rate was bounded by Windows timer granularity; `src/main.cpp` now
@@ -435,7 +1227,7 @@ Each corrects the one before.
   over the game like the F3 profiler; the PS button opens it too. A new
   setting is a field, its TOML key and one row in `items()`. While it is open
   the title sees every pad at rest (`g_pad_input_blocked`, cellPad.c).
-  `GT5P_SETTINGS_UI=0` none, `=1` open at start; `scratch\settings_test.ps1`
+  `GT5P_SETTINGS_UI=0` none, `=1` open at start; `scripts\test\settings_test.ps1`
   drives it with posted keys against a scratch settings file. The
   "Compiling shaders" badge (`src/gt5p_shaderbusy.cpp`, 52.1) reads
   `g_rsx_shader_busy` from the backend; `GT5P_SHADER_INDICATOR=0` hides it.
@@ -454,8 +1246,8 @@ Each corrects the one before.
   them (`RSX_VTX_GPU`, `=0` for the CPU path, `=check` to verify): 15.7 to
   17.2 fps with drawing. A triangle list split over records must carry its
   leftover indices (256-index batches): never let a batch become its own
-  record without that. `PS3_TIMELINE` + `scratch/tl.py` show what a frame
-  waits on; `scratch\winshot.ps1` captures the game window at the page.
+  record without that. `PS3_TIMELINE` + `scripts/diag/tl.py` show what a frame
+  waits on; `scripts\test\winshot.ps1` captures the game window at the page.
   Never pipe a run script into `Select-Object -First` (it skipped closing the
   game; the scripts now close it in a `finally`).
 - **Phase 57 (cross-frame vertex cache):** vertex streams that repeat from
@@ -473,8 +1265,8 @@ Each corrects the one before.
   replays the other. Per-frame record state must live in `FrameSet`, never in
   a plain global. That gives 25.1 fps. The frame is now about 8 ms of flip
   wait plus a 30 ms SPU pass; the title alone does 29.3.
-  `scratch\movshot.ps1` captures the opening movie, and
-  `scratch\winping.ps1` checks that the window answers messages.
+  `scripts\test\movshot.ps1` captures the opening movie, and
+  `scripts\test\winping.ps1` checks that the window answers messages.
 - **Phase 59:** `GT5P_PRESENT_SLEEP` defaults to 1 ms, and lifted SPU code is
   built with `SPU_LS_NO_PROBES` (`-DGT5P_SPU_PROBES=ON` keeps the probes).
   That gives about 30.6 fps at the page. Never evict by shifting a cache that
@@ -488,7 +1280,7 @@ Each corrects the one before.
     write head (`GCM_PARK_RESYNC=1` for the old rule);
   - there are 512 texture slots (`RSX_TEX_SLOTS`).
 
-  Mercedes and Ferrari now run at 22-23 fps. `scratch\dealer.ps1 -Moves
+  Mercedes and Ferrari now run at 22-23 fps. `scripts\test\dealer.ps1 -Moves
   "DOWN,RIGHT,RIGHT,RIGHT,RIGHT" -Enter` is Ferrari. Scripted directions are
   D-pad only (`PAD_HOLD_STICK=1`): the stick doubled every move.
 - **Phase 61 (Ferrari):** the cars change per visit, and with them the frame
@@ -498,7 +1290,7 @@ Each corrects the one before.
   - the contention byte is stored under the lock line (`SPURS_CONT_COH=0`);
     this was a stall;
   - texture-slot views sit past the per-draw windows;
-  - three more job bodies are lifted (`scratch/find_bodies.py`);
+  - three more job bodies are lifted (`scripts/diag/find_bodies.py`);
   - the vblank runs at 59.94 Hz (`GT5P_VBLANK_HZ`);
   - the walker wakes on the SPU write it waits for (`GCM_WALK_WAKE=0`).
 
@@ -508,10 +1300,10 @@ Each corrects the one before.
   fast paths behind `g_spu_fast` (`SPU_FAST=0` for the old ones): render
   lanes need 1.15 times less CPU, and Ferrari runs at a median 25 fps.
   - Measure SPU changes within one boot: `SPU_FAST_AB=1 SPURS_LANE_CYC=1`,
-    then `scratch/abcyc.py`. Across boots the car pair changes the numbers
+    then `scripts/diag/abcyc.py`. Across boots the car pair changes the numbers
     more than any change does.
   - Profile with `GT5P_SAMPLE=all GT5P_SAMPLE_GRAIN=16 GT5P_SAMPLE_TOP=1500`
-    and `scratch/lanesum.py`; 256-byte buckets misname functions.
+    and `scripts/diag/lanesum.py`; 256-byte buckets misname functions.
   - The SPU lifter turns `ila $rN,X; bi $rN` into a direct transfer
     (`SPU_LIFT_CONST_BI=0` at lift time to stop).
 - **Phase 63:**
@@ -540,7 +1332,7 @@ Each corrects the one before.
 - **Phase 65: dealers visited one after another no longer slow down.** The
   pipeline cache thrashed once a 128-entry list of texel-addressed programs
   ran out (`RSX_UNNORM_KEYFIX=0` for the old way). `PSOMISSDBG=2` names the
-  key field behind pipeline misses; `scratch\revisit.ps1` visits N dealers
+  key field behind pipeline misses; `scripts\test\revisit.ps1` visits N dealers
   in a row (a 2 s Circle backs out, after any other press on the page).
   - **Shaders not on disk compile on a worker pool** (`RSX_SHADER_ASYNC=1`,
     set by `src/main.cpp`; settings "Precompile shaders", on). Draws wait
@@ -552,7 +1344,7 @@ Each corrects the one before.
     63's first deadlock shape back in 2 of 3 cold visits: that race is
     still there, only rare.
 - **Phase 66 (a track):** with a car bought the menu opens on News under a
-  popup; `$ToDealers` in `scratch/milestone.ps1` (Circle, hold Right to the
+  popup; `$ToDealers` in `scripts/test/milestone.ps1` (Circle, hold Right to the
   end, four Lefts, Cross) is the route now, `$DaytonaHold` drives Arcade to
   Daytona. Daytona froze on its logo: a render job the job manager suspended
   at an interrupt point and resumed in a later run returned through
@@ -587,7 +1379,7 @@ Each corrects the one before.
   thread leaked 0x150 bytes per call and sank into the next thread's stack.
   - The lifter now retries such bases from the real entry. **Re-lift after
     updating ps3recomp.**
-  - `PPU_STACK_CHECK=1` and `scratch/spcheck_patch.py` find a leaking
+  - `PPU_STACK_CHECK=1` and `scripts/diag/spcheck_patch.py` find a leaking
     callee. `[ppu] indirect tail to ...: no lifted entry` names a dropped
     jump.
   - Library callbacks run on the caller's stack (`PPU_CB_SHARED_STACK=1` for
@@ -598,14 +1390,40 @@ Each corrects the one before.
   - A target is sized no larger than its draws' viewport and scissor
     (`RSX_RT_CAP_VP=0`). The race's 1440-row clip had dropped the depth
     buffer.
-- Next: the 30 fps plan, `docs/plan-30fps.md` (step 2 is in; 5a, inline guest memory access behind the CMake option `GT5P_VM_INLINE`, and a 5c spin pause measured no gain, Phase 55: the title's ~23 fps ceiling is the SPU job pipeline, so 5b and the job lists' critical path come next); the remaining dealership stalls (Phase 54, about 1 run in 12); its frame rate (Phase 46: the title threads and SPU job hand-offs cap it at about 22); the floor reflection (46.4); the occasional 1 fps stall with three lanes polling (Phase 43); the dealership's first-entry stall (Phase 42); the dim 2D layer (Phase 37); texture units 4 and up; sound in a race, which has more
-  voices than the menu; the main thread's 93% of a core at 31 frames a
-  second; why the title's audio thread still stalls 14 to 30 ms (Phase 36); the
-  dealership, not re-examined since Phase 33 beyond seeing it draw text on
-  black at 25 frames a second without freezing; immediate-mode strips and
-  fans, which are still dropped. Then which per-SPU counter the dealership's
-  render thread waits on (Phase 31), and the `TV.DAT` install RPCS3 starts
-  about 20 s after `BootRoot.gpb`.
+- **Phase 71: 1080p antialiasing and softer shadows.**
+  - At 1080p the title asks for no antialiasing. The window-sized scene
+    target is multisampled anyway (`RSX_MSAA_FORCE=0` to stop).
+  - Shadow compares average four 2x2 compares (`RSX_SHADOW_SOFT=0`).
+  - The pit crew's bind pose is open: motions load and `CMotionEx` runs,
+    but the SPU skins with bind-pose matrices.
+- **Phase 72: the pit crew animate.** The SPU skinning never ran.
+  - The SPU lifter's `bisl $r0, $r0` wrote the link before reading the
+    target (`SPU_LIFT_BISL_LINKFIRST=1` at lift time for the old order).
+  - Indirect branch targets now drop their two low bits, as the hardware
+    does (`SPU_BI_LOWBITS=1` keeps them).
+  - `lift_spu_jobs.py` seeds the targets of absolute code-address tables
+    (`SPU_ABS_TABLES=0` without).
+  - **Re-lift the SPU code after updating ps3recomp.**
+  - `SPU_DMA_RANGE_HIST` shows a job's inputs.
+  - Open, left at the user's request: the menu's black slabs after the
+    Race Mode page, and the menu's trees reflected on the dealer floor
+    (`scripts/test/roundtrip.ps1 -Pit`).
+- Next, as of Phase 72 (the user's own order is under "Start here"):
+  - the texture-load warning;
+  - the menu after the Race Mode page, and the dealer reflection;
+  - re-check the Kyoto slabs and the loading-screen text.
+
+  Then the older items, none re-measured since the phase named:
+  - the 30 fps plan, `docs/plan-30fps.md`. Phase 55 put the title's ceiling
+    in the SPU job pipeline, so step 5b and the job lists' critical path
+    are next;
+  - Ferrari-class dealer pages at 20 to 28 fps (Phase 61);
+  - the floor reflection (46.4);
+  - the dim 2D layer (Phase 37);
+  - texture units 4 and up in fragment programs;
+  - sound in a race, which has more voices than the menu;
+  - the audio thread's 14 to 30 ms stalls (Phase 36);
+  - the `TV.DAT` install that RPCS3 starts about 20 s after `BootRoot.gpb`.
 
 Diagnostics added for this: `GT5P_THREADS=1` (every guest thread and held
 mutex with each main-thread sample), `PS3_SYNCLOG=1` (failed locks, with the
@@ -626,7 +1444,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in thirty-nine files under `include/`, `libs/`, `runtime/` and `tools/`. The disc build does not
+changes in 63 files under `include/`, `libs/`, `runtime/` and `tools/` (2026-10-20). The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
@@ -713,9 +1531,14 @@ Run Python through the repo's virtual environment: `.venv\Scripts\python`.
 | `scripts/build.cmd` | Configure and build Release with clang-cl and Ninja |
 | `scripts/self_metainfo.py`, `scripts/decrypt_self.py` | SELF decryption helpers; need a `data/keys` file that is not in the repo |
 | `scripts/setjmp_patch.py` | Post-lift patch, required after every lift |
-| `scripts/lift_spu_jobs.py` | Lift captured SPU jobs |
-| `scripts/soak.sh` | Repeated headless boots; prints assets loaded per run |
-| `scripts/dis.py`, `xref.py`, `vtab.py`, `rtti.py`, `jumptables.py` | Static analysis helpers over the ELF |
+| `scripts/spin_patch.py` | Post-lift patch, required after every lift: guest spin waits on SPU progress yield (`spin_waits` in `config/targets.json`) |
+| `scripts/ui_mask_patch.py` | Post-lift patch, required after every lift: menu label fade mask centred in ultrawide (`ui_label_mask_func`; `GT5P_UI_MASK_FIX=0` off) |
+| `scripts/spu_native_patch.py` | Post-SPU-lift patch, required: hooks native replacements (`src/gt5p_spu_native.c`) into lifted SPU blocks (`spu_native_hooks`); `GT5P_SPU_NATIVE=0` off, `=2` check |
+| `scripts/lift_spu_jobs.py` | Lift the policy module, the captured job images and the job bodies; writes `src/gen/spu_workloads_bcus98158.c` |
+| `scripts/soak.sh`, `soak.py`, `boot.py` | Repeated or single headless boots with a summary |
+| `scripts/test/*.ps1` | Drive the game to a page and measure or shoot it (table under "Start here") |
+| `scripts/diag/*.py` | Log readers, call-count instrumenters, RenderDoc scripts (under "Start here") |
+| `scripts/dis.py`, `cdis.py`, `xref.py`, `vtab.py`, `rtti.py`, `jumptables.py` | Static analysis helpers over the ELF (`cdis.py 0xADDR` disassembles a function, `xref.py 0xADDR` lists callers, `vtab.py 0xVTABLE` lists slots) |
 | `scripts/audit_branch.py`, `audit_cmp.py`, `bbcount.py` | Lifter audits and basic-block counting |
 
 ### ps3recomp

@@ -1,4 +1,4 @@
-/* Present / vblank ticker.
+﻿/* Present / vblank ticker.
  *
  * Nothing in a port's own main() advances the display. The game requests a flip
  * (`_cellGcmSetFlipCommand`), then polls `cellGcmGetFlipStatus` until it clears
@@ -31,6 +31,7 @@
 #include "vm.h"
 #include "ps3emu/thread_name.h"
 #include "gt5p_settings.h"
+#include "gt5p_debug_export.h"
 #include "ps3emu/timeline.h"
 
 #ifndef GT5P_DEFAULT_WINDOW_TITLE
@@ -42,6 +43,10 @@
  * anything" is exactly the shape a wedged worker produces, and nothing else
  * shows which thread is where. */
 extern "C" const char* g_hle_inflight[];
+extern "C" uint32_t g_sc_inflight[];
+extern "C" ppu_context* g_sc_context[];
+extern "C" uint64_t vm_read64(uint64_t);
+extern "C" void ppu_ww_dump_tail(void);
 extern "C" unsigned ppu_thread_prof_pc(unsigned tid);
 
 static void dump_threads_now(int regs);
@@ -66,17 +71,19 @@ static void dump_threads_now(int regs)
     for (int i = 0; i < PPU_THREAD_MAX; i++) {
         const ppu_thread_info* t = &g_ppu_threads[i];
         if (t->state == PPU_THREAD_STATE_FREE) continue;
-        fprintf(stderr, "   tid=%d %-9s entry=0x%08llX prof_pc=0x%08X hle=%-26s name=\"%s\"\n",
-                i, kState[t->state & 3],
+        fprintf(stderr, "   tid=%d %-9s entry=0x%08llX prof_pc=0x%08X hle=%-26s syscall=%u name=\"%s\"\n",
+                i + 1, kState[t->state & 3],
                 (unsigned long long)t->entry_addr, ppu_thread_prof_pc((unsigned)i + 1),
-                (i < 64 && g_hle_inflight[i]) ? g_hle_inflight[i] : "-",
+                (i + 1 < 64 && g_hle_inflight[i + 1]) ? g_hle_inflight[i + 1] : "-",
+                i + 1 < 64 ? g_sc_inflight[i + 1] : 0,
                 t->name);
         /* GT5P_THREADS=2: also some registers and the 16 bytes at r9, read
          * racily from the live context. A thread spinning in a loop with no
          * calls shows what it is comparing (func_00BA97B0: r9 = the job
          * queue's row of per-SPU counters, r5 = the target). */
         if (t->state == PPU_THREAD_STATE_RUNNING && regs) {
-            const ppu_context* c = &t->ctx;
+          __try {
+            const ppu_context* c = i + 1 < 64 && g_sc_context[i + 1] ? g_sc_context[i + 1] : &t->ctx;
             uint32_t r9 = (uint32_t)c->gpr[9];
             fprintf(stderr, "      r3=%08X r4=%08X r5=%08X r9=%08X r31=%08X lr=%08X",
                     (uint32_t)c->gpr[3], (uint32_t)c->gpr[4], (uint32_t)c->gpr[5], r9,
@@ -87,6 +94,20 @@ static void dump_threads_now(int regs)
                 for (int k = 0; k < 16; k += 2) fprintf(stderr, " %02X%02X", m[k], m[k + 1]);
             }
             fprintf(stderr, "\n");
+            if (getenv("GT5P_STALL_STACKS")) {
+                __try {
+                    uint32_t sp = (uint32_t)c->gpr[1];
+                    fprintf(stderr, "      callers:");
+                    for (int k = 0; k < 12; ++k) {
+                        uint32_t back = (uint32_t)vm_read64(sp);
+                        if (back <= sp || back - sp > 0x100000u || back >= 0xF0000000u) break;
+                        fprintf(stderr, " %08X", (uint32_t)vm_read64(back + 16));
+                        sp = back;
+                    }
+                    fprintf(stderr, "\n");
+                } __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(stderr, " unavailable\n"); }
+            }
+          } __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(stderr, "      registers unavailable\n"); }
         }
     }
     /* GT5P_PEEK=<ea>[,<ea>...] (hex): with each dump, follow the pointer
@@ -174,8 +195,8 @@ static const uint8_t* live_guest_ptr(void*, uint32_t location, uint32_t offset,
 static int backend_init(const char* title)
 {
     /* Window and swap chain at the display mode main() reported to the game. */
-    const uint32_t w = gt5p_settings().resolution == 1080 ? 1920 : 1280;
-    const uint32_t h = gt5p_settings().resolution == 1080 ? 1080 : 720;
+    const uint32_t w = gt5p_settings().resolution >= 1080 ? 1920 : 1280;
+    const uint32_t h = gt5p_settings().resolution >= 1080 ? 1080 : 720;
     if (rsx_live_draw_enabled()) {
         if (rsx_null_backend_init(w, h, title) == 0 &&
             rsx_live_draw_init(rsx_null_backend_get_hwnd(), w, h,
@@ -205,7 +226,7 @@ static int backend_pump(void)
 }
 
 /* GT5P_SAMPLE=<n>: a sampling profiler for the n busiest threads (default 4,
- * at most 8). Every 10 s it reports, for each thread it sampled, the 60
+ * at most 16). Every 10 s it reports, for each thread it sampled, the 60
  * busiest 256-byte code buckets as offsets from the executable's base, then
  * picks the threads that used the most CPU in that round to sample next. A
  * sample in a DLL is charged to its first caller in the executable (bit 0
@@ -219,7 +240,13 @@ static int sample_rip(HANDLE th, unsigned long long base, unsigned long long* rv
     CONTEXT c; memset(&c, 0, sizeof c); c.ContextFlags = CONTEXT_FULL;
     BOOL ok = GetThreadContext(th, &c);
     unsigned long long tag = 0;
-    if (ok && (c.Rip < base || c.Rip >= base + 0x10000000ull)) {
+    /* GT5P_SAMPLE_DLL=1: keep a sample that lands in a DLL where it is
+     * (module+offset) instead of unwinding to the executable: frames without
+     * unwind data fall back to a stack guess and named stale return
+     * addresses (the FIFO walker's "present_thread" bucket, Phase 105). */
+    static int dll_raw = -1;
+    if (dll_raw < 0) dll_raw = getenv("GT5P_SAMPLE_DLL") ? 1 : 0;
+    if (ok && !dll_raw && (c.Rip < base || c.Rip >= base + 0x10000000ull)) {
         for (int f = 0; f < 24; f++) {
             DWORD64 ib = 0;
             PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(c.Rip, &ib, NULL);
@@ -263,12 +290,20 @@ struct ThreadCpu { DWORD tid; unsigned long long cpu, d; };
 /* GT5P_SAMPLE_PRESENT=1: the per-thread sampler always takes the present
  * (FIFO walker) thread as one of its n, busy or not. */
 static DWORD s_samp_force_tid;
+/* GT5P_SAMPLE_WID=<wid>: also one table of the samples, from any sampled lane
+ * thread, taken while that lane was running SPURS workload <wid> (printed as
+ * tid=w<wid>). Lanes of a pool take passes in turn, so no one thread holds a
+ * workload's profile. */
+extern "C" volatile signed char g_spurs_tid_wid[4096];
+static int s_samp_wid = -1;
+static struct { unsigned long long rva; unsigned n; } s_wid_b[4096];
+static unsigned s_wid_nb, s_wid_total, s_wid_seen[32];
 static DWORD WINAPI sampler_thread(LPVOID p)
 {
     const int want = (int)(uintptr_t)p;
     const unsigned long long base = (unsigned long long)GetModuleHandleW(NULL);
     const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
-    static SampThread s[8];
+    static SampThread s[16];
     static ThreadCpu prev[1024], cur[1024];
     int ns = 0, nprev = 0, round = 0;
     ULONGLONG t0 = GetTickCount64();
@@ -277,6 +312,13 @@ static DWORD WINAPI sampler_thread(LPVOID p)
         for (int i = 0; i < ns; i++) {
             unsigned long long rva;
             if (!sample_rip(s[i].h, base, &rva)) continue;
+            if (s_samp_wid >= 0) s_wid_seen[(unsigned char)g_spurs_tid_wid[s[i].tid & 4095u] & 31]++;
+            if (s_samp_wid >= 0 && g_spurs_tid_wid[s[i].tid & 4095u] == s_samp_wid + 1) {
+                unsigned k = 0;
+                for (; k < s_wid_nb; k++) if (s_wid_b[k].rva == rva) { s_wid_b[k].n++; break; }
+                if (k == s_wid_nb && s_wid_nb < 4096) { s_wid_b[k].rva = rva; s_wid_b[k].n = 1; s_wid_nb++; }
+                s_wid_total++;
+            }
             unsigned k = 0;
             for (; k < s[i].nb; k++) if (s[i].b[k].rva == rva) { s[i].b[k].n++; break; }
             if (k == s[i].nb && s[i].nb < 4096) { s[i].b[k].rva = rva; s[i].b[k].n = 1; s[i].nb++; }
@@ -290,7 +332,9 @@ static DWORD WINAPI sampler_thread(LPVOID p)
             const double pct = 100.0 * (double)(thread_cpu_100ns(t->h) - t->cpu0) / 1e7 / secs;
             fprintf(stderr, "[ps-sample] round=%d tid=%lu cpu=%.0f%% %u samples, %u buckets, base 0x%llX\n",
                     round, (unsigned long)t->tid, pct, t->total, t->nb, base);
-            for (int r = 0; r < 60; r++) {
+            static int s_ptop = -1;   /* GT5P_SAMPLE_TOP=<n>: buckets printed per thread (60) */
+            if (s_ptop < 0) { const char* e = getenv("GT5P_SAMPLE_TOP"); s_ptop = e && atoi(e) > 0 ? atoi(e) : 60; }
+            for (int r = 0; r < s_ptop; r++) {
                 unsigned best = 0;
                 for (unsigned q = 1; q < t->nb; q++) if (t->b[q].n > t->b[best].n) best = q;
                 if (!t->nb || !t->b[best].n) break;
@@ -308,6 +352,21 @@ static DWORD WINAPI sampler_thread(LPVOID p)
                 t->b[best].n = 0;
             }
             CloseHandle(t->h);
+        }
+        if (s_samp_wid >= 0) {
+            fprintf(stderr, "[ps-sample] round=%d tid=w%d cpu=lanes %u samples, %u buckets, base 0x%llX\n",
+                    round, s_samp_wid, s_wid_total, s_wid_nb, base);
+            fprintf(stderr, "[ps-sample] samples by running workload:");
+            for (int k = 0; k < 32; k++) if (s_wid_seen[k]) fprintf(stderr, " %s%d=%u", k ? "w" : "none", k ? k - 1 : 0, s_wid_seen[k]);
+            fprintf(stderr, "\n"); memset(s_wid_seen, 0, sizeof s_wid_seen);
+            for (int r = 0; r < 300; r++) {
+                unsigned best = 0;
+                for (unsigned q = 1; q < s_wid_nb; q++) if (s_wid_b[q].n > s_wid_b[best].n) best = q;
+                if (!s_wid_nb || !s_wid_b[best].n) break;
+                fprintf(stderr, "[ps-sample]   +0x%llX  %u\n", s_wid_b[best].rva, s_wid_b[best].n);
+                s_wid_b[best].n = 0;
+            }
+            s_wid_nb = 0; s_wid_total = 0;
         }
         /* The next round samples the threads that used the most CPU in this one. */
         int ncur = 0;
@@ -497,13 +556,14 @@ extern "C" void gt5p_start_sampler(void)
 {
     const char* e = getenv("GT5P_SAMPLE");
     if (!e) return;
+    if (const char* w = getenv("GT5P_SAMPLE_WID")) s_samp_wid = atoi(w);
     if (!strcmp(e, "all")) {
         s_sampler_lanes = 1;
         g_spurs_lane_start_hook = lane_start_hook;
         CreateThread(NULL, 0, sampler_all_thread, NULL, 0, NULL);
         return;
     }
-    int n = atoi(e); if (n <= 0) n = 4; if (n > 8) n = 8;
+    int n = atoi(e); if (n <= 0) n = 4; if (n > 16) n = 16;
     if (getenv("GT5P_SAMPLE_PRESENT")) s_samp_force_tid = GetCurrentThreadId();
     CreateThread(NULL, 0, sampler_thread, (LPVOID)(uintptr_t)n, 0, NULL);
 }
@@ -515,6 +575,49 @@ extern "C" void gt5p_start_sampler(void)
 extern "C" void cellSpurs_debug_dump(void);
 extern "C" void cellGcm_debug_dump(void);
 extern "C" void spurs_pm_debug_dump(void);
+extern "C" void cellSpurs_debug_dump_to(FILE*);
+extern "C" void cellGcm_debug_dump_to(FILE*);
+extern "C" void spurs_pm_debug_dump_to(FILE*);
+extern "C" void rsx_d3d12_debug_dump_to(FILE*);
+extern "C" void pad_debug_milestones_to(FILE*);
+extern "C" void gt5p_debug_main(FILE*);
+extern "C" volatile LONG g_rsx_shader_busy, g_rsx_shaders_pending, g_rsx_shaders_compiled, g_rsx_pipelines_built;
+
+/* Each live section gets its own guard so a damaged pointer does not discard
+ * the remaining report. No guest/renderer lock or thread suspension here. */
+extern "C" void gt5p_debug_snapshot(FILE* out)
+{
+    fprintf(out, "Shaders: busy=%ld pending=%ld compiled=%ld pipelines=%ld\n",
+        g_rsx_shader_busy, g_rsx_shaders_pending, g_rsx_shaders_compiled, g_rsx_pipelines_built);
+    __try { pad_debug_milestones_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Milestones unavailable\n"); }
+    __try { gt5p_debug_main(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Main context unavailable\n"); }
+    for (int i = 0; i < PPU_THREAD_MAX; i++) {
+        __try {
+            const ppu_thread_info* t = &g_ppu_threads[i];
+            if (t->state == PPU_THREAD_STATE_FREE) continue;
+            fprintf(out, "PPU tid=%d host=%lu state=%d name=%.63s entry=%08llX pc=%08X hle=%s syscall=%u\n",
+                i + 1, t->host_tid, t->state, t->name, (unsigned long long)t->entry_addr,
+                ppu_thread_prof_pc(i + 1), i + 1 < 64 && g_hle_inflight[i + 1] ? g_hle_inflight[i + 1] : "-",
+                i + 1 < 64 ? g_sc_inflight[i + 1] : 0);
+            if (i == 0) { fprintf(out, "Main registers are listed above (not stored in the thread table)\n"); continue; }
+            const ppu_context* c = i + 1 < 64 && g_sc_context[i + 1] ? g_sc_context[i + 1] : &t->ctx;
+            fprintf(out, "lr=%08llX ctr=%08llX stack=%08X+%X syscall_context=%d\n",
+                (unsigned long long)c->lr, (unsigned long long)c->ctr, t->stack_addr, t->stack_size, c != &t->ctx);
+            for (int r = 0; r < 32; r++) fprintf(out, "r%d=%016llX%s", r,
+                (unsigned long long)c->gpr[r], r % 4 == 3 ? "\n" : " ");
+        } __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "PPU slot %d unavailable\n", i); }
+    }
+    __try { cellGcm_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "FIFO snapshot unavailable\n"); }
+    __try { cellSpurs_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "SPURS workload snapshot incomplete\n"); }
+    __try { spurs_pm_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "SPU lane snapshot incomplete\n"); }
+    __try { rsx_d3d12_debug_dump_to(out); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Renderer snapshot unavailable\n"); }
+}
 static void stall_dump_check(unsigned presents_total)
 {
     static int on = -1;
@@ -523,19 +626,25 @@ static void stall_dump_check(unsigned presents_total)
     static unsigned last_n = 0; static ULONGLONG last_ms = 0; static int dumped = 0;
     const ULONGLONG now = GetTickCount64();
     if (presents_total != last_n) { last_n = presents_total; last_ms = now; dumped = 0; return; }
-    /* At 3 s, and again at 8 s: whether the lanes' step counts moved. */
-    if (dumped >= 2 || presents_total < 200 || now - last_ms < (dumped ? 8000u : 3000u)) return;
+    /* GT5P_STALL_MS lowers the first snapshot threshold for short recoverable
+     * stalls in diagnostic runs. Normal play keeps the 3/8-second thresholds. */
+    static unsigned threshold = 0;
+    if (!threshold) {
+        const char* e = getenv("GT5P_STALL_MS");
+        threshold = e ? (unsigned)strtoul(e, nullptr, 10) : 3000u;
+        if (threshold < 100u) threshold = 100u;
+        if (threshold > 8000u) threshold = 8000u;
+    }
+    if (dumped >= 2 || presents_total < 200 || now - last_ms < (dumped ? 8000u : threshold)) return;
     dumped++;
     /* GT5P_STALL_LOG (on; =0 off): a game started by hand has its stderr on
      * a console or nowhere, so a freeze someone reports came with no dump.
      * Unless stderr is already a file, the dump goes to
      * logs\stall-<date>-<time>.log under the working directory (the project
      * root) as well: stderr's descriptor points there for its length. */
-    static int to_file = -1;
-    if (to_file < 0) {
-        const char* e = getenv("GT5P_STALL_LOG");
-        to_file = !(e && *e == '0') && GetFileType(GetStdHandle(STD_ERROR_HANDLE)) != FILE_TYPE_DISK;
-    }
+    const char* log_env = getenv("GT5P_STALL_LOG");
+    const bool to_file = !(log_env && *log_env == '0') && !gt5p_debug_logs_active() &&
+        GetFileType(GetStdHandle(STD_ERROR_HANDLE)) != FILE_TYPE_DISK;
     static char path[MAX_PATH] = "";
     int saved = -1, fd = -1;
     if (to_file) {
@@ -555,6 +664,7 @@ static void stall_dump_check(unsigned presents_total)
     cellSpurs_debug_dump();
     spurs_pm_debug_dump();
     cellGcm_debug_dump();
+    if (getenv("PPU_WWATCH_TAIL")) ppu_ww_dump_tail();
     fflush(stderr);
     if (saved >= 0) { _dup2(saved, 2); _close(saved); }
     if (fd >= 0) {
@@ -568,9 +678,68 @@ static void stall_dump_check(unsigned presents_total)
 extern "C" void gt5p_start_profview(void);
 extern "C" void gt5p_start_settings_ui(void);   /* F1 settings page: gt5p_settings_ui.cpp */
 extern "C" void gt5p_start_shader_indicator(void);   /* gt5p_shaderbusy.cpp */
-extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total);
+extern "C" void gt5p_pv_frame(double fifo_total, double pres_total, double pump_total,
+                             double vblank_total, double flip_total, double wait_total);
 extern "C" volatile double g_rsx_gpu_ms_last, g_rsx_gpu_ms_sum, g_rsx_gpu_ms_max;
 extern "C" volatile long g_rsx_gpu_n;
+
+extern "C" void rsx_d3d12_backend_prewarm(void);
+extern "C" void rsx_d3d12_backend_prepare_library(void);
+static HANDLE s_startup_ready;
+
+/* GT5P_VBLANK_THREAD (on; =0 off): the vblank and flip clock on its own
+ * thread. It used to share the present thread with the FIFO walk, so no
+ * vblank could fire while a walk ran -- and a race frame's walk is 13-17 ms in
+ * one call. GT5 Prologue paces its frames on the vblank handler, so the beat
+ * the game saw was the walk's: wakes on its vblank-driven workers were 2 to
+ * 37 ms apart instead of multiples of 16.68 (mean error 3.2 ms), late ticks
+ * then fired back to back, and a frame that could have made the next vblank
+ * started late and took two. This thread only advances the count and marks
+ * the tick pending; guest threads deliver the handlers (ppu_gcm_pump) and the
+ * present thread still presents and drains. */
+static volatile LONG s_vbl_ticks = 0;
+static int vblank_thread_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char* e = getenv("GT5P_VBLANK_THREAD"); on = !(e && *e == '0'); }
+    return on;
+}
+static DWORD WINAPI vblank_thread(LPVOID p)
+{
+    fprintf(stderr, "[hostthread] vblank hosttid=%lu\n", (unsigned long)GetCurrentThreadId());
+    ps3_name_thread(L"vblank");
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    const double hz = *(const double*)p;
+    LARGE_INTEGER qf; QueryPerformanceFrequency(&qf);
+    const LONGLONG period = (LONGLONG)((double)qf.QuadPart / hz);
+    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
+    LARGE_INTEGER c; QueryPerformanceCounter(&c);
+    LONGLONG next = c.QuadPart + period;
+    for (;;) {
+        /* Sleep to within 0.4 ms, then spin the remainder: the
+         * high-resolution timer alone can wake a few hundred us late. The
+         * spin is short because this thread outranks a pinned lane. */
+        for (;;) {
+            QueryPerformanceCounter(&c);
+            const LONGLONG left = next - c.QuadPart;
+            if (left <= 0) break;
+            const LONGLONG left_100ns = left * 10000000 / qf.QuadPart;
+            if (left_100ns > 6000 && timer) {
+                LARGE_INTEGER due; due.QuadPart = -(left_100ns - 4000);
+                SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+                WaitForSingleObject(timer, INFINITE);
+            } else if (left_100ns > 15000) Sleep(1);
+            else YieldProcessor();
+        }
+        cellGcmTickVBlank();
+        cellGcmTickFlip();
+        InterlockedIncrement(&s_vbl_ticks);
+        ps3_tl('V', 0, 0);
+        next += period;
+        QueryPerformanceCounter(&c);
+        if (c.QuadPart - next > 6 * period) next = c.QuadPart + period;   /* suspended: resync */
+    }
+}
 
 static DWORD WINAPI present_thread(LPVOID)
 {
@@ -596,15 +765,69 @@ static DWORD WINAPI present_thread(LPVOID)
     /* GT5P_PRESENT_PROF=1: every 5 s, where this thread's time went. */
     const int prof = getenv("GT5P_PRESENT_PROF") != nullptr;
     LARGE_INTEGER qf; QueryPerformanceFrequency(&qf);
-    double p_vbl = 0, p_flip = 0, p_pres = 0, p_fifo = 0, p_pump = 0;
+    double p_vbl = 0, p_flip = 0, p_pres = 0, p_fifo = 0, p_pump = 0, p_wait = 0;
     unsigned p_ticks = 0, p_pres_n = 0, p_pres_total = 0;
     ULONGLONG p_last = GetTickCount64();
     /* Running totals of the same, never reset, for the profiler view
      * (gt5p_profview.cpp), which takes the difference at each present. */
-    double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0;
+    double c_p_vbl = 0, c_p_flip = 0, c_p_pres = 0, c_p_fifo = 0, c_p_pump = 0, c_p_wait = 0;
 /* PS3_TIMELINE also gets each present (P) and FIFO walk (R), with its length. */
 #define PROF_T(acc, stmt) do { LARGE_INTEGER a_, b_; QueryPerformanceCounter(&a_); stmt; QueryPerformanceCounter(&b_); double d_ = (double)(b_.QuadPart - a_.QuadPart) / qf.QuadPart; acc += d_; c_##acc += d_;     if (g_tl_on && (&acc == &p_pres || &acc == &p_fifo)) ps3_tl_rec(&acc == &p_pres ? 'P' : 'R', 0, (uint32_t)(d_ * 1e6)); } while (0)
+    /* The walk's own CPU time beside its wall time: thread cycles over a
+     * calibrated cycle rate. A walk whose CPU time is well under its wall
+     * time was descheduled or blocked inside the backend; the timeline's R
+     * event carries both (a = CPU us, b = wall us). */
+    double p_fifo_cpu = 0, f_walk = 0, f_walk_cpu = 0;
+    double cyc_per_s = 0;
+    { LARGE_INTEGER a, b; ULONG64 ca = 0, cb = 0;
+      QueryPerformanceCounter(&a); QueryThreadCycleTime(GetCurrentThread(), &ca);
+      do { QueryPerformanceCounter(&b); } while ((double)(b.QuadPart - a.QuadPart) / qf.QuadPart < 0.02);
+      QueryThreadCycleTime(GetCurrentThread(), &cb);
+      cyc_per_s = (double)(cb - ca) / ((double)(b.QuadPart - a.QuadPart) / qf.QuadPart); }
+    /* The cycle query is a system call per walk (3% of the walker when
+     * always on): only when something reads the result. */
+    const bool walk_cpu = prof || getenv("GT5P_FRAME_LOG") != nullptr;
+    auto walk_fifo = [&]() {
+        LARGE_INTEGER a, b; ULONG64 ca = 0, cb = 0;
+        const bool cyc = walk_cpu || g_tl_on;
+        QueryPerformanceCounter(&a); if (cyc) QueryThreadCycleTime(GetCurrentThread(), &ca);
+        cellGcm_rsx_process_fifo();
+        if (cyc) QueryThreadCycleTime(GetCurrentThread(), &cb); QueryPerformanceCounter(&b);
+        const double d = (double)(b.QuadPart - a.QuadPart) / qf.QuadPart;
+        const double cpu = cyc_per_s > 0 ? (double)(cb - ca) / cyc_per_s : 0;
+        p_fifo += d; c_p_fifo += d; p_fifo_cpu += cpu;
+        if (g_tl_on) ps3_tl_rec('R', (uint32_t)(cpu * 1e6), (uint32_t)(d * 1e6));
+        f_walk += d; f_walk_cpu += cpu;
+    };
+    /* GT5P_FRAME_LOG=<path>: one line per presented frame -- wall-clock time
+     * (Unix ms), then the FIFO walk's wall and CPU ms since the previous
+     * present. scripts/test/race.ps1 -FrameTest reads it for frame-time
+     * statistics over its sampling window. */
+    FILE* frame_log = nullptr;
+    if (const char* e = getenv("GT5P_FRAME_LOG")) {
+        frame_log = fopen(e, "w");
+        if (frame_log) setvbuf(frame_log, nullptr, _IOFBF, 1 << 16);
+    }
+    unsigned frame_log_n = 0;
+    auto log_frame = [&]() {
+        if (!frame_log) return;
+        FILETIME ft; GetSystemTimePreciseAsFileTime(&ft);
+        const unsigned long long t = ((unsigned long long)ft.dwHighDateTime << 32 | ft.dwLowDateTime);
+        const double unix_ms = (double)(t - 116444736000000000ull) / 10000.0;
+        fprintf(frame_log, "%.3f,%.3f,%.3f%c", unix_ms, f_walk * 1e3, f_walk_cpu * 1e3, 10);
+        f_walk = f_walk_cpu = 0;
+        if (++frame_log_n % 30 == 0) fflush(frame_log);
+    };
     if (rsx_ok) { gt5p_start_profview(); gt5p_start_settings_ui(); gt5p_start_shader_indicator(); }
+    if (s_startup_ready) {
+        if (rsx_ok && !s_rsx_live) {
+            rsx_d3d12_backend_prepare_library();
+            rsx_d3d12_backend_prewarm();
+        }
+        else fprintf(stderr, "[shader-warmup] skipped: standard windowed D3D12 backend required\n");
+        SetEvent(s_startup_ready);
+    }
+
 
     /* GT5P_PRESENT_SLEEP=<ms>: the outer cadence, 1 by default (4 until
      * Phase 59). The FIFO is only walked once per pass, so the sleep is time
@@ -628,8 +851,15 @@ static DWORD WINAPI present_thread(LPVOID)
     const LONGLONG vbl_period = (LONGLONG)((double)qf.QuadPart / vbl_hz);
     auto qpc_now = []() { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; };
     LONGLONG next_tick = qpc_now();
+    const int vbl_thread = vblank_thread_on();
+    if (vbl_thread) {
+        static double hz; hz = vbl_hz;
+        HANDLE vt = CreateThread(NULL, 64 * 1024, vblank_thread, &hz, 0, NULL);
+        if (vt) CloseHandle(vt);
+        else fprintf(stderr, "[GT5P] could not start the vblank thread\n");
+    }
     for (;;) {
-        cellGcm_fifo_kick_wait(outer_sleep);
+        PROF_T(p_wait, cellGcm_fifo_kick_wait(outer_sleep));
         ps3_tl_tick();
         ULONGLONG now = GetTickCount64();
         const LONGLONG now_q = qpc_now();
@@ -638,17 +868,22 @@ static DWORD WINAPI present_thread(LPVOID)
          * time: when one tick's work takes more than its 16 ms the backlog
          * never clears, and running 240 of them back to back kept this
          * thread away from the message pump for so long that Windows marked
-         * the window "not responding". */
+         * the window "not responding". With the vblank thread this loop
+         * only counts its ticks; the drain below presents and walks. */
         int fired = 0;
-        while (now_q - next_tick >= 0 && fired < 240) {
+        if (vbl_thread) {
+            p_ticks += (unsigned)InterlockedExchange(&s_vbl_ticks, 0);
+            next_tick = now_q + vbl_period;
+        }
+        while (!vbl_thread && now_q - next_tick >= 0 && fired < 240) {
             PROF_T(p_vbl, cellGcmTickVBlank());
             PROF_T(p_flip, cellGcmTickFlip());
             if (rsx_ok && cellGcm_take_flip_pending()) {
-                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
-                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
+                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++; log_frame();
+                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump, c_p_vbl, c_p_flip, c_p_wait);
             }
             if (drain)
-                PROF_T(p_fifo, cellGcm_rsx_process_fifo());
+                walk_fifo();
             next_tick += vbl_period;
             fired++; p_ticks++;
             if (GetTickCount64() - now >= 100) { fired = 240; break; }
@@ -664,10 +899,10 @@ static DWORD WINAPI present_thread(LPVOID)
          * paces the guest to single-digit fps. */
         if (drain) {
             if (cellGcm_take_flip_pending() && rsx_ok) {
-                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++;
-                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump);
+                PROF_T(p_pres, backend_present()); p_pres_n++; p_pres_total++; log_frame();
+                gt5p_pv_frame(c_p_fifo, c_p_pres, c_p_pump, c_p_vbl, c_p_flip, c_p_wait);
             }
-            PROF_T(p_fifo, cellGcm_rsx_process_fifo());
+            walk_fifo();
         }
         if (rsx_ok) {
             int closed = 0;
@@ -681,9 +916,9 @@ static DWORD WINAPI present_thread(LPVOID)
             const double gavg = gn ? g_rsx_gpu_ms_sum / gn : 0.0, gmax = g_rsx_gpu_ms_max;
             g_rsx_gpu_ms_sum = 0; g_rsx_gpu_ms_max = 0; g_rsx_gpu_n = 0;
             fprintf(stderr, "[present-prof] 5 s: ticks=%u presents=%u | vblank %.2fs flip %.2fs "
-                            "present %.2fs fifo %.2fs pump %.2fs | gpu %.2f ms avg %.2f max\n",
-                    p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_pump, gavg, gmax);
-            p_vbl = p_flip = p_pres = p_fifo = p_pump = 0; p_ticks = p_pres_n = 0;
+                            "present %.2fs fifo %.2fs (cpu %.2fs) pump %.2fs | gpu %.2f ms avg %.2f max\n",
+                    p_ticks, p_pres_n, p_vbl, p_flip, p_pres, p_fifo, p_fifo_cpu, p_pump, gavg, gmax);
+            p_vbl = p_flip = p_pres = p_fifo = p_pump = p_wait = p_fifo_cpu = 0; p_ticks = p_pres_n = 0;
             p_last = GetTickCount64();
         }
     }
@@ -695,6 +930,20 @@ extern "C" void gt5p_start_present_thread(void)
         printf("[GT5P] GT5P_NO_PRESENT: headless, no present thread\n");
         return;
     }
-    CreateThread(NULL, 4u * 1024 * 1024, present_thread, NULL, 0, NULL);
+    const char* warm = getenv("RSX_SHADER_WARMUP");
+    if (warm && !strcmp(warm, "1")) {
+        s_startup_ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!s_startup_ready) fprintf(stderr, "[shader-warmup] startup barrier unavailable; skipping preload\n");
+    }
+    HANDLE thread = CreateThread(NULL, 4u * 1024 * 1024, present_thread, NULL, 0, NULL);
+    if (!thread) {
+        if (s_startup_ready) { CloseHandle(s_startup_ready); s_startup_ready = nullptr; }
+        fprintf(stderr, "[GT5P] could not start present thread\n"); return;
+    }
+    CloseHandle(thread);
+    if (s_startup_ready) {
+        WaitForSingleObject(s_startup_ready, INFINITE);
+        CloseHandle(s_startup_ready); s_startup_ready = nullptr;
+    }
     printf("[GT5P] present thread started (60 Hz vblank/flip ticker)\n");
 }

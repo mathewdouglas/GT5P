@@ -1,5 +1,6 @@
 /* Player settings: gt5p_settings.toml. See gt5p_settings.h. */
 #include "gt5p_settings.h"
+#include "gt5p_keymap.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -38,7 +39,7 @@ bool         g_enabled = false;
 const char* const kEnvNames[] = {
     "GT5P_RESOLUTION", "RSX_MSAA", "RSX_PRESENT_SYNC", "RSX_SHADER_CACHE", "GT5P_SHADER_INDICATOR",
     "PAD_NO_SDL", "PAD_NO_KEYBOARD", "PS3_VERBOSE",
-    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3", "RSX_SHADER_ASYNC", "PAD_SKIP_MOVIE",
+    "GT5P_VBLANK_HZ", "SPURS_LANE_PIN", "SPURS_JL_SPU3", "RSX_SHADER_ASYNC", "RSX_SHADER_WARMUP", "RSX_PSO_ASYNC", "RSX_RACE_PREWARM", "PAD_SKIP_MOVIE",
 };
 bool g_env_set[sizeof kEnvNames / sizeof kEnvNames[0]];
 
@@ -127,10 +128,12 @@ void read_resolution(toml::node_view<const toml::node> v, int& out)
     if (auto s = v.value<std::string>()) {
         if (*s == "720p" || *s == "720")   { out = 720;  return; }
         if (*s == "1080p" || *s == "1080") { out = 1080; return; }
+        if (*s == "1440p" || *s == "1440") { out = 1440; return; }
+        if (*s == "2160p" || *s == "2160" || *s == "4k" || *s == "4K") { out = 2160; return; }
     } else if (auto n = v.value<int64_t>()) {
-        if (*n == 720 || *n == 1080) { out = (int)*n; return; }
+        if (*n == 720 || *n == 1080 || *n == 1440 || *n == 2160) { out = (int)*n; return; }
     }
-    warn("video.resolution must be \"720p\" or \"1080p\"; keeping " +
+    warn("video.resolution must be \"720p\", \"1080p\", \"1440p\" or \"2160p\"; keeping " +
          std::to_string(out) + "p");
 }
 
@@ -184,18 +187,23 @@ void read_tristate(toml::node_view<const toml::node> v, const char* key, int& ou
 bool known_key(std::string_view section, std::string_view key)
 {
     static const struct { const char* section; const char* key; } kKnown[] = {
-        {"video", "resolution"},     {"video", "msaa"},
+        {"video", "resolution"},     {"video", "msaa"},           {"video", "aspect"},
+        {"video", "window"},
         {"video", "vsync"},          {"video", "shader_cache"},
-        {"video", "shader_indicator"}, {"video", "shader_precompile"},
-        {"input", "sdl_controllers"}, {"input", "keyboard"},
-        {"game", "skip_movie"},
+        {"video", "shader_indicator"}, {"video", "shader_precompile"}, {"video", "shader_warmup"}, {"video", "pipeline_async"}, {"video", "race_preload"},
+        {"input", "sdl_controllers"}, {"input", "keyboard"}, {"input", "button_prompts"},
+        {"game", "skip_movie"},       {"game", "smooth_colour"},    {"game", "anisotropy"},
         {"performance", "vblank_hz"}, {"performance", "lane_pinning"},
         {"performance", "fifth_spu_lane"},
         {"performance", "lane_cores"},   /* the old key (off by default then): read no more */
         {"debug", "verbose_log"},
+        {"debug", "export_enabled"},
     };
     for (const auto& k : kKnown)
         if (section == k.section && key == k.key) return true;
+    if (section == "keyboard")
+        for (int i = 0; i < GT5P_KEY_BUTTONS; i++)
+            if (key == gt5p_key_button(i).key) return true;
     return false;
 }
 
@@ -216,22 +224,70 @@ void report_unknown_keys(const toml::table& tbl)
     }
 }
 
+/* Button prompt styles by name, as GT5P_GLYPHS takes them (index = code). */
+const char* const kPromptNames[] = { "auto", "playstation", "xbox", "nintendo", "keyboard" };
+int prompt_code(const char* v)
+{
+    for (int i = 0; i < 5; i++) if (_stricmp(v, kPromptNames[i]) == 0) return i;
+    return -1;
+}
+
+void read_prompts(toml::node_view<const toml::node> n, int& out)
+{
+    if (!n) return;
+    if (auto v = n.value<std::string>()) {
+        const int c = prompt_code(v->c_str());
+        if (c >= 0) { out = c; return; }
+    }
+    warn("input.button_prompts must be \"auto\", \"playstation\", \"xbox\", \"nintendo\" or \"keyboard\"; keeping the default");
+}
+
 void parse_into(const toml::table& tbl, Gt5pSettings& s)
 {
     report_unknown_keys(tbl);
     read_resolution(tbl["video"]["resolution"], s.resolution);
     read_msaa(tbl["video"]["msaa"], s.msaa);
+    if (auto n = tbl["video"]["aspect"]) {
+        const auto v = n.value<std::string>();
+        if (v && (*v == "16:9" || *v == "21:9")) s.ultrawide = *v == "21:9";
+        else warn("video.aspect must be \"16:9\" or \"21:9\"; keeping the default");
+    }
+    if (auto n = tbl["video"]["window"]) {
+        const auto v = n.value<std::string>();
+        if (v && (*v == "windowed" || *v == "borderless")) s.borderless = *v == "borderless";
+        else warn("video.window must be \"windowed\" or \"borderless\"; keeping the default");
+    }
     read_bool(tbl["video"]["vsync"], "video.vsync", s.vsync);
     read_bool(tbl["video"]["shader_cache"], "video.shader_cache", s.shader_cache);
     read_bool(tbl["video"]["shader_indicator"], "video.shader_indicator", s.shader_indicator);
+    read_bool(tbl["video"]["shader_warmup"], "video.shader_warmup", s.shader_warmup);
+    read_bool(tbl["video"]["pipeline_async"], "video.pipeline_async", s.pipeline_async);
+    read_bool(tbl["video"]["race_preload"], "video.race_preload", s.race_preload);
     read_bool(tbl["video"]["shader_precompile"], "video.shader_precompile", s.shader_precompile);
     read_bool(tbl["input"]["sdl_controllers"], "input.sdl_controllers", s.sdl_controllers);
     read_bool(tbl["input"]["keyboard"], "input.keyboard", s.keyboard);
+    read_prompts(tbl["input"]["button_prompts"], s.button_prompts);
+    for (int i = 0; i < GT5P_KEY_BUTTONS; i++) {
+        const char* k = gt5p_key_button(i).key;
+        auto n = tbl["keyboard"][k];
+        if (!n) continue;
+        const auto v = n.value<std::string>();
+        const int vk = v ? gt5p_key_from_name(v->c_str()) : -1;
+        if (vk >= 0) s.keys[i] = vk;
+        else warn(std::string("keyboard.") + k + ": not a key this port can bind; keeping the default");
+    }
     read_bool(tbl["game"]["skip_movie"], "game.skip_movie", s.skip_movie);
+    read_bool(tbl["game"]["smooth_colour"], "game.smooth_colour", s.smooth_colour);
+    if (auto n = tbl["game"]["anisotropy"]) {
+        const auto v = n.value<int64_t>();
+        if (v && (*v == 1 || *v == 4 || *v == 8 || *v == 16)) s.anisotropy = (int)*v;
+        else warn("game.anisotropy must be 1, 4, 8 or 16; keeping the default");
+    }
     read_vblank(tbl["performance"]["vblank_hz"], s.vblank_hz100);
     read_lane_cores(tbl["performance"]["lane_pinning"], s.lane_cores);
     read_bool(tbl["performance"]["fifth_spu_lane"], "performance.fifth_spu_lane", s.fifth_spu_lane);
     read_tristate(tbl["debug"]["verbose_log"], "debug.verbose_log", s.verbose_log);
+    read_bool(tbl["debug"]["export_enabled"], "debug.export_enabled", s.debug_export);
 }
 
 /* Hand the settings the runtime reads from the environment over to it. */
@@ -240,17 +296,27 @@ void apply_env(const Gt5pSettings& s)
     char buf[16];
     snprintf(buf, sizeof buf, "%d", s.msaa);
     set_default_env("RSX_MSAA", buf);
+    if (s.ultrawide) set_default_env("GT5P_ULTRAWIDE", "1");
+    if (s.borderless) set_default_env("RSX_WINDOW_MODE", "borderless");
     set_default_env("RSX_PRESENT_SYNC", s.vsync ? "1" : "0");
     /* "0" turns the cache off; when on, leave RSX_SHADER_CACHE unset so the
      * backend keeps its own default folder. */
     if (!s.shader_cache) set_default_env("RSX_SHADER_CACHE", "0");
     if (!s.shader_indicator) set_default_env("GT5P_SHADER_INDICATOR", "0");
+    set_default_env("RSX_SHADER_WARMUP", s.shader_warmup ? "1" : "0");
     set_default_env("RSX_SHADER_ASYNC", s.shader_precompile ? "1" : "0");
+    set_default_env("RSX_PSO_ASYNC", s.pipeline_async ? "1" : "0");
+    set_default_env("RSX_RACE_PREWARM", s.race_preload ? "1" : "0");
     /* The pad switches test for presence, so only the "off" case sets one. */
     if (!s.sdl_controllers) set_default_env("PAD_NO_SDL", "1");
     if (!s.keyboard)        set_default_env("PAD_NO_KEYBOARD", "1");
+    set_default_env("PAD_KEYMAP", gt5p_keymap_format(s.keys).c_str());
+    set_default_env("GT5P_GLYPHS", kPromptNames[s.button_prompts >= 0 && s.button_prompts < 5 ? s.button_prompts : 0]);
     /* The screen whose first read starts the presses (cellPad.c). */
     if (s.skip_movie)       set_default_env("PAD_SKIP_MOVIE", "MovieRoot");
+    if (!s.smooth_colour)   set_default_env("RSX_HIGH_PRECISION", "0");
+    snprintf(buf, sizeof buf, "%d", s.anisotropy);
+    set_default_env("RSX_ANISO", buf);
     if (s.verbose_log >= 0) set_default_env("PS3_VERBOSE", s.verbose_log ? "1" : "0");
     set_default_env("GT5P_VBLANK_HZ", s.vblank_hz100 == 6250 ? "62.5" : "59.94");
     set_default_env("SPURS_LANE_PIN", s.lane_cores == 2 ? "2" : s.lane_cores == 1 ? "1" : "0");
@@ -268,12 +334,21 @@ void reflect_env(Gt5pSettings& s)
         s.msaa = (n == 2 || n == 4 || n == 8) ? n : (n <= 1 ? 1 : 4);   /* as rsx_msaa_samples() */
     }
     if (const char* e = getenv("RSX_PRESENT_SYNC")) s.vsync = atoi(e) != 0;   /* as the backend reads it */
+    { const char* e = getenv("GT5P_ULTRAWIDE"); s.ultrawide = e && e[0] && e[0] != '0'; }
+    { const char* e = getenv("RSX_WINDOW_MODE"); s.borderless = e && (e[0] == 'b' || e[0] == 'B'); }
     if (const char* e = getenv("RSX_SHADER_CACHE")) s.shader_cache = !(e[0] == '0' && !e[1]);
     if (const char* e = getenv("GT5P_SHADER_INDICATOR")) s.shader_indicator = e[0] != '0';
+    if (const char* e = getenv("RSX_SHADER_WARMUP")) s.shader_warmup = e[0] == '1';
+    if (const char* e = getenv("RSX_PSO_ASYNC")) s.pipeline_async = e[0] != '0';
+    if (const char* e = getenv("RSX_RACE_PREWARM")) s.race_preload = e[0] != '0';
     if (const char* e = getenv("RSX_SHADER_ASYNC")) s.shader_precompile = e[0] == '1';
     s.sdl_controllers = getenv("PAD_NO_SDL") == nullptr;
     s.keyboard        = getenv("PAD_NO_KEYBOARD") == nullptr;
+    if (const char* e = getenv("GT5P_GLYPHS")) { const int c = prompt_code(e); if (c >= 0) s.button_prompts = c; }
+    if (const char* e = getenv("PAD_KEYMAP")) gt5p_keymap_parse(e, s.keys);
     { const char* e = getenv("PAD_SKIP_MOVIE"); s.skip_movie = e && *e && strcmp(e, "0") != 0; }
+    { const char* e = getenv("RSX_HIGH_PRECISION"); s.smooth_colour = !(e && e[0] == '0'); }
+    if (const char* e = getenv("RSX_ANISO")) { const int a = atoi(e); s.anisotropy = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : 1; }
     if (const char* e = getenv("PS3_VERBOSE")) s.verbose_log = (e[0] && e[0] != '0') ? 1 : 0;
     if (const char* e = getenv("GT5P_VBLANK_HZ")) s.vblank_hz100 = atof(e) > 62.0 ? 6250 : 5994;
     if (const char* e = getenv("SPURS_LANE_PIN")) s.lane_cores = atoi(e) >= 2 ? 2 : atoi(e) == 1 ? 1 : 0;
@@ -289,6 +364,7 @@ bool gt5p_settings_enabled() { return g_enabled; }
 
 bool gt5p_settings_overridden(const char* env_name)
 {
+    if (!env_name || !*env_name) return false;
     for (size_t i = 0; i < sizeof kEnvNames / sizeof kEnvNames[0]; i++)
         if (!strcmp(kEnvNames[i], env_name)) return g_env_set[i];
     return false;
@@ -300,6 +376,17 @@ bool gt5p_settings_store(const Gt5pSettings& s)
     if (!gt5p_settings_save(s, g_path)) return false;
     g_file = s;
     return true;
+}
+
+/* The [keyboard] section's key = "name" lines. */
+static std::string keyboard_lines(const Gt5pSettings& s)
+{
+    std::string out;
+    for (int i = 0; i < GT5P_KEY_BUTTONS; i++) {
+        const char* n = gt5p_key_name(s.keys[i]);
+        out += std::string(gt5p_key_button(i).key) + " = \"" + (n ? n : "None") + "\"\n";
+    }
+    return out;
 }
 
 bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
@@ -315,8 +402,17 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "\n"
          "[video]\n"
          "# Display mode the game is told it has, and the window size:\n"
-         "# \"720p\" (1280x720) or \"1080p\" (1920x1080). The game renders natively at it.\n"
+         "# \"720p\" (1280x720), \"1080p\" (1920x1080), \"1440p\" (2560x1440, 3440x1440\n"
+         "# at 21:9) or \"2160p\" (4K: 3840x2160, 5120x2160 at 21:9). Rendered natively\n"
+         "# at it; the view is the same, only sharper.\n"
          "resolution = \"" << s.resolution << "p\"\n"
+         "# Aspect ratio: \"16:9\", or \"21:9\" for an ultrawide window (2560x1080 at\n"
+         "# 1080p): a wider view in races and the dealer, menus centred. [GT5P_ULTRAWIDE]\n"
+         "aspect = \"" << (s.ultrawide ? "21:9" : "16:9") << "\"\n"
+         "# Window: \"windowed\", or \"borderless\" for a borderless window over the\n"
+         "# whole monitor (the picture scaled to fit, black bars if its shape differs).\n"
+         "# [RSX_WINDOW_MODE]\n"
+         "window = \"" << (s.borderless ? "borderless" : "windowed") << "\"\n"
          "# Antialiasing samples for what the game antialiases: 1 (off), 2, 4 or 8.\n"
          "# The console used 2. [RSX_MSAA]\n"
          "msaa = " << s.msaa << "\n"
@@ -335,6 +431,15 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "# screen appears at once and its last details a moment later. Needs the\n"
          "# shader cache. [RSX_SHADER_ASYNC]\n"
          "shader_precompile = " << (s.shader_precompile ? "true" : "false") << "\n"
+         "# Prepare learned menu, then race pipelines while the game starts.\n"
+         "# New tracks/cars/effects may still compile later; first run learns records.\n"
+         "# Needs shader cache. [RSX_SHADER_WARMUP]\n"
+         "shader_warmup = " << (s.shader_warmup ? "true" : "false") << "\n"
+         "# Build unexpected driver pipelines in the background. [RSX_PSO_ASYNC]\n"
+         "pipeline_async = " << (s.pipeline_async ? "true" : "false") << "\n"
+         "# Prepare learned race pipelines during loading; needs background pipelines\n"
+         "# and shader cache. First visits still learn new states. [RSX_RACE_PREWARM]\n"
+         "race_preload = " << (s.race_preload ? "true" : "false") << "\n"
          "\n"
          "[input]\n"
          "# PlayStation, Switch and other controllers through SDL2.dll beside the exe.\n"
@@ -342,11 +447,29 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "sdl_controllers = " << (s.sdl_controllers ? "true" : "false") << "\n"
          "# Keyboard as controller 1 when none is connected. [PAD_NO_KEYBOARD]\n"
          "keyboard = " << (s.keyboard ? "true" : "false") << "\n"
+         "# Button prompts: \"auto\" follows the controller in use (Xbox, Switch or\n"
+         "# keyboard art; a PlayStation pad keeps the game's own), or one of\n"
+         "# \"playstation\", \"xbox\", \"nintendo\", \"keyboard\". [GT5P_GLYPHS]\n"
+         "button_prompts = \"" << kPromptNames[s.button_prompts >= 0 && s.button_prompts < 5 ? s.button_prompts : 0] << "\"\n"
+         "\n"
+         "[keyboard]\n"
+         "# The key for each button when playing with the keyboard (also the F1 page's\n"
+         "# Keyboard tab). Letters, digits, Up Down Left Right, Enter, Tab, Space,\n"
+         "# Backspace, Shift, Ctrl, Alt, Insert, Delete, Home, End, PageUp, PageDown,\n"
+         "# Apostrophe, Comma, Period, Minus, Equals, Semicolon, Slash, Backquote,\n"
+         "# LeftBracket, Backslash, RightBracket, or None. [PAD_KEYMAP]\n"
+         << keyboard_lines(s) <<
          "\n"
          "[game]\n"
          "# Skip the opening movie (it plays only when the TV content is installed):\n"
          "# Cross is pressed for you once it starts. [PAD_SKIP_MOVIE]\n"
          "skip_movie = " << (s.skip_movie ? "true" : "false") << "\n"
+         "# Smooth colour: render at 16 bits per channel and drop the game's dither\n"
+         "# noise, so dark areas are clean without banding. [RSX_HIGH_PRECISION]\n"
+         "smooth_colour = " << (s.smooth_colour ? "true" : "false") << "\n"
+         "# Texture filtering: 1 (trilinear, the game's own), or 4, 8 or 16 for\n"
+         "# anisotropic: surfaces at a slant stay sharp into the distance. [RSX_ANISO]\n"
+         "anisotropy = " << s.anisotropy << "\n"
          "\n"
          "[performance]\n"
          "# The game paces its frames to the vblank. 59.94 is the console's rate\n"
@@ -363,10 +486,25 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "fifth_spu_lane = " << (s.fifth_spu_lane ? "true" : "false") << "\n"
          "\n"
          "[debug]\n"
-         "# Full runtime log: \"auto\" (off when started by hand, on when output goes\n"
-         "# to a file), true or false. On makes the game stutter. [PS3_VERBOSE]\n"
-         "verbose_log = " << verbose << "\n";
+         "# Full runtime log: \"auto\" (off for all launch methods), true or false.\n"
+         "# On makes the game stutter. Debug export works with it off. [PS3_VERBOSE]\n"
+         "verbose_log = " << verbose << "\n"
+         "# Keep up to 2 MiB of recent output per stream and enable F3 debug ZIP exports.\n"
+         "# Applies immediately in F1. Off by default; GT5P_DEBUG_EXPORT=0 disables it.\n"
+         "export_enabled = " << (s.debug_export ? "true" : "false") << "\n";
     return (bool)f.flush();
+}
+
+/* GT5P_RESOLUTION overrides the file, like the runtime's own variables. */
+static void apply_resolution_env(Gt5pSettings& s)
+{
+    if (const char* r = getenv("GT5P_RESOLUTION"); r && *r) {
+        if (!strcmp(r, "1080p") || !strcmp(r, "1080")) s.resolution = 1080;
+        else if (!strcmp(r, "720p") || !strcmp(r, "720")) s.resolution = 720;
+        else if (!strcmp(r, "1440p") || !strcmp(r, "1440")) s.resolution = 1440;
+        else if (!strcmp(r, "2160p") || !strcmp(r, "2160") || !_stricmp(r, "4k")) s.resolution = 2160;
+        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p, 1080p, 1440p or 2160p; ignored");
+    }
 }
 
 void gt5p_settings_load()
@@ -377,7 +515,10 @@ void gt5p_settings_load()
     for (size_t i = 0; i < sizeof kEnvNames / sizeof kEnvNames[0]; i++)
         g_env_set[i] = getenv(kEnvNames[i]) != nullptr;
     if (getenv("GT5P_NO_SETTINGS")) {
-        printf("[settings] GT5P_NO_SETTINGS: built-in defaults, file ignored\n");
+        /* Test runs still choose the display mode: no runtime variable can. */
+        apply_resolution_env(g_settings);
+        printf("[settings] GT5P_NO_SETTINGS: built-in defaults, file ignored (resolution=%dp)\n",
+               g_settings.resolution);
         return;
     }
     g_enabled = true;
@@ -408,12 +549,7 @@ void gt5p_settings_load()
 
     g_file = g_settings;
 
-    /* GT5P_RESOLUTION overrides the file, like the runtime's own variables. */
-    if (const char* r = getenv("GT5P_RESOLUTION"); r && *r) {
-        if (!strcmp(r, "1080p") || !strcmp(r, "1080")) g_settings.resolution = 1080;
-        else if (!strcmp(r, "720p") || !strcmp(r, "720")) g_settings.resolution = 720;
-        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p or 1080p; ignored");
-    }
+    apply_resolution_env(g_settings);
 
     apply_env(g_settings);
     reflect_env(g_settings);
