@@ -884,9 +884,16 @@ int main(int argc, char* argv[])
      * runtime reports 720p unless told otherwise, and the game renders at what
      * it is told; it supported 1080p on the console. The present window
      * follows (gt5p_present.cpp). */
-    if (gt5p_settings().resolution == 1080) {
+    if (gt5p_settings().resolution >= 1080) {
         cellVideoOut_set_resolution(1 /* CELL_VIDEO_OUT_RESOLUTION_1080 */);
         printf("[GT5P] reporting a 1920x1080 display\n");
+    }
+    /* 1440p: the game renders at 1080p and the backend's output pass scales
+     * the picture to a 2560x1440 window (3440x1440 ultrawide). */
+    const bool res1440 = gt5p_settings().resolution == 1440;
+    if (res1440 && !getenv("RSX_OUTPUT_SIZE")) {
+        const char* uw = getenv("GT5P_ULTRAWIDE");
+        _putenv_s("RSX_OUTPUT_SIZE", (uw && uw[0] && uw[0] != '0') ? "3440x1440" : "2560x1440");
     }
 
     lv2_register_all_syscalls(&g_lv2_syscalls);
@@ -937,7 +944,8 @@ int main(int argc, char* argv[])
               const uint32_t a = (uint32_t)strtoul(as, nullptr, 16);
               uint32_t cur; memcpy(&cur, vm_base + a, 4);
               if (_byteswap_ulong(cur) == 0x3FE38E39u) {          /* 16/9, as expected */
-                  const uint32_t be = _byteswap_ulong(0x4017B426u);  /* 64/27 */
+                  /* 64/27 (2560x1080), or 43/18 for 3440x1440. */
+                  const uint32_t be = _byteswap_ulong(res1440 ? 0x4018E38Eu : 0x4017B426u);
                   memcpy(vm_base + a, &be, 4);
                   printf("[GT5P] ultrawide: 21:9 aspect at 0x%08X\n", a);
               } else fprintf(stderr, "[GT5P] ultrawide: 0x%08X is not 16/9 (%08X); not patched\n", a, _byteswap_ulong(cur));
@@ -945,6 +953,7 @@ int main(int argc, char* argv[])
           /* Rendered natively 21:9 (RSX_ULTRAWIDE=2) unless GT5P_ULTRAWIDE=
            * anamorphic (=1: the swap chain stretches a 16:9 frame). */
           if (!getenv("RSX_ULTRAWIDE")) _putenv_s("RSX_ULTRAWIDE", (uw[0] == 'a' || uw[0] == 'A') ? "1" : "2");
+          if (res1440 && !getenv("RSX_ULTRAWIDE_ASPECT")) _putenv_s("RSX_ULTRAWIDE_ASPECT", "2.3888889");
           /* Full-screen 2D layers stretched to the 21:9 edges belong to the
            * menus' centred layout. */
           if (ui && ui[0] == '0' && !getenv("RSX_ULTRAWIDE_EDGES")) _putenv_s("RSX_ULTRAWIDE_EDGES", "0");

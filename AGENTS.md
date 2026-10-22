@@ -99,7 +99,14 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: ultrawide scene cameras and opening screens (Phase 126).**
+**Latest: borderless fullscreen and 1440p (Phase 127).** F1 VIDEO > Window
+(`video.window`, `RSX_WINDOW_MODE=borderless`) and Resolution 2560 x 1440
+(`"1440p"`, 3440x1440 at 21:9). The backend's output pass scales the
+render into a swap chain of another size (`RSX_OUTPUT_SIZE`,
+`RSX_OUTPUT_PASS=0` off, `RSX_OUTPUT_FILTER=linear`). 1440p renders at
+1080p (2580x1080 ultrawide: `RSX_ULTRAWIDE_ASPECT`, aspect 43/18).
+
+**Ultrawide scene cameras and opening screens (Phase 126).**
 The menu background, dealer and pit cameras take 16/9 from
 `scene_camera_aspect_16_9_float` (`0x01280924`), now patched too
 (`GT5P_ULTRAWIDE_CAM=0` off). Full-screen images uploaded to main memory

@@ -191,8 +191,8 @@ static const uint8_t* live_guest_ptr(void*, uint32_t location, uint32_t offset,
 static int backend_init(const char* title)
 {
     /* Window and swap chain at the display mode main() reported to the game. */
-    const uint32_t w = gt5p_settings().resolution == 1080 ? 1920 : 1280;
-    const uint32_t h = gt5p_settings().resolution == 1080 ? 1080 : 720;
+    const uint32_t w = gt5p_settings().resolution >= 1080 ? 1920 : 1280;
+    const uint32_t h = gt5p_settings().resolution >= 1080 ? 1080 : 720;
     if (rsx_live_draw_enabled()) {
         if (rsx_null_backend_init(w, h, title) == 0 &&
             rsx_live_draw_init(rsx_null_backend_get_hwnd(), w, h,

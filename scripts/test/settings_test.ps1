@@ -45,12 +45,15 @@ function key($vk, $n = 1) {
 try {
     Start-Sleep -Seconds 15
     cap "open"
-    key 0x28 3; key 0x27          # down to Vsync (past Aspect ratio, Antialiasing), right: off
+    key 0x28 4; key 0x27          # down to Vsync (past Aspect ratio, Window, Antialiasing), right: off
     Start-Sleep -Milliseconds 300; cap "vsync_off"
-    key 0x26 3; key 0x27          # up to Resolution, right: 1080
+    key 0x26 4; key 0x27          # up to Resolution, right: 1080
     key 0x28; key 0x27; Start-Sleep -Milliseconds 300   # Aspect ratio: 21:9
     if (-not (Select-String -LiteralPath $toml -Pattern '^aspect = "21:9"$' -Quiet)) { throw 'Aspect ratio setting was not saved' }
-    key 0x27; key 0x26            # back to 16:9, up to Resolution
+    key 0x27                      # back to 16:9
+    key 0x28; key 0x27; Start-Sleep -Milliseconds 300   # Window: borderless
+    if (-not (Select-String -LiteralPath $toml -Pattern '^window = "borderless"$' -Quiet)) { throw 'Window setting was not saved' }
+    key 0x27; key 0x26 2          # back to windowed, up to Resolution
     Start-Sleep -Milliseconds 300; cap "res_1080"
     key 0x22; key 0x28 2; key 0x27   # Page Down to Shaders, down to Preload: off -> on (restart required)
     Start-Sleep -Milliseconds 300; cap "warmup_on"
@@ -67,7 +70,7 @@ try {
         throw 'Race preparation setting was not saved'
     }
     cap "race_preload_off"; key 0x27 # restore on
-    "--- file:"; Get-Content $toml | Select-String "^(resolution|aspect|msaa|vsync|shader_cache|shader_warmup|pipeline_async|race_preload|sdl_controllers|keyboard|verbose_log) ="
+    "--- file:"; Get-Content $toml | Select-String "^(resolution|aspect|window|msaa|vsync|shader_cache|shader_warmup|pipeline_async|race_preload|sdl_controllers|keyboard|verbose_log) ="
     key 0x26 3; key 0x0D          # up to Background shader compilation; Enter opens its list
     Start-Sleep -Milliseconds 300; cap "list_open"
     key 0x1B                      # Esc closes the list

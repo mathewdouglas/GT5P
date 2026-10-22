@@ -128,10 +128,11 @@ void read_resolution(toml::node_view<const toml::node> v, int& out)
     if (auto s = v.value<std::string>()) {
         if (*s == "720p" || *s == "720")   { out = 720;  return; }
         if (*s == "1080p" || *s == "1080") { out = 1080; return; }
+        if (*s == "1440p" || *s == "1440") { out = 1440; return; }
     } else if (auto n = v.value<int64_t>()) {
-        if (*n == 720 || *n == 1080) { out = (int)*n; return; }
+        if (*n == 720 || *n == 1080 || *n == 1440) { out = (int)*n; return; }
     }
-    warn("video.resolution must be \"720p\" or \"1080p\"; keeping " +
+    warn("video.resolution must be \"720p\", \"1080p\" or \"1440p\"; keeping " +
          std::to_string(out) + "p");
 }
 
@@ -186,6 +187,7 @@ bool known_key(std::string_view section, std::string_view key)
 {
     static const struct { const char* section; const char* key; } kKnown[] = {
         {"video", "resolution"},     {"video", "msaa"},           {"video", "aspect"},
+        {"video", "window"},
         {"video", "vsync"},          {"video", "shader_cache"},
         {"video", "shader_indicator"}, {"video", "shader_precompile"}, {"video", "shader_warmup"}, {"video", "pipeline_async"}, {"video", "race_preload"},
         {"input", "sdl_controllers"}, {"input", "keyboard"}, {"input", "button_prompts"},
@@ -249,6 +251,11 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
         if (v && (*v == "16:9" || *v == "21:9")) s.ultrawide = *v == "21:9";
         else warn("video.aspect must be \"16:9\" or \"21:9\"; keeping the default");
     }
+    if (auto n = tbl["video"]["window"]) {
+        const auto v = n.value<std::string>();
+        if (v && (*v == "windowed" || *v == "borderless")) s.borderless = *v == "borderless";
+        else warn("video.window must be \"windowed\" or \"borderless\"; keeping the default");
+    }
     read_bool(tbl["video"]["vsync"], "video.vsync", s.vsync);
     read_bool(tbl["video"]["shader_cache"], "video.shader_cache", s.shader_cache);
     read_bool(tbl["video"]["shader_indicator"], "video.shader_indicator", s.shader_indicator);
@@ -283,6 +290,7 @@ void apply_env(const Gt5pSettings& s)
     snprintf(buf, sizeof buf, "%d", s.msaa);
     set_default_env("RSX_MSAA", buf);
     if (s.ultrawide) set_default_env("GT5P_ULTRAWIDE", "1");
+    if (s.borderless) set_default_env("RSX_WINDOW_MODE", "borderless");
     set_default_env("RSX_PRESENT_SYNC", s.vsync ? "1" : "0");
     /* "0" turns the cache off; when on, leave RSX_SHADER_CACHE unset so the
      * backend keeps its own default folder. */
@@ -317,6 +325,7 @@ void reflect_env(Gt5pSettings& s)
     }
     if (const char* e = getenv("RSX_PRESENT_SYNC")) s.vsync = atoi(e) != 0;   /* as the backend reads it */
     { const char* e = getenv("GT5P_ULTRAWIDE"); s.ultrawide = e && e[0] && e[0] != '0'; }
+    { const char* e = getenv("RSX_WINDOW_MODE"); s.borderless = e && (e[0] == 'b' || e[0] == 'B'); }
     if (const char* e = getenv("RSX_SHADER_CACHE")) s.shader_cache = !(e[0] == '0' && !e[1]);
     if (const char* e = getenv("GT5P_SHADER_INDICATOR")) s.shader_indicator = e[0] != '0';
     if (const char* e = getenv("RSX_SHADER_WARMUP")) s.shader_warmup = e[0] == '1';
@@ -381,11 +390,16 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "\n"
          "[video]\n"
          "# Display mode the game is told it has, and the window size:\n"
-         "# \"720p\" (1280x720) or \"1080p\" (1920x1080). The game renders natively at it.\n"
+         "# \"720p\" (1280x720) or \"1080p\" (1920x1080), which the game renders natively,\n"
+         "# or \"1440p\" (2560x1440, 3440x1440 at 21:9): rendered at 1080p and scaled up.\n"
          "resolution = \"" << s.resolution << "p\"\n"
          "# Aspect ratio: \"16:9\", or \"21:9\" for an ultrawide window (2560x1080 at\n"
          "# 1080p): a wider view in races and the dealer, menus centred. [GT5P_ULTRAWIDE]\n"
          "aspect = \"" << (s.ultrawide ? "21:9" : "16:9") << "\"\n"
+         "# Window: \"windowed\", or \"borderless\" for a borderless window over the\n"
+         "# whole monitor (the picture scaled to fit, black bars if its shape differs).\n"
+         "# [RSX_WINDOW_MODE]\n"
+         "window = \"" << (s.borderless ? "borderless" : "windowed") << "\"\n"
          "# Antialiasing samples for what the game antialiases: 1 (off), 2, 4 or 8.\n"
          "# The console used 2. [RSX_MSAA]\n"
          "msaa = " << s.msaa << "\n"
@@ -468,7 +482,8 @@ static void apply_resolution_env(Gt5pSettings& s)
     if (const char* r = getenv("GT5P_RESOLUTION"); r && *r) {
         if (!strcmp(r, "1080p") || !strcmp(r, "1080")) s.resolution = 1080;
         else if (!strcmp(r, "720p") || !strcmp(r, "720")) s.resolution = 720;
-        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p or 1080p; ignored");
+        else if (!strcmp(r, "1440p") || !strcmp(r, "1440")) s.resolution = 1440;
+        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p, 1080p or 1440p; ignored");
     }
 }
 

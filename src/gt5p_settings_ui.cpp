@@ -61,6 +61,7 @@ void gt5p_shader_indicator_enable(int on);      /* gt5p_shaderbusy.cpp */
 extern void (*g_pad_screen_hook)(const char*);  /* cellPad.c: every file the title opens */
 int  rsx_d3d12_overlay_available(void);         /* rsx_d3d12_backend.c */
 void rsx_d3d12_backbuffer_size(int* w, int* h);
+void rsx_d3d12_output_rect(int* x, int* y, int* w, int* h);
 void rsx_d3d12_overlay_set(const void* bgra, int w, int h, int x, int y);
 extern int (*rsx_d3d12_on_escape)(void);      /* Escape in the game window */
 }
@@ -102,16 +103,24 @@ const std::vector<Item>& items()
     static const std::vector<Item> v = {
         { L"VIDEO", L"Resolution",
           L"The display mode the game is told it has, and the window size. The game renders "
-          L"natively at it.",
-          "GT5P_RESOLUTION", { {720, L"1280 x 720"}, {1080, L"1920 x 1080"} },
+          L"natively at 720p and 1080p; 1440p (3440 x 1440 at 21:9) is rendered at 1080p and "
+          L"scaled up.",
+          "GT5P_RESOLUTION", { {720, L"1280 x 720"}, {1080, L"1920 x 1080"}, {1440, L"2560 x 1440"} },
           [](const Gt5pSettings& s) { return s.resolution; },
           [](Gt5pSettings& s, int v) { s.resolution = v; }, nullptr },
         { L"VIDEO", L"Aspect ratio",
-          L"21:9 makes the window ultrawide (2560x1080 at 1080p): races and the dealer show a "
+          L"21:9 makes the window ultrawide (2560x1080 at 1080p, 3440x1440 at 1440p): races and the dealer show a "
           L"wider view, menus stay centred at 16:9. Best with 1080p. Takes effect after a restart.",
           "GT5P_ULTRAWIDE", { {0, L"16:9"}, {1, L"21:9 ultrawide"} },
           [](const Gt5pSettings& s) { return s.ultrawide ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.ultrawide = v != 0; }, nullptr },
+        { L"VIDEO", L"Window",
+          L"Borderless fullscreen covers the whole monitor with a borderless window; the "
+          L"picture is scaled to fit, with black bars if its shape differs. Takes effect after "
+          L"a restart.",
+          "RSX_WINDOW_MODE", { {0, L"Windowed"}, {1, L"Borderless fullscreen"} },
+          [](const Gt5pSettings& s) { return s.borderless ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.borderless = v != 0; }, nullptr },
         { L"VIDEO", L"Antialiasing",
           L"Multisampling for what the game antialiases. The console used 2x; 4x is smoother "
           L"and costs a little speed.",
@@ -131,12 +140,6 @@ const std::vector<Item>& items()
           "RSX_SHADER_CACHE", kOnOff,
           [](const Gt5pSettings& s) { return s.shader_cache ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.shader_cache = v != 0; }, nullptr },
-        { L"VIDEO", L"Shader compile indicator",
-          L"Show \"Compiling shaders\" in the corner while the game builds shaders.",
-          "GT5P_SHADER_INDICATOR", kOnOff,
-          [](const Gt5pSettings& s) { return s.shader_indicator ? 1 : 0; },
-          [](Gt5pSettings& s, int v) { s.shader_indicator = v != 0; },
-          [](int v) { gt5p_shader_indicator_enable(v); } },
         { L"SHADERS", L"Background shader compilation",
           L"Build new shaders on background threads, all at once, instead of stopping the "
           L"picture to build them one by one. A new screen shows at once, its last details a "
@@ -195,6 +198,12 @@ const std::vector<Item>& items()
           "PAD_SKIP_MOVIE", kOnOff,
           [](const Gt5pSettings& s) { return s.skip_movie ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.skip_movie = v != 0; }, nullptr },
+        { L"GAME", L"Shader compile indicator",
+          L"Show \"Compiling shaders\" in the corner while the game builds shaders.",
+          "GT5P_SHADER_INDICATOR", kOnOff,
+          [](const Gt5pSettings& s) { return s.shader_indicator ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.shader_indicator = v != 0; },
+          [](int v) { gt5p_shader_indicator_enable(v); } },
         { L"PERFORMANCE", L"Frame clock",
           L"The vblank the game paces its frames to. 59.94 Hz is the console's (30 fps at "
           L"most). 62.5 Hz allows 31 fps, but a frame that just misses two vblanks drops to 20.",
@@ -1496,13 +1505,15 @@ BOOL CALLBACK find_game(HWND h, LPARAM)
 bool mouse_units(int* lx, int* ly)
 {
     POINT c; GetCursorPos(&c); ScreenToClient(s_game, &c);
-    RECT rc; GetClientRect(s_game, &rc);
+    /* The picture's rectangle in the client: all of it, or letterboxed by
+     * the backend's output pass (borderless, 1440p). */
+    int px = 0, py = 0, pw = 0, ph = 0; rsx_d3d12_output_rect(&px, &py, &pw, &ph);
     int bw = 0, bh = 0; rsx_d3d12_backbuffer_size(&bw, &bh);
-    if (rc.right <= 0 || rc.bottom <= 0 || bw <= 0 ||
-        c.x < 0 || c.y < 0 || c.x >= rc.right || c.y >= rc.bottom) return false;
-    /* Client pixels to backbuffer pixels (the swap chain is stretched over
-     * the window), then to layout units. */
-    const double bx = c.x * (double)bw / rc.right, by = c.y * (double)bh / rc.bottom;
+    c.x -= px; c.y -= py;
+    if (pw <= 0 || ph <= 0 || bw <= 0 ||
+        c.x < 0 || c.y < 0 || c.x >= pw || c.y >= ph) return false;
+    /* Picture pixels to backbuffer pixels, then to layout units. */
+    const double bx = c.x * (double)bw / pw, by = c.y * (double)bh / ph;
     *lx = (int)((bx - s_ox) / s_scale_x); *ly = (int)((by - s_oy) / s_scale);
     return true;
 }

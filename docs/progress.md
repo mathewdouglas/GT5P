@@ -9,6 +9,75 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 127 - Borderless fullscreen and 1440p output (2026-10-22)
+
+The user asked for a borderless fullscreen option, and for 3440x1440 and
+its 16:9 equivalent, 2560x1440. This machine's monitor is 3440x1440.
+
+**Output pass (backend).** The swap chain can now differ from the render
+size.
+
+- **How it works:** when the sizes differ, `render_targets[]` are offscreen
+  images at render size, in COMMON between frames like swap chain buffers.
+  After the frame's last transition, `output_present` draws one into the
+  swap chain buffer, with the bars cleared black.
+- **Filter:** Catmull-Rom bicubic from nine bilinear taps through s15 (the
+  bank's linear/clamp sampler). `RSX_OUTPUT_FILTER=linear` uses bilinear.
+- **Shape:** the picture keeps the render size's shape (the ultrawide
+  aspect when anamorphic) and is centred in `s_out_vp`.
+- **Switches:**
+  - `RSX_OUTPUT_SIZE=WxH` sets the window's client size.
+  - `RSX_WINDOW_MODE=borderless` makes a `WS_POPUP` window over the primary
+    monitor, with the swap chain at the monitor's size.
+  - `RSX_OUTPUT_PASS=0` keeps the old DXGI stretch.
+- **Unchanged default:** with equal sizes nothing changes (720p/1080p
+  windowed).
+- **Overlay mouse:** `rsx_d3d12_output_rect` gives the picture's rectangle
+  in the client, and the F1 page maps the mouse through it.
+- **Too-large windows:** a windowed client too big for the work area
+  (3440x1440 on this monitor) shrinks proportionally. Windows had clipped
+  its height to 1421 instead.
+
+**Ultrawide aspect as a parameter.** `RSX_ULTRAWIDE_ASPECT` (default 64/27)
+replaces the hard-coded 64/27, 4/3 and 0.75:
+
+- `uw_wide_w` for the native width;
+- `uw_host_w` by `s_d3d.width / s_gw`;
+- `uw_frac()` = (16/9) / aspect for the edge stretch, the pillarbox and the
+  scissor widening.
+
+**Settings.**
+
+- `video.resolution` takes `"1440p"`. The game is told 1080p
+  (`gt5p_present.cpp` and `main.cpp` check `>= 1080`), and the output size
+  is 2560x1440, or 3440x1440 with 21:9.
+- With 21:9 the three aspect constants get 43/18 (`0x4018E38E`) and the
+  backend `RSX_ULTRAWIDE_ASPECT=2.3888889`, so a 1080-high render is
+  2580x1080.
+- `video.window = "windowed" | "borderless"` sets `RSX_WINDOW_MODE`.
+- On the F1 page, the VIDEO page has a new Window row and Resolution has
+  2560 x 1440. A page holds five rows, so Shader compile indicator moved to
+  the GAME page. `settings_test.ps1` now also saves Window and reverts it.
+
+**Measured** on the 3440x1440 monitor, 2x MSAA where noted:
+
+- **Dealer, 1440p 21:9, windowed and borderless** (`r1440uw`, `bl1440uw`):
+  rendered 2580x1080, shown 3440x1440, correct proportions; a crop is
+  clean.
+- **Dealer, 1080p 16:9 borderless** (`bl1080`): picture 2560x1440 at x 440,
+  black bars.
+- **HSR frame test, 1440p 21:9 borderless** (`bl1440ft`): 58.7 FPS, median
+  16.6 ms, p99 27.3 ms, 1.8% late. That is the same as 2560x1080, and the
+  race is correct.
+- **Pit, Track Select, menu popup** (`blrt`): centred, and the dims reach
+  the edges at the 43/18 fraction.
+- **Tests:** `settings_test.ps1` and `debug_export.ps1` pass.
+
+**Not done:** native 1440 rendering, meaning the title's full-screen targets
+made 4/3 taller as well as wider. It would extend stage B's horizontal
+scaling to y everywhere it applies: viewports, scissors, depth clears,
+readbacks and WPOS.
+
 ## Phase 126 - Ultrawide: scene cameras and opening screens (2026-10-22)
 
 The user reported, in 21:9: the opening text and the Sony and Polyphony
