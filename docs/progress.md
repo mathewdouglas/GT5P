@@ -62,6 +62,18 @@ drawn 1280 wide by the title. A 1:1 crop of HSR was visibly soft across.
   variation.
 - **The first native run** compiles new shaders (WPOS) and recreates
   targets: 24 FPS that once.
+
+**The My Page label cut-off, traced further (not fixed).**
+
+- A memory snapshot on the menu holds the text renderer's constant block
+  (`c[128]`-`c[131]`) at `0x0139A700`. The label mask is at `0x0139A730`:
+  -0.835156, -0.4, 0.854473, -1.95652.
+- `func_00768340` writes it on every text draw by calling `0xBC8150` ->
+  `0xBC8088`. That pair copies the top 4x4 of a GL-style matrix stack (base
+  `0x0171FD00`, index at +0x10D0, table at +0x10C0) into the block.
+- So the strip widget pushed the wrong origin onto that stack earlier.
+  Next: watch the stack slot for `0xBF55CCCD` to find the push and the
+  arithmetic that leaves out the 0.25 centring offset.
 - **Regressions:** 16:9 at 1080p (`n169`) is unchanged at 60 fps, and
   `settings_test.ps1` and `debug_export.ps1` pass.
 - **Not covered:** the tunnel itself in native mode. The scripted drive hit
