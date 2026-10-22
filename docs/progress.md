@@ -9,6 +9,72 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 130 - Race at full width, My Page labels, finer dither (2026-10-22)
+
+The user reported three things at 4K and 3440x1440: jagged, soft distance
+in races, the My Page row cut off on the right, and dithering in dark
+areas.
+
+**Race at full width.** A 4K race capture (`cap_k4race`) showed that
+`0x01980000` had the race drawn into its left 2560 of 3840 columns. The
+title draws the race 1280 wide (the PS3's 2x horizontal layout, read back
+as a 2560x1080 texture) and stretches it to 1920. Phase 128's scaling kept
+that 2/3.
+
+- **The change:** with native scaling, a 2/3-width display surface is made
+  at the full host width (`uw_host_w`, `RSX_RACE_FULLWIDTH=0` off).
+- **Per-target guest size:** 1280 and 1920 guest columns now share a host
+  size, so a target records the guest size it currently holds
+  (`OffRT.gw/gh`, `s_zb[].gw/gh`, set by the `off_rt_get`/`zb_get`
+  wrappers each frame). The per-draw viewport, depth clears, write-backs,
+  readbacks and texture-over-target scales use `rt_gw()`/`rt_gh()`.
+- **Depth and WPOS:** the depth texture and WPOS already went through
+  `uw_host_w`, so they follow.
+- **Result (`cap_k4race2`):** the scene fills the target and the final
+  frame is correct. The bridge rails and fence posts are crisper.
+- **Speed:** 4K 59.9 FPS (0.2% late); 3440x1440 with 4x MSAA 59.2 FPS.
+
+**My Page label cut-off, fixed.**
+
+- **The bug:** in `func_00768340` (`0x0076850C`-`0x00768554`) the text
+  renderer turns the label strip's rectangle into the fade mask, as
+  x0 = rect.x / (W/2) - 1.0. W is the screen width at +0x3C of its screen
+  object (2560 at 64/27).
+- **Why only ultrawide:** the menus' projection itself is right (x scale
+  1/1280, offset -0.75; matrix mode 1 at `0x01720500`). Only this
+  subtraction assumes the 16:9 layout fills the screen.
+- **The fix:** a new required post-lift step, `scripts/ui_mask_patch.py`
+  (config `ui_label_mask_func`), replaces the 1.0 with `gt5p_ui_mask_x`
+  (`src/gt5p_uifix.cpp`), which returns (H * 16/9) / W: 0.75 at 64/27,
+  and exactly 1 at 16:9 or 720p. `GT5P_UI_MASK_FIX=0` turns it off.
+- **Result (`lblfix2`, 3440x1440):** Events and Garage show in full.
+- **Tools note:** the matrix-stack store watch had missed the value: the
+  copy happens in `func_00768340` itself. The memory snapshot and
+  disassembly found it.
+
+**Dither noise at host pixels.**
+
+- **The cause:** 105 of 108 fragment programs that read WPOS use it to
+  sample unit 15, a small texel-addressed noise tile (`FP_DUMP_DIR`).
+  Phase 128 brought every WPOS back to guest pixels, so at 1440p/4K the
+  noise grew into blotches of 1.33-2 pixels.
+- **The change:** in the WPOS rewrite, a unit 4-15 sample at the pixel
+  position takes the host position when the unit's `rsx_texscale_hi` 1/w
+  says 512 texels or fewer. Other WPOS uses, such as screen-sized reads,
+  stay in guest pixels. It only applies when `rsx_texscale_hi` is
+  declared. `RSX_WPOS_NOISE_HOST=0` turns it off.
+- **Result (`nzon` against `nzoff`):** fine per-pixel grain instead of
+  clumps. The dither itself is the title's.
+
+**Measured** (all three together):
+
+- **3440x1440 borderless, 4x MSAA HSR frame test:**
+  - first run (`all1`): 34.9 FPS while the changed shaders compiled;
+  - warm (`all2`): 59.3 FPS, p99 22.1 ms, 1.6% late, picture correct,
+    exposure readbacks valid.
+- **1080p (`all1080`):** 58.5 FPS. That path is unchanged apart from the
+  label patch, which is the identity there.
+
 ## Phase 129 - 4K (2026-10-22)
 
 **What.** `video.resolution = "2160p"` (also `"2160"`, `"4k"`; F1 shows

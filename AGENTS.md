@@ -99,7 +99,18 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: 4K (Phase 129).** `"2160p"` / `"4k"` renders natively at
+**Latest: race at full width, labels, dither (Phase 130).**
+
+- **Race at full width:** at 1440p and 4K the race scene (the title's
+  1280-wide surface, stretched to 1920) is rendered at the full host width.
+  Targets record the guest width they hold (`OffRT.gw`, `rt_gw()`), since
+  1280 and 1920 now have one host size (`RSX_RACE_FULLWIDTH=0` off).
+- **My Page labels:** the cut-off is fixed by the new required post-lift
+  step `scripts/ui_mask_patch.py`. `func_00768340` subtracted 1.0 instead
+  of the layout's share of the screen.
+- **Dither noise:** sampled at host pixels (`RSX_WPOS_NOISE_HOST=0` off).
+
+**4K (Phase 129).** `"2160p"` / `"4k"` renders natively at
 3840x2160 (5120x2160 at 21:9, 64/27). Depth buffers and the depth copy grow
 past 2048 rows, and zb surfaces may be up to 8192 per side. Warm HSR frame
 test: 59.2 FPS (59.3 ultrawide).
@@ -679,8 +690,9 @@ defaults to `GT5P_VM_INLINE=ON`. Phase 79 records the earlier observations.
 - **`generated/` is current.** It was lifted with the PPU lifter of
   Phase 69 and the SPU lifter of Phase 72, and `build/gt5p.exe` is built
   from it. A ps3recomp lifter change needs a re-lift:
-  - PPU: the README steps, then `scripts/setjmp_patch.py` and
-    `scripts/spin_patch.py` (both required; `--check` reports);
+  - PPU: the README steps, then `scripts/setjmp_patch.py`,
+    `scripts/spin_patch.py` and `scripts/ui_mask_patch.py` (all required;
+    `--check` reports);
   - SPU: `.venv\Scripts\python scripts\lift_spu_jobs.py`, which takes
     about 20 s and rewrites `src/gen/spu_workloads_bcus98158.c` (diff it),
     then `scripts/spu_native_patch.py` (required; also after `--chain`).
@@ -1462,6 +1474,7 @@ Run Python through the repo's virtual environment: `.venv\Scripts\python`.
 | `scripts/self_metainfo.py`, `scripts/decrypt_self.py` | SELF decryption helpers; need a `data/keys` file that is not in the repo |
 | `scripts/setjmp_patch.py` | Post-lift patch, required after every lift |
 | `scripts/spin_patch.py` | Post-lift patch, required after every lift: guest spin waits on SPU progress yield (`spin_waits` in `config/targets.json`) |
+| `scripts/ui_mask_patch.py` | Post-lift patch, required after every lift: menu label fade mask centred in ultrawide (`ui_label_mask_func`; `GT5P_UI_MASK_FIX=0` off) |
 | `scripts/spu_native_patch.py` | Post-SPU-lift patch, required: hooks native replacements (`src/gt5p_spu_native.c`) into lifted SPU blocks (`spu_native_hooks`); `GT5P_SPU_NATIVE=0` off, `=2` check |
 | `scripts/lift_spu_jobs.py` | Lift the policy module, the captured job images and the job bodies; writes `src/gen/spu_workloads_bcus98158.c` |
 | `scripts/soak.sh`, `soak.py`, `boot.py` | Repeated or single headless boots with a summary |
