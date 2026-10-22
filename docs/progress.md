@@ -9,6 +9,62 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 131 - No dither noise, no banding (2026-10-22)
+
+The user asked to remove the dithering and fix any banding.
+
+**What the dither is.** The title adds a signed noise to hide 8-bit banding.
+
+- **How it is applied:** a small wrapping texture is sampled at the pixel
+  position, expanded to -1..1, scaled by a program constant and added to
+  the colour.
+- **Where it comes from:** unit 15 in materials (105 programs) and a 16x16
+  texture on unit 1 in the final tone-map pass into the display (menu
+  frame `cap_hpm`, op842 `0x057B4B41`). The second is what showed on
+  screen.
+
+**The fix.**
+
+- **16-bit colour targets (`RSX_HIGH_PRECISION`, on):** `rsx_surface_dxgi`
+  maps the title's 8-bit colour targets to `R16G16B16A16_UNORM`. The range
+  is the same 0..1, so blending and saturation are unchanged, and pipelines
+  and targets stay consistent. Guest memory still holds 8-bit pixels:
+  - the fill from guest memory converts (x 257);
+  - write-backs and NV3089 readbacks copy 16-bit (512-byte rows, at most
+    32 rows) and convert back (`wb_pixel_to_guest`);
+  - the forced MSAA condition takes either format (`dxgi_is_rgba8_class`).
+- **The title's noise neutral (`RSX_GAME_DITHER`, off when 16-bit):** a
+  pixel-position sample of a small texel-addressed texture becomes
+  float4(0.5), which expands to 0. A texture counts as small at 512 texels
+  or fewer on units 4-15, and 64 or fewer on 0-3 (from its 1/width in
+  `rsx_texscale[u].x` / `rsx_texscale_hi`). Phase 130's host-pixel noise
+  sampling now covers units 0-3 too.
+- **The display's last rounding (`RSX_FINAL_DITHER`, on):** draws into the
+  8-bit display (one 8-bit target; the target format is in the pipeline
+  key) add a static triangular noise of +-1 step from an integer hash of
+  the host pixel.
+- **Setting:** F1 GAME > Smooth colour (`game.smooth_colour`), restart
+  needed.
+
+**Measured.**
+
+- **1080p Kyoto menu (`hq1` against `hq0`):** the grain is gone. Adjacent
+  pixel steps of 3 or more in the dark area went from 26.1% to 14.3%,
+  same mean brightness. The lamp's falloff on the wall is smooth with no
+  bands (`hqcmp.png`, x4 gain).
+- **Exposure meter at 16-bit:** what the guest receives matches 8-bit
+  (red 13/43/95 against 13/43/96 min/mean/max, `rbq2`/`rbq0`), and it is
+  valid every frame (`rbq3`). The readback debug counters now read guest
+  memory, since the raw buffer layout differs by format.
+- **HSR frame tests (warm):** 1080p 59.1 FPS (`hpr2`); 3440x1440 with 4x
+  MSAA 57.7 FPS, 2.9% late (`hpu2`). GPU time is 3.4 -> 4.3 ms at 1080p and
+  5.1-5.2 -> 5.4 ms at 3440x1440, so the FPS spread is run-to-run.
+- **First run:** 42-44 FPS while the new pipelines are built.
+- **Cockpit view (`cock0`/`cock1`, Select at +22 s, `PAD_HOLD_MERGE=0`):**
+  the interior and door mirrors are black in 8-bit as well. An existing
+  fault, open.
+- **Tests:** `settings_test.ps1` and `debug_export.ps1` pass.
+
 ## Phase 130 - Race at full width, My Page labels, finer dither (2026-10-22)
 
 The user reported three things at 4K and 3440x1440: jagged, soft distance

@@ -192,7 +192,7 @@ bool known_key(std::string_view section, std::string_view key)
         {"video", "vsync"},          {"video", "shader_cache"},
         {"video", "shader_indicator"}, {"video", "shader_precompile"}, {"video", "shader_warmup"}, {"video", "pipeline_async"}, {"video", "race_preload"},
         {"input", "sdl_controllers"}, {"input", "keyboard"}, {"input", "button_prompts"},
-        {"game", "skip_movie"},
+        {"game", "skip_movie"},       {"game", "smooth_colour"},
         {"performance", "vblank_hz"}, {"performance", "lane_pinning"},
         {"performance", "fifth_spu_lane"},
         {"performance", "lane_cores"},   /* the old key (off by default then): read no more */
@@ -277,6 +277,7 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
         else warn(std::string("keyboard.") + k + ": not a key this port can bind; keeping the default");
     }
     read_bool(tbl["game"]["skip_movie"], "game.skip_movie", s.skip_movie);
+    read_bool(tbl["game"]["smooth_colour"], "game.smooth_colour", s.smooth_colour);
     read_vblank(tbl["performance"]["vblank_hz"], s.vblank_hz100);
     read_lane_cores(tbl["performance"]["lane_pinning"], s.lane_cores);
     read_bool(tbl["performance"]["fifth_spu_lane"], "performance.fifth_spu_lane", s.fifth_spu_lane);
@@ -308,6 +309,7 @@ void apply_env(const Gt5pSettings& s)
     set_default_env("GT5P_GLYPHS", kPromptNames[s.button_prompts >= 0 && s.button_prompts < 5 ? s.button_prompts : 0]);
     /* The screen whose first read starts the presses (cellPad.c). */
     if (s.skip_movie)       set_default_env("PAD_SKIP_MOVIE", "MovieRoot");
+    if (!s.smooth_colour)   set_default_env("RSX_HIGH_PRECISION", "0");
     if (s.verbose_log >= 0) set_default_env("PS3_VERBOSE", s.verbose_log ? "1" : "0");
     set_default_env("GT5P_VBLANK_HZ", s.vblank_hz100 == 6250 ? "62.5" : "59.94");
     set_default_env("SPURS_LANE_PIN", s.lane_cores == 2 ? "2" : s.lane_cores == 1 ? "1" : "0");
@@ -338,6 +340,7 @@ void reflect_env(Gt5pSettings& s)
     if (const char* e = getenv("GT5P_GLYPHS")) { const int c = prompt_code(e); if (c >= 0) s.button_prompts = c; }
     if (const char* e = getenv("PAD_KEYMAP")) gt5p_keymap_parse(e, s.keys);
     { const char* e = getenv("PAD_SKIP_MOVIE"); s.skip_movie = e && *e && strcmp(e, "0") != 0; }
+    { const char* e = getenv("RSX_HIGH_PRECISION"); s.smooth_colour = !(e && e[0] == '0'); }
     if (const char* e = getenv("PS3_VERBOSE")) s.verbose_log = (e[0] && e[0] != '0') ? 1 : 0;
     if (const char* e = getenv("GT5P_VBLANK_HZ")) s.vblank_hz100 = atof(e) > 62.0 ? 6250 : 5994;
     if (const char* e = getenv("SPURS_LANE_PIN")) s.lane_cores = atoi(e) >= 2 ? 2 : atoi(e) == 1 ? 1 : 0;
@@ -453,6 +456,9 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "# Skip the opening movie (it plays only when the TV content is installed):\n"
          "# Cross is pressed for you once it starts. [PAD_SKIP_MOVIE]\n"
          "skip_movie = " << (s.skip_movie ? "true" : "false") << "\n"
+         "# Smooth colour: render at 16 bits per channel and drop the game's dither\n"
+         "# noise, so dark areas are clean without banding. [RSX_HIGH_PRECISION]\n"
+         "smooth_colour = " << (s.smooth_colour ? "true" : "false") << "\n"
          "\n"
          "[performance]\n"
          "# The game paces its frames to the vblank. 59.94 is the console's rate\n"

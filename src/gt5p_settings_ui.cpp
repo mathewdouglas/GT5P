@@ -198,6 +198,13 @@ const std::vector<Item>& items()
           "PAD_SKIP_MOVIE", kOnOff,
           [](const Gt5pSettings& s) { return s.skip_movie ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.skip_movie = v != 0; }, nullptr },
+        { L"GAME", L"Smooth colour",
+          L"Render at 16 bits per channel and drop the game's dither noise: dark areas are "
+          L"clean, without banding. Off is the game's own 8-bit picture with its noise. Takes "
+          L"effect after a restart.",
+          "RSX_HIGH_PRECISION", kOnOff,
+          [](const Gt5pSettings& s) { return s.smooth_colour ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.smooth_colour = v != 0; }, nullptr },
         { L"GAME", L"Shader compile indicator",
           L"Show \"Compiling shaders\" in the corner while the game builds shaders.",
           "GT5P_SHADER_INDICATOR", kOnOff,

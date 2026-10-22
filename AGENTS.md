@@ -99,7 +99,17 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: race at full width, labels, dither (Phase 130).**
+**Latest: no dither, no banding (Phase 131).** The title's 8-bit colour
+targets are kept at 16 bits per channel (`RSX_HIGH_PRECISION`, `rsx_hp()`,
+`R16G16B16A16_UNORM`). Guest-memory fills, write-backs and readbacks
+convert. The title's dither noise is neutral (a sample of 0.5, expanding to
+0): unit 15 in materials, unit 1 in the final tone map
+(`RSX_GAME_DITHER=1` keeps it). Draws into the 8-bit display add a +-1-step
+triangular noise per host pixel (`RSX_FINAL_DITHER=0` off). Setting: F1
+GAME > Smooth colour (`game.smooth_colour`). Open, not caused by this: the
+cockpit view's mirrors are black in 8-bit too.
+
+**Race at full width, labels, dither (Phase 130).**
 
 - **Race at full width:** at 1440p and 4K the race scene (the title's
   1280-wide surface, stretched to 1920) is rendered at the full host width.
