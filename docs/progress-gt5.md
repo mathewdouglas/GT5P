@@ -4,6 +4,39 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 4 — First screen: a lifter bug in split-off epilogues (2026-10-23)
+
+**GT5 boots to its own first screen** (the epilepsy warning, drawn by the
+title through the D3D12 backend, about 12 s after launch), then goes black and
+keeps running: a 90 s headless boot made 5,327 flips (~60/s) with no exit, no
+null calls and one unresolved indirect call (Phase 3 open item below, still
+to check). What follows the warning is not investigated; the opening movie
+(the disc's `MOVIE` directory) is the first suspect.
+
+The cause of Phase 3's exit was a PPU lifter bug. A function whose tail is
+a branch target (here the `lwarx`/`stwcx.` retry loop in `func_006383DC`) is
+split, and the tail lifts as its own fragment (`func_00638434`). The lifter's
+tail-entry optimisation snapshots the callee-saved restores (`ld r29..r31,
+-0x18..-0x8(r1)`) from memory at the fragment's entry. Those restores come
+after the epilogue's `addi r1,r1,0x90`, so the snapshot read 0x90 bytes too
+low and returned r29-r31 as stack garbage. The caller was the static-init
+walker `func_00B835A4` (a list of 24-byte nodes `{?, init OPD, fini OPD, ?,
+next}` pushed by `func_00B71878`); with r31 corrupted it followed a `next`
+into the RTTI tables, called a `type_info` as a function, and the title went
+on to `sys_process_exit(1)`.
+
+How it was found: logging every push (all 324 well-formed) and every node
+the walker visits showed the second pass leave the list after node
+`0x0190E064`; the page guard (`PPU_WWATCH` + `PPU_WW_GUARD=1`) showed no
+store to that node's `next`, so the walker's own register was wrong; the
+lifted fragment showed the entry snapshot.
+
+The fix (ps3recomp `tools/ppu_lifter.py`) adds the body's cumulative `r1`
+adjustment to each snapshot offset and skips the snapshot when `r1` is
+written any other way (`PPU_LIFT_CS_R1DELTA=0` at lift time for the old
+behaviour). It changed 20 fragments in GT5's lift. **Prologue's lift needs
+the same re-lift** to pick it up; not yet done or measured there.
+
 ## Phase 3 — Merge of Prologue Phases 71-133; seven boot blockers (2026-10-23)
 
 `bcus98158-disc-build` (Prologue Phases 71-133) was merged into `gt5`. The

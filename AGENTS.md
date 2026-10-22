@@ -886,12 +886,13 @@ OPD functions. Compared with BCUS98158, GT5 imports these additional modules:
 
 BCUS98114 has its own lift and Release build (`build\gt5.exe`). As of
 Phase 3 (2026-10-23, after merging Prologue Phases 71-133) a boot reads
-`GT.VOL`, builds its PDIPFS cache, runs 28 lifted WWS job bodies and flips
-about 28 times, then calls `sys_process_exit(1)`. The window stays white:
-**not a visual boot yet**. Phase 3 fixed seven runtime/lifter blockers
+`GT.VOL`, builds its PDIPFS cache and runs 28 lifted WWS job bodies. Since
+Phase 4 it **shows its first screen** (the epilepsy warning), then a black
+screen while it keeps running at ~60 flips/s; what follows is open. Phase 3 fixed seven runtime/lifter blockers
 (uncommitted-page reads, missing imports, real lwcond waits, lv2 one-shot
-timers, job bodies); the open divergence is a context-list lookup in
-`func_00B835A4` that returns a pointer into the RTTI tables. Read
+timers, job bodies); Phase 4 fixed a PPU lifter bug (split-off epilogue
+fragments restored r29-r31 from the wrong stack offset); Prologue needs a
+re-lift to pick that up. Read
 [docs/progress-gt5.md](docs/progress-gt5.md) Phase 3 before continuing.
 GT5 sets `PS3_LWCOND_REAL=1` and `PS3_TIMER_ONESHOT=1` by default; Prologue
 keeps the old runtime behaviour for both.

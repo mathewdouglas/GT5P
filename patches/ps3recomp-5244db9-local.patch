@@ -28106,7 +28106,7 @@ index 3588dce..e1da925 100644
  #ifdef _WIN32
      HANDLE   timer_handle;
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index b19e240..88ee86c 100644
+index b19e240..2ad091e 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
 @@ -330,6 +330,7 @@ extern "C" uint8_t* vm_base;
@@ -28117,7 +28117,57 @@ index b19e240..88ee86c 100644
  
  /* Firmware-import HLE dispatch: a lifted import stub (a .lib.stub trampoline)
   * is replaced with a direct call to the registered HLE handler for its NID
-@@ -1588,8 +1589,9 @@ class PPULifter:
+@@ -862,17 +863,47 @@ class PPULifter:
+         # ECDSA signature the firmware checked failed on that one word.
+         _reg_snap = set()        # regs to snapshot from the register at entry
+         _mem_snap = {}           # reg -> offset, snapshot from memory at entry
++        # r1 as each body line sees it, relative to r1 at entry. A tail entry
++        # split off mid-epilogue can still pop its frame (`addi r1,r1,0x90`)
++        # before the restores, which then address the CALLER's r1; a snapshot
++        # taken at entry must add that pop. Gran Turismo 5's func_00638434 (the
++        # tail of an lwarx/stwcx. exchange) read r29-r31 from 0x90 bytes too low
++        # and returned them as garbage to a static-init walker. None = r1 was
++        # written some other way: no snapshot. PPU_LIFT_CS_R1DELTA=0 at lift
++        # time ignores the pop (the old behaviour).
++        _r1_track = os.environ.get("PPU_LIFT_CS_R1DELTA", "1") != "0"
++        _r1_delta = []
++        _d = 0
++        for _l in func.body_lines:
++            _r1_delta.append(_d)
++            if _d is None or not _r1_track:
++                continue
++            _ra = re.match(r'\s*ctx->gpr\[1\] = ctx->gpr\[1\] \+ \(int64_t\)\((-?(?:0x)?[0-9a-fA-F]+)\);', _l)
++            if _ra:
++                try:
++                    _d += int(_ra.group(1), 0)
++                except ValueError:
++                    _d = None
++            elif re.search(r'ctx->gpr\[1\]\s*(?:[+\-]?=)(?!=)', _l):
++                _d = None
+         for _i, _l in enumerate(func.body_lines):
+             _m = _CS_REST_RE.search(_l)
+             if _m:
+                 _reg = int(_m.group(1)); _off = _m.group(2)
++                _snap_off = _off
++                if _r1_track and _r1_delta[_i] != 0:
++                    try:
++                        _snap_off = None if _r1_delta[_i] is None else hex(int(_off, 0) + _r1_delta[_i])
++                    except ValueError:
++                        _snap_off = None
+                 if (_off, _m.group(1)) in _saved_slots:
+                     _reg_snap.add(_reg)
+                     func.body_lines[_i] = f"    ctx->gpr[{_reg}] = _cs_{_reg};"
+-                elif (not _has_stdu and _write_counts[_off] == 0 and not _off_escapes(_off)
++                elif (not _has_stdu and _snap_off is not None
++                        and _write_counts[_off] == 0 and not _off_escapes(_off)
+                         and _reg not in _reg_snap
+                         and _is_epilogue_restore(func.body_lines, _i, _reg, _off)
+-                        and _mem_snap.setdefault(_reg, _off) == _off):
++                        and _mem_snap.setdefault(_reg, _snap_off) == _snap_off):
+                     # pure tail-entry: the save lives in the original function, so
+                     # this body never writes the slot; snapshot from memory at entry.
+                     # (Skip slots whose address escaped to a callee -- see above.)
+@@ -1588,8 +1619,9 @@ class PPULifter:
                              f"(void(*)(void*)){self.prefix}func_{c:08X}; return; }}")
                  if arms:
                      return ("switch ((uint32_t)ctx->ctr) { " + "".join(arms) +
@@ -28129,7 +28179,7 @@ index b19e240..88ee86c 100644
  
          if mn == "bctrl":
              # Indirect call through CTR register. The CTR value is a GUEST
-@@ -2110,6 +2112,15 @@ class PPULifter:
+@@ -2110,6 +2142,15 @@ class PPULifter:
                      f"uint64_t raw; memcpy(&raw, vm_base + (uint32_t)ea, 8); "
                      f"ctx->gpr[{rd}] = raw; }}")
  
@@ -28145,7 +28195,7 @@ index b19e240..88ee86c 100644
          if mn == "sthbrx":
              rs, ra, rb = _reg_idx(ops[0]), _reg_idx(ops[1]), _reg_idx(ops[2])
              return (f"{{ uint64_t ea = {_xea(ra,rb)}; "
-@@ -2276,6 +2287,59 @@ class PPULifter:
+@@ -2276,6 +2317,59 @@ class PPULifter:
                      f"uint8_t* d = (uint8_t*)&ctx->vr[{vd}]; "
                      f"for (int i = 0; i < 16; i++) d[i] = ((uint32_t)i >= 16u - sh) ? m[i - (int)(16u - sh)] : 0; }}")
  
@@ -28205,7 +28255,7 @@ index b19e240..88ee86c 100644
          if mn == "lvebx" or mn == "lvehx" or mn == "lvewx":
              vd = int(ops[0][1:]) if ops[0].startswith("v") else _reg_idx(ops[0])
              ra = _reg_idx(ops[1])
-@@ -2692,6 +2756,18 @@ class PPULifter:
+@@ -2692,6 +2786,18 @@ class PPULifter:
              return (f"{{ float b[4],d[4]; ppu_vldf4(&ctx->vr[{vb}],b); "
                      f"for(int i=0;i<4;i++) d[i]=1.0f/sqrtf(b[i]); ppu_vstf4(&ctx->vr[{vd}],d); }}")
  
@@ -28224,7 +28274,7 @@ index b19e240..88ee86c 100644
          if mn == "vrfim":  # round to FP integer toward -inf (floor); vrfim is vD,vB
              vd, vb = int(ops[0][1:]), int(ops[-1][1:])
              return (f"{{ float b[4],d[4]; ppu_vldf4(&ctx->vr[{vb}],b); "
-@@ -2946,6 +3022,23 @@ class PPULifter:
+@@ -2946,6 +3052,23 @@ class PPULifter:
                      f"for(int k=0;k<4;k++) o[j*4+k]=(uint8_t)(r>>(8*(3-k))); }} "
                      f"memcpy(&ctx->vr[{vd}], o, 16); }}")
  
@@ -28248,7 +28298,7 @@ index b19e240..88ee86c 100644
          # vsumsws vD,vA,vB: sum the four signed words of vA plus word 3 of vB,
          # saturate to signed 32, place in word 3 of vD; words 0..2 are zero.
          if mn == "vsumsws":
-@@ -3047,6 +3140,17 @@ class PPULifter:
+@@ -3047,6 +3170,17 @@ class PPULifter:
                      f"for(int i=0;i<4;i++) d[i]=(uint16_t)(a[i]&0xFFFFu); "
                      f"for(int i=0;i<4;i++) d[4+i]=(uint16_t)(b[i]&0xFFFFu); }}")
  
@@ -28266,7 +28316,7 @@ index b19e240..88ee86c 100644
          # vmsummbm (VA-form, 4 operands)
          if mn == "vmsummbm":
              vd = int(ops[0][1:]); va = int(ops[1][1:]); vb = int(ops[2][1:]); vc = int(ops[3][1:])
-@@ -3633,6 +3737,27 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+@@ -3633,6 +3767,27 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
              if all_insns[_k].mnemonic == 'blr':
                  return _k + 1
          return 0
@@ -28294,7 +28344,7 @@ index b19e240..88ee86c 100644
      def _live(lo, i):
          """all_insns[lo:i] minus blocks that end in `blr` -- they return, so
          they cannot flow into the dispatch at i. Scanning backward straight
-@@ -3820,7 +3945,7 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+@@ -3820,7 +3975,7 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
                      # preceding blr, so the scan cannot drift into the previous
                      # function and latch a stale base.
                      _scan, _resolved = _live(max(0, i - 30), i), False
@@ -28303,7 +28353,7 @@ index b19e240..88ee86c 100644
                          for w2 in reversed(_scan):
                              b = [x.strip() for x in w2.operands.split(',')]
                              if not b or b[0] != _mid or w2.mnemonic.startswith(('st', 'lf')):
-@@ -3831,9 +3956,12 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+@@ -3831,9 +3986,12 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
                                  disp2 = _d2; disp2_is_ld = _d2_is_ld
                              _resolved = True    # nearest def wins, TOC load or not
                              break
