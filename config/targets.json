@@ -31,6 +31,7 @@
     "frame_pacer_sleep_lr": "0x00B24AF4",
     "menu_listbox_vtable": "0x0124C290",
     "aspect_16_9_float": "0x01287DD0",
-    "ui_aspect_16_9_float": "0x0126AE5C"
+    "ui_aspect_16_9_float": "0x0126AE5C",
+    "scene_camera_aspect_16_9_float": "0x01280924"
   }
 }

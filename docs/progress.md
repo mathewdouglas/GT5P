@@ -9,6 +9,63 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 126 - Ultrawide: scene cameras and opening screens (2026-10-22)
+
+The user reported, in 21:9: the opening text and the Sony and Polyphony
+logos stretched, and the main menu background, dealer page and pit
+stretched too.
+
+**Scene cameras.** The menu background, dealer and pit cameras have their
+own 16/9, separate from the race camera's display block.
+
+- **The candidates:** the ELF holds eleven 16/9 floats. Searching TOC
+  pointer loads followed by an `lfs` from the exact address found five
+  readers:
+  - `func_000156D0`, the UI aspect;
+  - `func_005E3180`, which passes 16/9 to a perspective call (`0xB20A48`);
+  - `func_005E51D0`, which returns it;
+  - `func_005E8020`, which passes `0x01280924` to the camera setter
+    `0x00814E00`;
+  - `func_00814C60` and `func_008150E8`, a camera object's defaults.
+- **Narrowed by pokes** (`GT5P_POKE_BOOT`, dealer window shots): only
+  `0x01280924` changes the dealer. A wheel seen from any angle cannot be
+  wider than tall, which made "stretched" measurable.
+- **Pit memory snapshots** (`GT5P_MEMSNAP`): the pit's camera object
+  (vtable `0x0125B350`, field of view 37.85, near 0.2, far 2000, aspect at
+  +0x10) is still 16/9 after poking the other constants. With `0x01280924`
+  poked it holds 64/27. The menu's camera (same class, field of view 33.2)
+  does too.
+- **The fix:** that address is `scene_camera_aspect_16_9_float` in
+  `config/targets.json`. `GT5P_ULTRAWIDE=1` patches it with the other two
+  constants; `GT5P_ULTRAWIDE_CAM=0` leaves it alone.
+- **Left 16/9:** the default camera object (`func_00814C60`) and an object
+  with vtable `0x012610B8` keep 16/9. Nothing visible needed them.
+- **An earlier claim corrected:** Phase 125's dealer check judged crispness,
+  not proportions, and Phase 122's dealer reading was wrong as well. The
+  dealer page was stretched all along.
+
+**Opening screens.** The copyright, Sony and Polyphony screens are one draw
+each: a 6-vertex quad into the display surface, sampling a 1920x1080 linear
+texture in main memory (`RSX_CAP` at frame 300).
+
+- **The fix:** such a draw (the edge-stretch conditions, plus a sampled
+  display-sized texture that is not in local memory) gets
+  `vp_posoffset.w = -0.75`. The vertex epilogue then moves vertices at clip
+  x = +-1 to +-0.75, so the image is pillarboxed at 16:9.
+- **Excluded:** render targets live in local memory, so full-screen
+  post-processing passes are not touched.
+- **Switch:** `RSX_ULTRAWIDE_PILLAR=0` turns it off.
+
+**Measured** at 1080p, native 21:9:
+
+- **Opening (`uwlogo2`):** the three screens are centred at 16:9 with black
+  sides. The movie is unchanged.
+- **Pit, menu (`uwrt3`):** crew and car have correct proportions.
+- **Dealer (`uwdeal3`):** the whole car fits, and the wheels are not wider
+  than tall.
+- **HSR race (`uwrace4`):** correct, median 53 fps over 30 s with MSAA 2.
+- **Tests:** `debug_export.ps1` passes.
+
 ## Phase 125 - Ultrawide stage B: native-width rendering (2026-10-22)
 
 **Why.** Stage A spread a 1920-wide frame over 2560 pixels, and races are

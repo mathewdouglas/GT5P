@@ -920,13 +920,18 @@ int main(int argc, char* argv[])
      * at boot, from two constants (docs/plan-ultrawide.md): aspect_16_9_float
      * for its cameras and the race HUD (64/27 there: a 21:9 projection, the
      * same vertical field of view), ui_aspect_16_9_float for the menus' 2D
-     * layout (centred at 16:9 proportions). The window is made 21:9 too
+     * layout (centred at 16:9 proportions). A third,
+     * scene_camera_aspect_16_9_float, is the scene cameras' (the main menu's
+     * background, the dealer, the pit), set through func_005E8020;
+     * GT5P_ULTRAWIDE_CAM=0 leaves it. The window is made 21:9 too
      * (RSX_ULTRAWIDE, read by the backend). GT5P_ULTRAWIDE_UI=0 leaves the
      * menus' constant alone (stretched menus). */
     { const char* uw = getenv("GT5P_ULTRAWIDE");
       if (uw && uw[0] && uw[0] != '0' && GT5P_ASPECT_ADDR[0]) {
           const char* ui = getenv("GT5P_ULTRAWIDE_UI");
-          const char* addrs[2] = { GT5P_ASPECT_ADDR, (ui && ui[0] == '0') ? "" : GT5P_UI_ASPECT_ADDR };
+          const char* cam = getenv("GT5P_ULTRAWIDE_CAM");
+          const char* addrs[3] = { GT5P_ASPECT_ADDR, (ui && ui[0] == '0') ? "" : GT5P_UI_ASPECT_ADDR,
+                                   (cam && cam[0] == '0') ? "" : GT5P_CAM_ASPECT_ADDR };
           for (const char* as : addrs) {
               if (!as[0]) continue;
               const uint32_t a = (uint32_t)strtoul(as, nullptr, 16);

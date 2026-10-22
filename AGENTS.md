@@ -99,7 +99,14 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: ultrawide renders natively (Phase 125).** For 21:9 the
+**Latest: ultrawide scene cameras and opening screens (Phase 126).**
+The menu background, dealer and pit cameras take 16/9 from
+`scene_camera_aspect_16_9_float` (`0x01280924`), now patched too
+(`GT5P_ULTRAWIDE_CAM=0` off). Full-screen images uploaded to main memory
+(copyright, Sony, Polyphony) are pillarboxed by the vertex shader
+(`vp_posoffset.w = -0.75`, `RSX_ULTRAWIDE_PILLAR=0` off).
+
+**Ultrawide renders natively (Phase 125).** For 21:9 the
 backend makes the title's full-screen targets 4/3 wider (`uw_host_w`,
 `s_gw`/`s_gh` are the guest's display), scales viewports, scissors, depth
 clears, readbacks and WPOS, and presents 2560x1080 1:1 (`RSX_ULTRAWIDE=2`;
