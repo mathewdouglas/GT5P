@@ -937,7 +937,9 @@ int main(int argc, char* argv[])
                   printf("[GT5P] ultrawide: 21:9 aspect at 0x%08X\n", a);
               } else fprintf(stderr, "[GT5P] ultrawide: 0x%08X is not 16/9 (%08X); not patched\n", a, _byteswap_ulong(cur));
           }
-          if (!getenv("RSX_ULTRAWIDE")) _putenv_s("RSX_ULTRAWIDE", uw);
+          /* Rendered natively 21:9 (RSX_ULTRAWIDE=2) unless GT5P_ULTRAWIDE=
+           * anamorphic (=1: the swap chain stretches a 16:9 frame). */
+          if (!getenv("RSX_ULTRAWIDE")) _putenv_s("RSX_ULTRAWIDE", (uw[0] == 'a' || uw[0] == 'A') ? "1" : "2");
           /* Full-screen 2D layers stretched to the 21:9 edges belong to the
            * menus' centred layout. */
           if (ui && ui[0] == '0' && !getenv("RSX_ULTRAWIDE_EDGES")) _putenv_s("RSX_ULTRAWIDE_EDGES", "0");

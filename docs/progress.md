@@ -9,6 +9,64 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 125 - Ultrawide stage B: native-width rendering (2026-10-22)
+
+**Why.** Stage A spread a 1920-wide frame over 2560 pixels, and races are
+drawn 1280 wide by the title. A 1:1 crop of HSR was visibly soft across.
+
+**What it does.** `RSX_ULTRAWIDE=2`, the default for the 21:9 setting;
+`GT5P_ULTRAWIDE=anamorphic` keeps stage A.
+
+- **Two sizes:** the swap chain and `s_d3d.width` are 2560x1080, while
+  `s_gw x s_gh` keeps the title's 1920x1080 display.
+- **Which targets widen:** full-height surfaces of display width, or of the
+  race scene's 2/3 of it, are created 4/3 wider (`uw_host_w` in
+  `off_rt_get` and `zb_get`). `uw_guest_w` undoes it, so a width that is
+  already widened passes through unchanged.
+- **Draws stay in game units.** Scaling happens only at D3D12:
+  - per-draw viewport and scissor are computed against the target's guest
+    width, then multiplied by kx;
+  - depth-clear rectangles are scaled the same way;
+  - the shared depth buffer and its copy are at least the host width
+    (`depth_copy_w`).
+- **Guest-unit comparisons now use `s_gw`/`s_gh`:** sub-viewports, the edge
+  stretch, display-by-size, depth-surface notes, display-sized textures and
+  the small-viewport test.
+- **Textures over targets:** a texture placed over a widened target uses the
+  target's guest width for its scale and origin.
+- **Pixel-exact copies:** NV3089 readbacks (the exposure meter) and small
+  write-backs copy the widened box and take column `(x + c) * kx` per guest
+  column. Two scratch surfaces, `0x02A80000` and the meter's `0x02EC0000`,
+  also receive full-screen draws and so are widened.
+- **WPOS:** fragment programs reading it get x scaled back to guest pixels
+  through `rsx_fogstate.w`, a lane that was unused. The shader text is
+  rewritten in native mode only, so other runs keep their cached shaders.
+- **No guest-memory fill:** a widened target is not initialised from guest
+  memory, since the row layouts differ.
+- **The F1 page:** no squeeze in native mode. The page spans the
+  backbuffer, centred, and the Options tag sits at the corner of the 16:9
+  area.
+
+**Measured** at 1080p/2x MSAA.
+
+- **Readbacks (`uwN2`):** the meter readbacks are valid every frame
+  (`RSX_BLIT_READBACK_DBG=3`: about 57 a second, none zero).
+- **Tour (`uwT4`):** menu, popups, Track Select, pit, Driving Options, grid,
+  race, pause and the F1 page are all correct. One frame showed the mirror
+  black just after it appeared; later frames were fine.
+- **Dealer (`uwD1`/`uwD2`):** native is crisper; wheel spokes and panel lines
+  are sharper in a crop.
+- **Frame test (`uwNFT`):** 58.2 FPS, median 16.7 ms, p99 32.4 ms, 3.3%
+  late. GPU time is about 4 ms a frame in both modes, so the difference from
+  anamorphic (59.0 FPS, 1.6% late) is the CPU-bound walk's run-to-run
+  variation.
+- **The first native run** compiles new shaders (WPOS) and recreates
+  targets: 24 FPS that once.
+- **Regressions:** 16:9 at 1080p (`n169`) is unchanged at 60 fps, and
+  `settings_test.ps1` and `debug_export.ps1` pass.
+- **Not covered:** the tunnel itself in native mode. The scripted drive hit
+  a wall first; the meter readback is the evidence instead.
+
 ## Phase 124 - Ultrawide step 4: the Aspect ratio setting (2026-10-22)
 
 - **The setting:** F1 VIDEO > Aspect ratio (16:9 / 21:9 ultrawide) takes

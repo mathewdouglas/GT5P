@@ -29,7 +29,7 @@ gives the game a 21:9 aspect ratio.
      with the swap chain stretching the 16:9 frame. The race and dealer
      pages are correct, nothing is culled at the edges, and menu 2D is
      stretched.
-   - **Stage B, native width:**
+   - **Stage B, native width** (done, Phase 125; the default for 21:9):
    - a 2560x1080 swap chain and window;
    - the full-screen targets rendered 4/3 wider, with full-width viewports
      and scissors scaled to match;

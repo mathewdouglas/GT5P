@@ -99,7 +99,13 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: ultrawide setting (Phase 124).** F1 VIDEO > Aspect ratio, or
+**Latest: ultrawide renders natively (Phase 125).** For 21:9 the
+backend makes the title's full-screen targets 4/3 wider (`uw_host_w`,
+`s_gw`/`s_gh` are the guest's display), scales viewports, scissors, depth
+clears, readbacks and WPOS, and presents 2560x1080 1:1 (`RSX_ULTRAWIDE=2`;
+`GT5P_ULTRAWIDE=anamorphic` is stage A).
+
+**Ultrawide setting (Phase 124).** F1 VIDEO > Aspect ratio, or
 `video.aspect = "21:9"`, turns ultrawide on (restart needed).
 
 **Ultrawide step 3 (Phase 123).** `GT5P_ULTRAWIDE=1` also patches

@@ -455,12 +455,13 @@ double s_paint_scale = 1;       /* device pixels per unit while painting */
 double s_paint_ax = 1;          /* horizontal factor on top of it (paint_ax) */
 double s_paint_ox = 0;          /* device x of the layout's left edge (a centred page) */
 
-/* Ultrawide (RSX_ULTRAWIDE): the 16:9 backbuffer is stretched over a 21:9
- * window, so overlays are painted 3/4 as wide to come out undistorted. */
+/* Ultrawide, anamorphic (RSX_ULTRAWIDE=1): the 16:9 backbuffer is stretched
+ * over a 21:9 window, so overlays are painted 3/4 as wide to come out
+ * undistorted. Native (=2) has a 21:9 backbuffer: no squeeze. */
 double paint_ax()
 {
     static double ax = 0;
-    if (ax == 0) { const char* e = getenv("RSX_ULTRAWIDE"); ax = (e && e[0] && e[0] != '0') ? 0.75 : 1.0; }
+    if (ax == 0) { const char* e = getenv("RSX_ULTRAWIDE"); ax = (e && e[0] == '1' && !e[1]) ? 0.75 : 1.0; }
     return ax;
 }
 
@@ -862,7 +863,7 @@ void push_image(int lw, int lh, void (*painter)(HDC), bool corner, int dim)
     if (lw * sc * ax > bw) sc = bw / (double)lw / ax;
     /* A full-screen page in ultrawide spans the whole backbuffer, its layout
      * centred, so the dimmed scene around it reaches the window's sides. */
-    const double ox = (!corner && ax != 1.0) ? (bw - lw * sc * ax) * 0.5 : 0.0;
+    const double ox = (!corner && lw * sc * ax < bw - 1) ? (bw - lw * sc * ax) * 0.5 : 0.0;
     const int w = ox > 0 ? bw : (int)(lw * sc * ax + 0.5), h = (int)(lh * sc + 0.5);
     BITMAPINFO bi = {};
     bi.bmiHeader.biSize = sizeof bi.bmiHeader;
@@ -906,7 +907,8 @@ void push_image(int lw, int lh, void (*painter)(HDC), bool corner, int dim)
     void* bits = pass[0];
     if (corner) {   /* bottom right, in the game's own margin */
         /* In ultrawide, the corner of the title's centred 16:9 area. */
-        const int right = bw - (int)(bw * (1.0 - ax) * 0.5);
+        const double area = bh * 16.0 / 9.0 * ax;
+        const int right = area < bw ? (int)((bw + area) * 0.5) : bw;
         rsx_d3d12_overlay_set(bits, w, h, right - w - (int)(40 * sc * ax), bh - h - (int)(34 * sc));
     } else {
         s_scale = sc; s_scale_x = sc * ax; s_oy = (bh - h) / 2;
