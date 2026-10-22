@@ -884,14 +884,16 @@ OPD functions. Compared with BCUS98158, GT5 imports these additional modules:
 `sceNpUtil`; GT5 does not import `cellMusicUtility`, `cellSync` or
 `cellSysutilAvconfExt`.
 
-BCUS98114 now has a separate baseline lift and Release build. A bounded
-headless run reads `GT.VOL`, initializes graphics and issues flip commands;
-the policy image size has been corrected to 12,032 bytes and 14 captured SPU
-job images are registered. This is not yet a confirmed visual boot: the latest
-run waits on a PPU thread join and logs dropped mailbox writes to unresolved
-SPU thread `0x30040000`. Their causal relationship is unproven. Build-specific
-data-loading behavior and any further runtime changes remain to be measured.
-See [docs/progress-gt5.md](docs/progress-gt5.md).
+BCUS98114 has its own lift and Release build (`build\gt5.exe`). As of
+Phase 3 (2026-10-23, after merging Prologue Phases 71-133) a boot reads
+`GT.VOL`, builds its PDIPFS cache, runs 28 lifted WWS job bodies and flips
+about 28 times, then calls `sys_process_exit(1)`. The window stays white:
+**not a visual boot yet**. Phase 3 fixed seven runtime/lifter blockers
+(uncommitted-page reads, missing imports, real lwcond waits, lv2 one-shot
+timers, job bodies); the open divergence is a context-list lookup in
+`func_00B835A4` that returns a pointer into the RTTI tables. Read
+[docs/progress-gt5.md](docs/progress-gt5.md) Phase 3 before continuing.
+GT5 sets `PS3_LWCOND_REAL=1` by default (Prologue keeps the 1 ms poll).
 
 ## What is tied to v02.00
 

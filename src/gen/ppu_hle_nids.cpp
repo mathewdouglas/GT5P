@@ -240,6 +240,7 @@ extern "C" {
     void cellGcm_fifo_kick_event(void);
     void cellGcm_fifo_kick_wait(void);
     void cellGcm_ref_on_poll(void);
+    void cellGcm_debug_dump_to(void);
     void cellGcm_debug_dump(void);
     void cellGcm_rsx_process_fifo(void);
     void cellGcm_fifo_recycle(void);
@@ -261,6 +262,7 @@ extern "C" {
     void cellGcmAddressToOffset(void);
     void cellGcmMapMainMemory(void);
     void cellGcmMapEaIoAddress(void);
+    void cellGcmMapEaIoAddressWithFlags(void);
     void cellGcmUnmapEaIoAddress(void);
     void cellGcmUnmapIoAddress(void);
     void cellGcmIoOffsetToAddress(void);
@@ -399,6 +401,8 @@ extern "C" {
     void cellKbSetReadMode(void);
     void cellKbSetCodeType(void);
     void cellKbClearBuf(void);
+    void cellKbRead(void);
+    void cellKbGetConfiguration(void);
     void cellKey2CharOpen(void);
     void cellKey2CharClose(void);
     void cellKey2CharKeyCodeToChar(void);
@@ -699,6 +703,7 @@ extern "C" {
     void cellSpursWorkloadAttributeSetName(void);
     void cellSpursRemoveWorkload(void);
     void cellSpursWorkloadAttributeInitialize(void);
+    void cellSpurs_debug_dump_to(void);
     void cellSpurs_debug_dump(void);
     void cellSpursReadyCountStore(void);
     void cellSpursReadyCountSwap(void);
@@ -1445,6 +1450,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0xAD1F71FCu, "cellGcm_fifo_kick_event", (void*)cellGcm_fifo_kick_event);
     ps3_hle_register(0x9D310E99u, "cellGcm_fifo_kick_wait", (void*)cellGcm_fifo_kick_wait);
     ps3_hle_register(0x574A78E2u, "cellGcm_ref_on_poll", (void*)cellGcm_ref_on_poll);
+    ps3_hle_register(0x5856A324u, "cellGcm_debug_dump_to", (void*)cellGcm_debug_dump_to);
     ps3_hle_register(0x4F76118Au, "cellGcm_debug_dump", (void*)cellGcm_debug_dump);
     ps3_hle_register(0x89626052u, "cellGcm_rsx_process_fifo", (void*)cellGcm_rsx_process_fifo);
     ps3_hle_register(0x6CBB16D4u, "cellGcm_fifo_recycle", (void*)cellGcm_fifo_recycle);
@@ -1466,6 +1472,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x21AC3697u, "cellGcmAddressToOffset", (void*)cellGcmAddressToOffset);
     ps3_hle_register(0xA114EC67u, "cellGcmMapMainMemory", (void*)cellGcmMapMainMemory);
     ps3_hle_register(0x63441CB4u, "cellGcmMapEaIoAddress", (void*)cellGcmMapEaIoAddress);
+    ps3_hle_register(0x626E8518u, "cellGcmMapEaIoAddressWithFlags", (void*)cellGcmMapEaIoAddressWithFlags);
     ps3_hle_register(0xEFD00F54u, "cellGcmUnmapEaIoAddress", (void*)cellGcmUnmapEaIoAddress);
     ps3_hle_register(0xDB23E867u, "cellGcmUnmapIoAddress", (void*)cellGcmUnmapIoAddress);
     ps3_hle_register(0x2A6FBA9Cu, "cellGcmIoOffsetToAddress", (void*)cellGcmIoOffsetToAddress);
@@ -1604,6 +1611,8 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0xDEEFDFA7u, "cellKbSetReadMode", (void*)cellKbSetReadMode);
     ps3_hle_register(0xA5F85E4Du, "cellKbSetCodeType", (void*)cellKbSetCodeType);
     ps3_hle_register(0x2073B7F6u, "cellKbClearBuf", (void*)cellKbClearBuf);
+    ps3_hle_register(0xFF0A21B7u, "cellKbRead", (void*)cellKbRead);
+    ps3_hle_register(0x1F71ECBEu, "cellKbGetConfiguration", (void*)cellKbGetConfiguration);
     ps3_hle_register(0xABF629C1u, "cellKey2CharOpen", (void*)cellKey2CharOpen);
     ps3_hle_register(0x14BF2DC1u, "cellKey2CharClose", (void*)cellKey2CharClose);
     ps3_hle_register(0xEADF1CB5u, "cellKey2CharKeyCodeToChar", (void*)cellKey2CharKeyCodeToChar);
@@ -1904,6 +1913,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x4A5EAB63u, "cellSpursWorkloadAttributeSetName", (void*)cellSpursWorkloadAttributeSetName);
     ps3_hle_register(0x57E4DEC3u, "cellSpursRemoveWorkload", (void*)cellSpursRemoveWorkload);
     ps3_hle_register(0xFD4204D7u, "cellSpursWorkloadAttributeInitialize", (void*)cellSpursWorkloadAttributeInitialize);
+    ps3_hle_register(0x36D2531Du, "cellSpurs_debug_dump_to", (void*)cellSpurs_debug_dump_to);
     ps3_hle_register(0xC2F6C916u, "cellSpurs_debug_dump", (void*)cellSpurs_debug_dump);
     ps3_hle_register(0xF843818Du, "cellSpursReadyCountStore", (void*)cellSpursReadyCountStore);
     ps3_hle_register(0x49A3426Du, "cellSpursReadyCountSwap", (void*)cellSpursReadyCountSwap);

@@ -14,8 +14,10 @@ for i in range(phnum):
     ptype, flags, off, vaddr, paddr, filesz, memsz, align = struct.unpack_from(">IIQQQQQQ", elf, o)
     if ptype == 1 and filesz:
         segs.append((off, vaddr, filesz))
-cfg = json.loads((ROOT / "config" / "targets.json").read_text())["BCUS98158"]
-known = {int(e, 16) for e, _, _ in cfg["wws_job_bodies"]}
+sys.path.insert(0, str(ROOT / "scripts"))
+import target                                  # follows GT5P_TARGET / input/target
+cfg = target.TARGET
+known = {int(e, 16) for e, _, _ in cfg.get("wws_job_bodies", [])}
 pm = int(cfg["wws_job_pm_ea"], 16)
 dumps = ROOT / "analysis" / "spu" / "dump"
 pos = 0

@@ -389,6 +389,28 @@ static DWORD WINAPI main_stack_dump(LPVOID secs)
             }
         }
     }
+    /* GT5P_FIND=value: every aligned guest word equal to value in the image
+     * and the heaps, as "who points at this" (up to 16 hits). Pages never
+     * committed are skipped, so the scan cannot fault them in. */
+    if (const char* fv = getenv("GT5P_FIND")) {
+        uint32_t want = (uint32_t)strtoul(fv, nullptr, 0);
+        static const uint32_t ranges[][2] = {
+            {0x00010000u, 0x02000000u}, {0x20000000u, 0x40000000u}, {0xD0000000u, 0xD0200000u}};
+        int hits = 0;
+        for (auto& r : ranges) {
+            for (uint32_t pg = r[0]; pg < r[1] && hits < 16; pg += 0x10000u) {
+                MEMORY_BASIC_INFORMATION mi;
+                if (!VirtualQuery(vm_base + pg, &mi, sizeof mi) || mi.State != MEM_COMMIT) continue;
+                for (uint32_t a = pg; a < pg + 0x10000u && hits < 16; a += 4) {
+                    uint32_t w; memcpy(&w, vm_base + a, 4);
+                    if (_byteswap_ulong(w) == want) {
+                        fprintf(stderr, "[find] %08X at %08X\n", want, a);
+                        hits++;
+                    }
+                }
+            }
+        }
+    }
     /* GT5P_PEEK_R31=off[,off...]: 64 bytes at main's r31 + each (signed, hex)
      * offset, as words and as text. For an object on the heap, whose address
      * moves from run to run but which a parked main still points at. */
@@ -783,6 +805,12 @@ int main(int argc, char* argv[])
      * render jobs read output rings not yet set up (docs/progress.md, Phase
      * 39). SPURS_READY_GATE=0 for the old every-pass dispatch. */
     if (!getenv("SPURS_READY_GATE")) _putenv_s("SPURS_READY_GATE", "1");
+
+    /* GT5 waits once on an lwcond for a worker to finish a request held on
+     * the waiter's stack; the runtime's 1 ms poll let it return early
+     * (docs/progress-gt5.md, Phase 3). PS3_LWCOND_REAL=0 for the poll. */
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_LWCOND_REAL"))
+        _putenv_s("PS3_LWCOND_REAL", "1");
 
     /* SPU render lanes on cores of their own (strict pinning): 1.14 times
      * faster lanes, Ferrari at a median 28.2 fps against 24.8 free, and no

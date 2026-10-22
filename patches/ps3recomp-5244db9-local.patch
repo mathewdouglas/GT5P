@@ -4752,7 +4752,7 @@ index 0000000..e8aa9f7
 +
 +#endif
 diff --git a/libs/filesystem/cellFs.c b/libs/filesystem/cellFs.c
-index 5166a47..c627e66 100644
+index 5166a47..2c95eac 100644
 --- a/libs/filesystem/cellFs.c
 +++ b/libs/filesystem/cellFs.c
 @@ -126,6 +126,24 @@ static int translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
@@ -4846,7 +4846,31 @@ index 5166a47..c627e66 100644
      { extern char* getenv(const char*); static int _bt=-1; if(_bt<0){ const char* e=getenv("PS3_FSLOG_BT"); _bt=(e&&*e&&*e!='0')?1:0; } if(_bt){ extern unsigned int ppu_prof_resolve_host(void*); void* fr[24]; unsigned short n=RtlCaptureStackBackTrace(0,24,fr,0); char ln[600]; int p=snprintf(ln,sizeof ln,"[FSBT]"); unsigned int prev=0; for(unsigned short i=0;i<n;i++){ unsigned int g=ppu_prof_resolve_host(fr[i]); if(g&&g!=prev){ prev=g; p+=snprintf(ln+p,sizeof(ln)-p," %08X",g); } } fprintf(stderr,"%s%c",ln,10); } }
  
      if (!path || !fd)
-@@ -615,6 +660,7 @@ s32 cellFsFstat(CellFsFd fd, CellFsStat* sb)
+@@ -491,6 +536,23 @@ s32 cellFsRead(CellFsFd fd, void* buf, u64 nbytes, u64* nread)
+     u64 bytes_read = 0;
+ 
+     if (s_files[fd].host_fp) {
++        /* A host title may leave guest pages reserved but uncommitted and
++         * commit them from an access-violation handler. ReadFile into such a
++         * page fails with ERROR_NOACCESS instead of faulting, so fread returns
++         * 0 and the handler never runs (GT5's 646 KB GT.VOL index read).
++         * Read one byte per page first so every destination page is faulted
++         * in from user mode. FS_READ_PRETOUCH=0 turns this off. */
++        static int pretouch = -1;
++        if (pretouch < 0) {
++            const char* e = getenv("FS_READ_PRETOUCH");
++            pretouch = !(e && e[0] == '0');
++        }
++        if (pretouch && nbytes) {
++            volatile const u8* p = (volatile const u8*)gptr(buf);
++            for (u64 off = 0; off < nbytes; off += 4096)
++                (void)p[off];
++            (void)p[nbytes - 1];
++        }
+         /* gptr(buf): the DATA buffer is a guest address like every other
+          * pointer parameter. The nread out-param below was already translated,
+          * which made this look handled -- but the file contents were being read
+@@ -615,6 +677,7 @@ s32 cellFsFstat(CellFsFd fd, CellFsStat* sb)
  s32 cellFsStat(const char* path, CellFsStat* sb)
  {
      printf("[cellFs] Stat(path='%s')\n", gpath(path) ? gpath(path) : "<null>");
@@ -4854,6 +4878,52 @@ index 5166a47..c627e66 100644
  
      if (!path || !sb)
          return CELL_EFAULT;
+diff --git a/libs/input/cellKb.c b/libs/input/cellKb.c
+index 6b4cdbc..e71148c 100644
+--- a/libs/input/cellKb.c
++++ b/libs/input/cellKb.c
+@@ -279,3 +279,28 @@ s32 cellKbClearBuf(u32 port_no)
+     s_kb_ports[port_no].event_count = 0;
+     return CELL_OK;
+ }
++
++/* NID: 0xFF0A21B7
++ * The SDK's name for the read is cellKbRead; cellKbGetData above was never
++ * imported by anything, so a title reading its keyboard got the unresolved
++ * import's default instead (Gran Turismo 5 polls it every frame). */
++s32 cellKbRead(u32 port_no, CellKbData* data)
++{
++    return cellKbGetData(port_no, data);
++}
++
++/* NID: 0x1F71ECBE
++ * Guest CellKbConfig (big-endian): +0x00 arrange u32, +0x04 read_mode u32,
++ * +0x08 code_type u32. arrange 1 = CELL_KB_MAPPING_101 (US). */
++s32 cellKbGetConfiguration(u32 port_no, void* config)
++{
++    unsigned long long ea = (unsigned int)(uintptr_t)config;
++    if (!s_kb_initialized)
++        return CELL_KB_ERROR_UNINITIALIZED;
++    if (port_no >= CELL_KB_MAX_KEYBOARDS || !config)
++        return CELL_KB_ERROR_INVALID_PARAMETER;
++    vm_write32(ea + 0x00, 1);
++    vm_write32(ea + 0x04, s_kb_ports[port_no].rmode);
++    vm_write32(ea + 0x08, s_kb_ports[port_no].codetype);
++    return CELL_OK;
++}
+diff --git a/libs/input/cellKb.h b/libs/input/cellKb.h
+index 49e1390..3f759a9 100644
+--- a/libs/input/cellKb.h
++++ b/libs/input/cellKb.h
+@@ -152,6 +152,8 @@ s32 cellKbGetInfo(CellKbInfo* info);
+ s32 cellKbSetReadMode(u32 port_no, u32 rmode);
+ s32 cellKbSetCodeType(u32 port_no, u32 codetype);
+ s32 cellKbClearBuf(u32 port_no);
++s32 cellKbRead(u32 port_no, CellKbData* data);
++s32 cellKbGetConfiguration(u32 port_no, void* config);
+ 
+ /* Internal: feed a key event from the host input system */
+ void cellKb_keyEvent(u32 port, u16 keycode, int pressed);
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
 index f2b4c11..5a16b60 100644
 --- a/libs/input/cellPad.c
@@ -7577,7 +7647,7 @@ index 071b9ec..74fc692 100644
  }
  
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb0464..fdfea4a 100644
+index cdb0464..ddd1a32 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,6 +14,7 @@
@@ -8341,8 +8411,25 @@ index cdb0464..fdfea4a 100644
      return CELL_OK;
  }
  
+@@ -2662,6 +3150,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+     return CELL_OK;
+ }
+ 
++/* NID: 0x626E8518
++ * The flags choose the RSX's access to the mapping (CELL_GCM_IOMAP_FLAG_*);
++ * the host GPU reads guest memory directly, so they change nothing here.
++ * Gran Turismo 5 maps every main-memory buffer with this call. */
++s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
++{
++    printf("[cellGcmSys] MapEaIoAddressWithFlags(flags=0x%X)\n", flags);
++    return cellGcmMapEaIoAddress(ea, io, size);
++}
++
+ /* NID: 0xDB23E867 (disambiguation by context) */
+ s32 cellGcmUnmapEaIoAddress(u32 ea)
+ {
 diff --git a/libs/video/cellGcmSys.h b/libs/video/cellGcmSys.h
-index 9684667..2284688 100644
+index 9684667..6c38015 100644
 --- a/libs/video/cellGcmSys.h
 +++ b/libs/video/cellGcmSys.h
 @@ -71,8 +71,11 @@ extern "C" {
@@ -8359,6 +8446,14 @@ index 9684667..2284688 100644
  
  /* Debug output levels */
  #define CELL_GCM_DEBUG_LEVEL0           0
+@@ -303,6 +306,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset);
+ 
+ /* NID: 0x5A41C10F */
+ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size);
++s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags);
+ 
+ /* NID: 0xDB23E867 (disambiguation by context) */
+ s32 cellGcmUnmapEaIoAddress(u32 ea);
 diff --git a/libs/video/rsx_commands.c b/libs/video/rsx_commands.c
 index d8506de..1eadab8 100644
 --- a/libs/video/rsx_commands.c
@@ -22009,7 +22104,7 @@ index 5a825a0..0f7743d 100644
      test_g8b8();
      test_compressed();
 diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
-index acbaf12..cc5abca 100644
+index acbaf12..484d7b2 100644
 --- a/runtime/ppu/ppu_hle.cpp
 +++ b/runtime/ppu/ppu_hle.cpp
 @@ -19,10 +19,12 @@
@@ -22095,7 +22190,35 @@ index acbaf12..cc5abca 100644
      g_last_hle_nid = nid;
      /* Stamp the NAME here too, not only where a handler is found below.
       *
-@@ -329,7 +373,7 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+@@ -260,7 +304,26 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+      * new-SDK bring-up (e.g. PSL1GHT) where the failure is "nothing happens". */
+     static int s_trace = -2;
+     if (s_trace == -2) { const char* e = getenv("PS3_HLE_TRACE"); s_trace = e ? atoi(e) : 0; }
+-    if (s_trace > 0) {
++    /* PS3_HLE_TRACE_NIDS=<hex>,<hex>,...: trace only these imports, so a
++     * late call can be found without the trace slowing the boot to a crawl. */
++    static uint32_t s_trace_nids[16];
++    static int s_trace_nn = -1;
++    if (s_trace_nn < 0) {
++        s_trace_nn = 0;
++        if (const char* e = getenv("PS3_HLE_TRACE_NIDS")) {
++            while (*e && s_trace_nn < 16) {
++                char* end;
++                unsigned long v = strtoul(e, &end, 16);
++                if (end == e) break;
++                s_trace_nids[s_trace_nn++] = (uint32_t)v;
++                e = (*end == ',') ? end + 1 : end;
++            }
++        }
++    }
++    bool trace_this = s_trace_nn == 0;
++    for (int i = 0; i < s_trace_nn && !trace_this; i++)
++        trace_this = s_trace_nids[i] == nid;
++    if (s_trace > 0 && trace_this) {
+         s_trace--;
+         fprintf(stderr, "[HLETRACE] nid=0x%08X r3=0x%08X r4=0x%08X r5=0x%08X lr=0x%08X\n",
+                 nid, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
+@@ -329,7 +392,7 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
       * taskset init => the movie decode task is never created. Forcing the HLE
       * (which succeeds) lets the caller proceed. */
      {
@@ -22104,7 +22227,7 @@ index acbaf12..cc5abca 100644
          if (opd) {
              static const char* s_force = (const char*)1;
              if (s_force == (const char*)1) s_force = getenv("YDKJ_FORCE_HLE");
-@@ -618,7 +662,8 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+@@ -618,7 +681,8 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
          }
      }
  
@@ -22114,7 +22237,7 @@ index acbaf12..cc5abca 100644
          if (g_ctx[i].nid == nid) {
              ps3_msf("hle:%s", g_ctx[i].name);
              /* Record the name here too. This loop dispatches every
-@@ -640,7 +685,7 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
+@@ -640,7 +704,7 @@ extern "C" void ps3_hle_call(uint32_t nid, ppu_context* ctx)
              return;
          }
  
@@ -22885,10 +23008,53 @@ index e73a151..8356d58 100644
      ppu_context ctx;
      memset(&ctx, 0, sizeof(ctx));
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index d857f30..82c4adf 100644
+index d857f30..7841499 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
-@@ -149,7 +149,8 @@ static void sys_lwmutex_create(ppu_context* ctx)
+@@ -27,6 +27,7 @@ extern "C" uint32_t vm_read32(uint64_t a);
+ extern "C" uint64_t vm_read64(uint64_t a);
+ extern "C" void     vm_write32(uint64_t a, uint32_t v);
+ extern "C" void     vm_write64(uint64_t a, uint64_t v);
++extern "C" void     ps3_gcm_pump_if_present(void);   /* ppu_hle.cpp */
+ 
+ /* Simple bump allocator for TLS areas, in a free vm region below the stack. */
+ static uint32_t s_tls_next = 0x0E000000u;
+@@ -61,18 +62,30 @@ static void sys_initialize_tls(ppu_context* ctx)
+  * lands here) paced the intro at ~1/10th speed: video decoded at <1 fps,
+  * the audio preload threshold took forever to fill (movie stayed silent),
+  * and every frontend animation timed off it crawled. */
+-static void sys_time_get_system_time(ppu_context* ctx)
++/* The guest's system-time clock, also the time base of lv2 timers' absolute
++ * expiry times (sys_timer.c), so both must read the same epoch. */
++extern "C" uint64_t ps3_system_time_us(void)
+ {
+ #ifdef _WIN32
+     static LARGE_INTEGER s_freq, s_base;
+-    if (!s_freq.QuadPart) { QueryPerformanceFrequency(&s_freq); QueryPerformanceCounter(&s_base); }
++    static INIT_ONCE s_once = INIT_ONCE_STATIC_INIT;
++    BOOL pending = FALSE;
++    InitOnceBeginInitialize(&s_once, 0, &pending, NULL);
++    if (pending) {
++        QueryPerformanceFrequency(&s_freq); QueryPerformanceCounter(&s_base);
++        InitOnceComplete(&s_once, 0, NULL);
++    }
+     LARGE_INTEGER now; QueryPerformanceCounter(&now);
+-    ctx->gpr[3] = (uint64_t)((now.QuadPart - s_base.QuadPart) * 1000000ull / (uint64_t)s_freq.QuadPart);
++    return (uint64_t)((now.QuadPart - s_base.QuadPart) * 1000000ull / (uint64_t)s_freq.QuadPart);
+ #else
+     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+-    ctx->gpr[3] = (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
++    return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+ #endif
+ }
++static void sys_time_get_system_time(ppu_context* ctx)
++{
++    ctx->gpr[3] = ps3_system_time_us();
++}
+ 
+ /* sys_process_is_stack(u32 addr) -> 1 if addr is in the stack region. We model
+  * a single stack just below the TLS region; good enough for boot checks. */
+@@ -149,7 +162,8 @@ static void sys_lwmutex_create(ppu_context* ctx)
  #define LWM_HASH 65536u
  static struct LwmSlot { volatile long addr; HANDLE sem;
      volatile long holder; volatile long long acq_us; volatile long long acq_fences;
@@ -22898,7 +23064,7 @@ index d857f30..82c4adf 100644
  extern "C" { extern volatile long long g_gcm_ref_pub_count;    /* cellGcmSys.c */
               unsigned long long ppu_thread_cpu_us(unsigned tid);   /* sys_ppu_thread.c */
               unsigned ppu_thread_prof_pc(unsigned tid); }
-@@ -159,7 +160,42 @@ static volatile long g_lwm_tab_lock = 0;
+@@ -159,7 +173,42 @@ static volatile long g_lwm_tab_lock = 0;
   * contended block it logs who holds it and for how long; on unlock it flags a
   * long hold. The leaf holder (the one blocked on a non-lwmutex wait) is the
   * convoy root. Default OFF. */
@@ -22941,7 +23107,7 @@ index d857f30..82c4adf 100644
  static long long lwm_now_us(void){
  #ifdef _WIN32
      static LARGE_INTEGER freq={0}; if(!freq.QuadPart) QueryPerformanceFrequency(&freq);
-@@ -228,10 +264,12 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -228,10 +277,12 @@ static void sys_lwmutex_lock(ppu_context* ctx)
           * Only the holder ever stamps owner=self, so this check is race-free. */
          if (vm_read32(lwm + LWM_OWNER) == self && vm_read32(lwm + LWM_RECUR) > 0) {
              vm_write32(lwm + LWM_RECUR, vm_read32(lwm + LWM_RECUR) + 1);
@@ -22954,7 +23120,7 @@ index d857f30..82c4adf 100644
              /* Contended: log who we're stuck behind (owner stamped at acquire),
               * then block. Bounded diagnostics for park hunts; uncapped while the
               * probe window is open (g_nd_inpump). */
-@@ -259,6 +297,8 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -259,6 +310,8 @@ static void sys_lwmutex_lock(ppu_context* ctx)
          }
      }
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
@@ -22963,7 +23129,7 @@ index d857f30..82c4adf 100644
  #endif
      vm_write32(lwm + LWM_OWNER, self);
      vm_write32(lwm + LWM_RECUR, 1);
-@@ -279,6 +319,7 @@ static void sys_lwmutex_trylock(ppu_context* ctx)
+@@ -279,6 +332,7 @@ static void sys_lwmutex_trylock(ppu_context* ctx)
          if (WaitForSingleObject(s, 0) != WAIT_OBJECT_0) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x8001000Bu; return; } // EBUSY
      }
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
@@ -22971,7 +23137,7 @@ index d857f30..82c4adf 100644
  #endif
      vm_write32(lwm + LWM_OWNER, self);
      vm_write32(lwm + LWM_RECUR, 1);
-@@ -290,12 +331,15 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
+@@ -290,12 +344,15 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
      uint32_t rc = vm_read32(lwm + LWM_RECUR);
      if (rc > 1) {                       /* recursive hold: count down, keep the lock */
          vm_write32(lwm + LWM_RECUR, rc - 1);
@@ -22987,7 +23153,167 @@ index d857f30..82c4adf 100644
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm);
          if (sl && sl->holder) { long long held = lwm_now_us() - sl->acq_us;
              if (held > 100000) {
-@@ -368,9 +412,11 @@ static void sys_lwcond_wait(ppu_context* ctx)
+@@ -349,10 +406,92 @@ static void sys_lwcond_create(ppu_context* ctx)
+     vm_write32(lwcond + 0x08, ++s_lwcond_id);
+     ctx->gpr[3] = 0;
+ }
++/* PS3_LWCOND_REAL=1: a wait blocks until a signal (or its timeout), as lv2
++ * does. The default poll below returns after 1 ms whether signalled or not,
++ * which is enough for a guest that re-checks its predicate in a loop. Gran
++ * Turismo 5 does not: its main thread hands a worker a request object on its
++ * own stack and waits once, so the poll let it return and reuse the frame
++ * while the worker still read the object (null vtables, then a shutdown).
++ * Signals reach only waiters already queued; signal_to wakes one waiter
++ * (the target thread is not tracked). */
++static int lwcond_real(void)
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("PS3_LWCOND_REAL"); v = (e && e[0] == '1') ? 1 : 0; }
++    return v;
++}
++#ifdef _WIN32
++/* One node per waiting thread, on that thread's host stack. A signal marks
++ * the oldest unmarked node, so a thread that starts waiting later cannot
++ * take a wakeup meant for one already queued. */
++struct LwcWaiter { LwcWaiter* next; int signaled; CONDITION_VARIABLE cv; };
++struct LwcSlot { uint32_t addr; LwcWaiter* head; };
++#define LWC_HASH 1024
++static LwcSlot g_lwc[LWC_HASH];
++static CRITICAL_SECTION g_lwc_cs;
++static INIT_ONCE g_lwc_once = INIT_ONCE_STATIC_INIT;
++static BOOL CALLBACK lwc_init(PINIT_ONCE, PVOID, PVOID*)
++{
++    InitializeCriticalSection(&g_lwc_cs);
++    return TRUE;
++}
++/* Caller holds g_lwc_cs. */
++static LwcSlot* lwc_slot(uint32_t addr)
++{
++    uint32_t h = (addr * 2654435761u) & (LWC_HASH - 1);
++    for (uint32_t i = 0; i < LWC_HASH; i++) {
++        LwcSlot* s = &g_lwc[(h + i) & (LWC_HASH - 1)];
++        if (s->addr == addr) return s;
++        if (s->addr == 0) { s->addr = addr; s->head = nullptr; return s; }
++    }
++    return nullptr;
++}
++/* PS3_LWCOND_TRACE=1: one line per real wait, wake and signal. */
++static int lwc_trace(void)
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("PS3_LWCOND_TRACE"); v = (e && e[0] == '1') ? 1 : 0; }
++    return v;
++}
++static void lwc_signal(uint32_t lwcond, int all)
++{
++    InitOnceExecuteOnce(&g_lwc_once, lwc_init, NULL, NULL);
++    EnterCriticalSection(&g_lwc_cs);
++    LwcSlot* s = lwc_slot(lwcond);
++    int woke = 0;
++    for (LwcWaiter* w = s ? s->head : nullptr; w; w = w->next) {
++        if (w->signaled) continue;
++        w->signaled = 1; woke++;
++        WakeConditionVariable(&w->cv);
++        if (!all) break;
++    }
++    if (lwc_trace())
++        fprintf(stderr, "[lwc] signal%s 0x%08X woke=%d\n", all ? "_all" : "", lwcond, woke);
++    LeaveCriticalSection(&g_lwc_cs);
++}
++#endif
+ static void sys_lwcond_destroy(ppu_context* ctx)    { ctx->gpr[3] = 0; }
+-static void sys_lwcond_signal(ppu_context* ctx)     { ctx->gpr[3] = 0; }
+-static void sys_lwcond_signal_all(ppu_context* ctx) { ctx->gpr[3] = 0; }
+-static void sys_lwcond_signal_to(ppu_context* ctx)  { ctx->gpr[3] = 0; }
++static void sys_lwcond_signal(ppu_context* ctx)
++{
++#ifdef _WIN32
++    if (lwcond_real()) lwc_signal((uint32_t)ctx->gpr[3], 0);
++#endif
++    ctx->gpr[3] = 0;
++}
++static void sys_lwcond_signal_all(ppu_context* ctx)
++{
++#ifdef _WIN32
++    if (lwcond_real()) lwc_signal((uint32_t)ctx->gpr[3], 1);
++#endif
++    ctx->gpr[3] = 0;
++}
++static void sys_lwcond_signal_to(ppu_context* ctx)
++{
++#ifdef _WIN32
++    if (lwcond_real()) lwc_signal((uint32_t)ctx->gpr[3], 0);
++#endif
++    ctx->gpr[3] = 0;
++}
+ /* Now that the lwmutex is REAL, a no-op wait that keeps holding it deadlocks the
+  * signaler. Release the paired lwmutex, wait briefly, reacquire (poll-style: the
+  * guest's while(!predicate) loop re-checks; signalers stay no-ops). Handles the
+@@ -363,14 +502,75 @@ static void sys_lwcond_wait(ppu_context* ctx)
+     uint32_t lwmutex = (uint32_t)vm_read64(lwcond + 0x00);
+ #ifdef _WIN32
+     HANDLE s = lwm_sem(lwmutex);
++    if (s && lwcond_real()) {
++        uint64_t timeout_us = ctx->gpr[4];
++        InitOnceExecuteOnce(&g_lwc_once, lwc_init, NULL, NULL);
++        EnterCriticalSection(&g_lwc_cs);
++        LwcSlot* slot = lwc_slot(lwcond);
++        LwcWaiter me; me.next = nullptr; me.signaled = 0;
++        InitializeConditionVariable(&me.cv);
++        if (slot) {                      /* append: signals go oldest first */
++            LwcWaiter** pp = &slot->head;
++            while (*pp) pp = &(*pp)->next;
++            *pp = &me;
++        }
++        if (lwc_trace())
++            fprintf(stderr, "[lwc] wait 0x%08X tid=%llu lr=0x%08X tmo=%llu\n", lwcond,
++                    (unsigned long long)ctx->thread_id, (uint32_t)ctx->lr,
++                    (unsigned long long)timeout_us);
++        /* Queued before the mutex is released, so a signal sent as soon as
++         * the signaller can take the mutex finds this waiter. */
++        uint32_t own = vm_read32(lwmutex + LWM_OWNER);
++        uint32_t rc  = vm_read32(lwmutex + LWM_RECUR);
++        vm_write32(lwmutex + LWM_RECUR, 0);
++        vm_write32(lwmutex + LWM_OWNER, 0);
++        if (lwm_check()) lwm_chk_leave(lwmutex, LWM_SELF(ctx));
++        ReleaseSemaphore(s, 1, NULL);
++        int32_t ret = 0;
++        if (slot) {
++            ULONGLONG deadline = timeout_us ? GetTickCount64() + (timeout_us + 999) / 1000 : 0;
++            while (!me.signaled) {
++                /* GCM handlers (vblank, flip, second V) are delivered at HLE
++                 * entry on whichever guest thread calls in. A title whose
++                 * threads all sit here would never see another vblank, so
++                 * wake every 2 ms and deliver what is pending, outside our
++                 * lock: a handler may signal an lwcond itself. */
++                DWORD ms = 2;
++                if (deadline) {
++                    ULONGLONG now = GetTickCount64();
++                    if (now >= deadline) { ret = (int32_t)0x8001000B; break; }  /* ETIMEDOUT */
++                    if (deadline - now < ms) ms = (DWORD)(deadline - now);
++                }
++                if (!SleepConditionVariableCS(&me.cv, &g_lwc_cs, ms) && !me.signaled) {
++                    LeaveCriticalSection(&g_lwc_cs);
++                    ps3_gcm_pump_if_present();
++                    EnterCriticalSection(&g_lwc_cs);
++                }
++            }
++            for (LwcWaiter** pp = &slot->head; *pp; pp = &(*pp)->next)
++                if (*pp == &me) { *pp = me.next; break; }
++            if (lwc_trace())
++                fprintf(stderr, "[lwc] woke 0x%08X tid=%llu ret=%d\n", lwcond,
++                        (unsigned long long)ctx->thread_id, ret);
++        }
++        LeaveCriticalSection(&g_lwc_cs);
++        WaitForSingleObject(s, INFINITE);
++        if (lwm_check()) lwm_chk_enter(lwmutex, LWM_SELF(ctx), "lwcond");
++        vm_write32(lwmutex + LWM_OWNER, own);
++        vm_write32(lwmutex + LWM_RECUR, rc ? rc : 1);
++        ctx->gpr[3] = (uint64_t)(int64_t)ret;
++        return;
++    }
+     if (s) {
+         uint32_t own = vm_read32(lwmutex + LWM_OWNER);
          uint32_t rc  = vm_read32(lwmutex + LWM_RECUR);
          vm_write32(lwmutex + LWM_RECUR, 0);
          vm_write32(lwmutex + LWM_OWNER, 0);
@@ -22999,6 +23325,126 @@ index d857f30..82c4adf 100644
          vm_write32(lwmutex + LWM_OWNER, own);
          vm_write32(lwmutex + LWM_RECUR, rc ? rc : 1);
      }
+@@ -378,6 +578,104 @@ static void sys_lwcond_wait(ppu_context* ctx)
+     ctx->gpr[3] = 0;
+ }
+ 
++/* sys_mempool (sysPrxForUser): a pool of fixed-size blocks carved from a
++ * guest chunk. Gran Turismo 5 creates four at boot; unresolved, create
++ * returned garbage and later allocations came back as whatever r3 held.
++ * The pool's state is host-side; the guest sees only the id written to
++ * *mempool and the block addresses. allocate_block waits for a free block. */
++#ifdef _WIN32
++struct MemPool { int used; uint32_t* free_blocks; uint32_t nfree, total;
++                 CRITICAL_SECTION cs; CONDITION_VARIABLE cv; };
++#define MEMPOOL_MAX 64
++static MemPool g_mempool[MEMPOOL_MAX];
++static SRWLOCK g_mempool_lock = SRWLOCK_INIT;
++static MemPool* mempool_get(uint32_t id)
++{
++    uint32_t i = id - 1u;
++    return (i < MEMPOOL_MAX && g_mempool[i].used) ? &g_mempool[i] : nullptr;
++}
++/* sys_mempool_create(u32* mempool, void* chunk, u64 chunk_size,
++ *                    u64 block_size, u64 ralignment) */
++static void sys_mempool_create(ppu_context* ctx)
++{
++    uint32_t out   = (uint32_t)ctx->gpr[3];
++    uint32_t chunk = (uint32_t)ctx->gpr[4];
++    uint64_t csize = ctx->gpr[5];
++    uint64_t bsize = ctx->gpr[6];
++    uint64_t align = ctx->gpr[7];
++    if (!out || !chunk || !bsize) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x80010002u; return; } /* EINVAL */
++    if (align < 8) align = 8;
++    if (align & (align - 1)) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x80010002u; return; }
++    uint64_t stride = (bsize + align - 1) & ~(align - 1);
++    uint64_t first  = ((uint64_t)chunk + align - 1) & ~(align - 1);
++    uint64_t end    = (uint64_t)chunk + csize;
++    uint32_t n = first < end ? (uint32_t)((end - first) / stride) : 0;
++    AcquireSRWLockExclusive(&g_mempool_lock);
++    int slot = -1;
++    for (int i = 0; i < MEMPOOL_MAX; i++) if (!g_mempool[i].used) { slot = i; break; }
++    if (slot < 0) {
++        ReleaseSRWLockExclusive(&g_mempool_lock);
++        ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x80010004u;   /* ENOMEM */
++        return;
++    }
++    MemPool* p = &g_mempool[slot];
++    p->free_blocks = (uint32_t*)malloc(sizeof(uint32_t) * (n ? n : 1));
++    for (uint32_t k = 0; k < n; k++)     /* lowest address handed out first */
++        p->free_blocks[k] = (uint32_t)(first + (uint64_t)(n - 1 - k) * stride);
++    p->nfree = p->total = n;
++    InitializeCriticalSection(&p->cs);
++    InitializeConditionVariable(&p->cv);
++    p->used = 1;
++    ReleaseSRWLockExclusive(&g_mempool_lock);
++    vm_write32(out, (uint32_t)slot + 1u);
++    fprintf(stderr, "[crt] sys_mempool_create: id %d, %u blocks of 0x%llX at 0x%08X\n",
++            slot + 1, n, (unsigned long long)stride, (uint32_t)first);
++    ctx->gpr[3] = 0;
++}
++static void sys_mempool_destroy(ppu_context* ctx)
++{
++    AcquireSRWLockExclusive(&g_mempool_lock);
++    MemPool* p = mempool_get((uint32_t)ctx->gpr[3]);
++    if (p) { p->used = 0; free(p->free_blocks); p->free_blocks = nullptr; DeleteCriticalSection(&p->cs); }
++    ReleaseSRWLockExclusive(&g_mempool_lock);
++    ctx->gpr[3] = 0;
++}
++static uint32_t mempool_take(MemPool* p, int wait)
++{
++    EnterCriticalSection(&p->cs);
++    while (wait && p->nfree == 0) SleepConditionVariableCS(&p->cv, &p->cs, INFINITE);
++    uint32_t b = p->nfree ? p->free_blocks[--p->nfree] : 0;
++    LeaveCriticalSection(&p->cs);
++    return b;
++}
++static void sys_mempool_allocate_block(ppu_context* ctx)
++{
++    MemPool* p = mempool_get((uint32_t)ctx->gpr[3]);
++    ctx->gpr[3] = p ? mempool_take(p, 1) : 0;
++}
++static void sys_mempool_try_allocate_block(ppu_context* ctx)
++{
++    MemPool* p = mempool_get((uint32_t)ctx->gpr[3]);
++    ctx->gpr[3] = p ? mempool_take(p, 0) : 0;
++}
++static void sys_mempool_free_block(ppu_context* ctx)
++{
++    MemPool* p = mempool_get((uint32_t)ctx->gpr[3]);
++    uint32_t b = (uint32_t)ctx->gpr[4];
++    if (!p || !b) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x80010002u; return; }
++    EnterCriticalSection(&p->cs);
++    if (p->nfree < p->total) p->free_blocks[p->nfree++] = b;
++    WakeConditionVariable(&p->cv);
++    LeaveCriticalSection(&p->cs);
++    ctx->gpr[3] = 0;
++}
++static void sys_mempool_get_count(ppu_context* ctx)
++{
++    MemPool* p = mempool_get((uint32_t)ctx->gpr[3]);
++    ctx->gpr[3] = p ? p->nfree : 0;
++}
++#endif
++
+ /* sys_ppu_thread_get_id(vm::ptr<u64> id) -> *id = calling thread's real id.
+  * The old fixed "1" broke every am-I-the-designated-thread check in
+  * multithreaded titles (LBP's job system routes work by thread identity, so
+@@ -911,6 +1209,14 @@ extern "C" void ppu_sysprx_register(void)
+     ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_all"), "sys_lwcond_signal_all", sys_lwcond_signal_all);
+     ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_to"),  "sys_lwcond_signal_to",  sys_lwcond_signal_to);
+     ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_wait"),       "sys_lwcond_wait",       sys_lwcond_wait);
++#ifdef _WIN32
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mempool_create"),             "sys_mempool_create",             sys_mempool_create);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mempool_destroy"),            "sys_mempool_destroy",            sys_mempool_destroy);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mempool_allocate_block"),     "sys_mempool_allocate_block",     sys_mempool_allocate_block);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mempool_try_allocate_block"), "sys_mempool_try_allocate_block", sys_mempool_try_allocate_block);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mempool_free_block"),         "sys_mempool_free_block",         sys_mempool_free_block);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mempool_get_count"),          "sys_mempool_get_count",          sys_mempool_get_count);
++#endif
+ 
+     /* Thread id + memory manager (high-frequency boot imports). The flat VM
+      * means map/unmap/free are no-ops: the memory already exists everywhere. */
 diff --git a/runtime/ppu/ppu_vm_inline.h b/runtime/ppu/ppu_vm_inline.h
 new file mode 100644
 index 0000000..96051f6
@@ -27398,7 +27844,7 @@ index a297bf5..d0a5714 100644
  int64_t sys_ppu_thread_join(ppu_context* ctx);
  int64_t sys_ppu_thread_detach(ppu_context* ctx);
 diff --git a/runtime/syscalls/sys_timer.c b/runtime/syscalls/sys_timer.c
-index d8f4081..15f097a 100644
+index d8f4081..3ccb9ca 100644
 --- a/runtime/syscalls/sys_timer.c
 +++ b/runtime/syscalls/sys_timer.c
 @@ -2,6 +2,7 @@
@@ -27512,8 +27958,154 @@ index d8f4081..15f097a 100644
  #else
      struct timespec ts;
      clock_gettime(CLOCK_REALTIME, &ts);
+@@ -329,9 +379,56 @@ int64_t sys_time_get_timebase_frequency(ppu_context* ctx)
+  * -----------------------------------------------------------------------*/
+ 
+ /* Forward declaration */
+-static void timer_send_event(sys_timer_info* t);
++static void timer_send_event(sys_timer_info* t, uint64_t expired_at);
++uint64_t ps3_system_time_us(void);   /* ppu_sysprx.cpp: the guest's system time */
++
++/* PS3_TIMER_ONESHOT=0: the old timer, periodic only, base time ignored and
++ * period 0 refused. lv2 takes period 0 as a one-shot at base_time, and an
++ * absolute base_time as the first expiry; Gran Turismo 5's timer threads use
++ * nothing else, and every refusal left a thread waiting for ever. */
++static int timer_lv2(void)
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("PS3_TIMER_ONESHOT"); v = !(e && e[0] == '0'); }
++    return v;
++}
+ 
+ #ifdef _WIN32
++/* lv2 semantics: expire at next_expire (system time), then every period;
++ * a period of 0 expires once. The event carries the expiry time in data3. */
++static DWORD WINAPI timer_thread_lv2(LPVOID param)
++{
++    sys_timer_info* t = (sys_timer_info*)param;
++    uint64_t when = t->next_expire;
++    while (t->running) {
++        uint64_t now = ps3_system_time_us();
++        if (now < when) {
++            uint64_t us = when - now;
++            DWORD ms = (DWORD)(us / 1000);
++            /* Sleep the bulk, then spin out the last millisecond: a frame
++             * pacer timed to the microsecond should not lose one per wait. */
++            if (ms > 1 && WaitForSingleObject(t->stop_event, ms - 1) == WAIT_OBJECT_0) break;
++            while (t->running && ps3_system_time_us() < when) {
++                if (WaitForSingleObject(t->stop_event, 0) == WAIT_OBJECT_0) return 0;
++                YieldProcessor();
++            }
++            continue;
++        }
++        if (!t->running) break;
++        if (t->period_usec == 0) {
++            /* Not running from here on, so the guest can re-arm it from
++             * the handler this event wakes. */
++            t->running = 0;
++            timer_send_event(t, when);
++            break;
++        }
++        timer_send_event(t, when);
++        when += t->period_usec;
++        if (when < now) when = now + t->period_usec;   /* fell behind: do not burst */
++    }
++    return 0;
++}
++
+ static DWORD WINAPI timer_thread_proc(LPVOID param)
+ {
+     sys_timer_info* t = (sys_timer_info*)param;
+@@ -346,7 +443,7 @@ static DWORD WINAPI timer_thread_proc(LPVOID param)
+         }
+ 
+         if (t->running) {
+-            timer_send_event(t);
++            timer_send_event(t, 0);
+         }
+     }
+ 
+@@ -373,7 +470,7 @@ static void* timer_thread_proc(void* param)
+ 
+         if (rc == ETIMEDOUT) {
+             pthread_mutex_unlock(&t->mtx);
+-            timer_send_event(t);
++            timer_send_event(t, 0);
+             pthread_mutex_lock(&t->mtx);
+         }
+     }
+@@ -383,7 +480,7 @@ static void* timer_thread_proc(void* param)
+ }
+ #endif
+ 
+-static void timer_send_event(sys_timer_info* t)
++static void timer_send_event(sys_timer_info* t, uint64_t expired_at)
+ {
+     if (t->event_queue_id <= 0 || t->event_queue_id > SYS_EVENT_QUEUE_MAX)
+         return;
+@@ -395,8 +492,8 @@ static void timer_send_event(sys_timer_info* t)
+     sys_event_t evt;
+     evt.source = t->source;
+     evt.data1  = t->data1;
+-    evt.data2  = 0;
+-    evt.data3  = 0;
++    evt.data2  = t->data2;
++    evt.data3  = expired_at;
+ 
+     /* Push event (ignore if queue full) */
+ #ifdef _WIN32
+@@ -532,6 +629,7 @@ int64_t sys_timer_connect_event_queue(ppu_context* ctx)
+     t->event_queue_id = (int32_t)queue_id;
+     t->source         = source;
+     t->data1          = data1;
++    t->data2          = LV2_ARG_U64(ctx, 4);
+ 
+     return CELL_OK;
+ }
+@@ -579,6 +677,28 @@ int64_t sys_timer_start(ppu_context* ctx)
+     if (t->running)
+         return (int64_t)(int32_t)CELL_EBUSY;
+ 
++#ifdef _WIN32
++    if (timer_lv2()) {
++        uint64_t base_time = LV2_ARG_U64(ctx, 1);
++        /* period 0 is a one-shot at base_time, which must then be given;
++         * otherwise the first expiry is base_time, or now + period. */
++        if (period == 0 && base_time == 0)
++            return (int64_t)(int32_t)CELL_EINVAL;
++        if (t->thread_handle) {          /* a one-shot that has fired: reap */
++            WaitForSingleObject(t->thread_handle, INFINITE);
++            CloseHandle(t->thread_handle);
++            t->thread_handle = NULL;
++        }
++        if (t->stop_event) { CloseHandle(t->stop_event); t->stop_event = NULL; }
++        t->period_usec = period;
++        t->next_expire = base_time ? base_time : ps3_system_time_us() + period;
++        t->running     = 1;
++        t->stop_event    = CreateEventA(NULL, TRUE, FALSE, NULL);
++        t->thread_handle = CreateThread(NULL, 0, timer_thread_lv2, t, 0, NULL);
++        return CELL_OK;
++    }
++#endif
++
+     if (period == 0)
+         return (int64_t)(int32_t)CELL_EINVAL;
+ 
+diff --git a/runtime/syscalls/sys_timer.h b/runtime/syscalls/sys_timer.h
+index 3588dce..e1da925 100644
+--- a/runtime/syscalls/sys_timer.h
++++ b/runtime/syscalls/sys_timer.h
+@@ -52,6 +52,8 @@ typedef struct sys_timer_info {
+     int32_t  event_queue_id;   /* connected event queue */
+     uint64_t source;           /* event source value */
+     uint64_t data1;            /* event data1 */
++    uint64_t data2;            /* event data2 */
++    uint64_t next_expire;      /* system time (us) of the next expiry; 0 = now + period */
+ 
+ #ifdef _WIN32
+     HANDLE   timer_handle;
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index b19e240..a47027c 100644
+index b19e240..88ee86c 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
 @@ -330,6 +330,7 @@ extern "C" uint8_t* vm_base;
@@ -27536,7 +28128,23 @@ index b19e240..a47027c 100644
  
          if mn == "bctrl":
              # Indirect call through CTR register. The CTR value is a GUEST
-@@ -2276,6 +2278,59 @@ class PPULifter:
+@@ -2110,6 +2112,15 @@ class PPULifter:
+                     f"uint64_t raw; memcpy(&raw, vm_base + (uint32_t)ea, 8); "
+                     f"ctx->gpr[{rd}] = raw; }}")
+ 
++        # stdbrx (X-form, XO 660). The disassembler does not name it, so it
++        # arrives as op31_x660 and used to lift to a TODO: the store vanished.
++        # Gran Turismo 5 has four. Same raw-copy convention as stwbrx.
++        if mn in ("stdbrx", "op31_x660"):
++            rs, ra, rb = _reg_idx(ops[0]), _reg_idx(ops[1]), _reg_idx(ops[2])
++            return (f"{{ uint64_t ea = {_xea(ra,rb)}; "
++                    f"uint64_t raw = ctx->gpr[{rs}]; "
++                    f"memcpy(vm_base + (uint32_t)ea, &raw, 8); }}")
++
+         if mn == "sthbrx":
+             rs, ra, rb = _reg_idx(ops[0]), _reg_idx(ops[1]), _reg_idx(ops[2])
+             return (f"{{ uint64_t ea = {_xea(ra,rb)}; "
+@@ -2276,6 +2287,59 @@ class PPULifter:
                      f"uint8_t* d = (uint8_t*)&ctx->vr[{vd}]; "
                      f"for (int i = 0; i < 16; i++) d[i] = ((uint32_t)i >= 16u - sh) ? m[i - (int)(16u - sh)] : 0; }}")
  
@@ -27596,7 +28204,26 @@ index b19e240..a47027c 100644
          if mn == "lvebx" or mn == "lvehx" or mn == "lvewx":
              vd = int(ops[0][1:]) if ops[0].startswith("v") else _reg_idx(ops[0])
              ra = _reg_idx(ops[1])
-@@ -2946,6 +3001,23 @@ class PPULifter:
+@@ -2692,6 +2756,18 @@ class PPULifter:
+             return (f"{{ float b[4],d[4]; ppu_vldf4(&ctx->vr[{vb}],b); "
+                     f"for(int i=0;i<4;i++) d[i]=1.0f/sqrtf(b[i]); ppu_vstf4(&ctx->vr[{vd}],d); }}")
+ 
++        # 2^x and log2(x) estimates. The hardware result is only accurate to
++        # about 1/16 ulp-of-exponent; the exact value is within that bound.
++        if mn == "vexptefp":
++            vd, vb = int(ops[0][1:]), int(ops[-1][1:])
++            return (f"{{ float b[4],d[4]; ppu_vldf4(&ctx->vr[{vb}],b); "
++                    f"for(int i=0;i<4;i++) d[i]=exp2f(b[i]); ppu_vstf4(&ctx->vr[{vd}],d); }}")
++
++        if mn == "vlogefp":
++            vd, vb = int(ops[0][1:]), int(ops[-1][1:])
++            return (f"{{ float b[4],d[4]; ppu_vldf4(&ctx->vr[{vb}],b); "
++                    f"for(int i=0;i<4;i++) d[i]=log2f(b[i]); ppu_vstf4(&ctx->vr[{vd}],d); }}")
++
+         if mn == "vrfim":  # round to FP integer toward -inf (floor); vrfim is vD,vB
+             vd, vb = int(ops[0][1:]), int(ops[-1][1:])
+             return (f"{{ float b[4],d[4]; ppu_vldf4(&ctx->vr[{vb}],b); "
+@@ -2946,6 +3022,23 @@ class PPULifter:
                      f"for(int k=0;k<4;k++) o[j*4+k]=(uint8_t)(r>>(8*(3-k))); }} "
                      f"memcpy(&ctx->vr[{vd}], o, 16); }}")
  
@@ -27620,7 +28247,25 @@ index b19e240..a47027c 100644
          # vsumsws vD,vA,vB: sum the four signed words of vA plus word 3 of vB,
          # saturate to signed 32, place in word 3 of vD; words 0..2 are zero.
          if mn == "vsumsws":
-@@ -3633,6 +3705,27 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+@@ -3047,6 +3140,17 @@ class PPULifter:
+                     f"for(int i=0;i<4;i++) d[i]=(uint16_t)(a[i]&0xFFFFu); "
+                     f"for(int i=0;i<4;i++) d[4+i]=(uint16_t)(b[i]&0xFFFFu); }}")
+ 
++        # Pack unsigned halfword -> unsigned byte, modulo (vpkuhum): the low
++        # byte of each halfword. Registers hold big-endian bytes (lvx is a raw
++        # copy), so a halfword's low byte is its second byte. A temporary
++        # keeps vD == vA == vB correct.
++        if mn == "vpkuhum":
++            vd, va, vb = int(ops[0][1:]), int(ops[1][1:]), int(ops[2][1:])
++            return (f"{{ const uint8_t* a=(const uint8_t*)&ctx->vr[{va}]; "
++                    f"const uint8_t* b=(const uint8_t*)&ctx->vr[{vb}]; uint8_t t[16]; "
++                    f"for(int i=0;i<8;i++){{ t[i]=a[2*i+1]; t[8+i]=b[2*i+1]; }} "
++                    f"memcpy(&ctx->vr[{vd}], t, 16); }}")
++
+         # vmsummbm (VA-form, 4 operands)
+         if mn == "vmsummbm":
+             vd = int(ops[0][1:]); va = int(ops[1][1:]); vb = int(ops[2][1:]); vc = int(ops[3][1:])
+@@ -3633,6 +3737,27 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
              if all_insns[_k].mnemonic == 'blr':
                  return _k + 1
          return 0
@@ -27648,7 +28293,7 @@ index b19e240..a47027c 100644
      def _live(lo, i):
          """all_insns[lo:i] minus blocks that end in `blr` -- they return, so
          they cannot flow into the dispatch at i. Scanning backward straight
-@@ -3820,7 +3913,7 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+@@ -3820,7 +3945,7 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
                      # preceding blr, so the scan cannot drift into the previous
                      # function and latch a stale base.
                      _scan, _resolved = _live(max(0, i - 30), i), False
@@ -27657,7 +28302,7 @@ index b19e240..a47027c 100644
                          for w2 in reversed(_scan):
                              b = [x.strip() for x in w2.operands.split(',')]
                              if not b or b[0] != _mid or w2.mnemonic.startswith(('st', 'lf')):
-@@ -3831,9 +3924,12 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
+@@ -3831,9 +3956,12 @@ def discover_jump_tables(all_insns, read_u32, toc, text_lo, text_hi, func_starts
                                  disp2 = _d2; disp2_is_ld = _d2_is_ld
                              _resolved = True    # nearest def wins, TOC load or not
                              break

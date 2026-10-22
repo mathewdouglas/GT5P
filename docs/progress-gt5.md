@@ -4,6 +4,92 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 3 — Merge of Prologue Phases 71-133; seven boot blockers (2026-10-23)
+
+`bcus98158-disc-build` (Prologue Phases 71-133) was merged into `gt5`. The
+two conflicts (`CMakeLists.txt`, `config/targets.json`) kept both sides: GT5's
+`gcm_ctrl_base` and Prologue's optional per-target addresses. The new required
+post-lift steps (`spin_patch.py`, `ui_mask_patch.py`, `spu_native_patch.py`)
+report "nothing for BCUS98114" and pass. Both lifts were redone with the
+current ps3recomp.
+
+State before this phase: 2 flips, a white window, the game shutting itself
+down (pads ended, callbacks unregistered, threads joined). State after: 28
+flips and 96 file opens headless, then `sys_process_exit(1)` (below). Not a
+visual boot yet. Each fix, in the order found, with its measurement:
+
+1. **`cellFsRead` into uncommitted guest pages returned 0 bytes.** The port
+   commits guest pages from an access-violation handler, but `ReadFile` into
+   an uncommitted page fails with `ERROR_NOACCESS` instead of faulting. GT5's
+   646,672-byte `GT.VOL` index read (to `0x302A2000`) returned 0, and the
+   title shut down. `cellFsRead` now reads one byte per destination page
+   first (`FS_READ_PRETOUCH=0` off); `ppu_fs.cpp` already prefaulted.
+2. **`cellGcmMapEaIoAddressWithFlags` (`0x626E8518`) was missing**: 221
+   calls, each unresolved. Added; the flags (RSX access rights) are ignored.
+3. **The PPU lifter dropped four instructions**: `stdbrx` (arrives as
+   `op31_x660`, 4 sites), `vpkuhum` (2), `vexptefp` (8) and `vlogefp` (9).
+   Now lowered; the re-lift has no `/* TODO:` other than `.word`. Vector
+   registers hold big-endian bytes, so `vpkuhum` indexes bytes.
+4. **`sys_mempool_*` was missing** (four pools at boot). Implemented in
+   `ppu_sysprx.cpp`.
+5. **`sys_lwcond_wait` returned after 1 ms whether signalled or not, and
+   every signal was a no-op.** GT5's main thread hands a worker (`ksF3`) a
+   request object on its own stack and waits once; it left early, reused
+   the frame, and the worker called through a dead vtable (400 null calls in
+   60 s, then shutdown). `PS3_LWCOND_REAL=1` (GT5's default, set in
+   `main.cpp`) gives real waits: a FIFO of per-waiter nodes, signals reach
+   only queued waiters, timeouts honoured, and GCM handlers are pumped every
+   2 ms while waiting (they are otherwise delivered only at HLE entry, and
+   with every thread waiting none arrived). `PS3_LWCOND_TRACE=1` logs each
+   wait, wake and signal. Null calls: 400 -> 0.
+6. **lv2 timers refused one-shots.** `_sys_timer_start` with period 0 is a
+   one-shot at `base_time` (system time, us); the runtime returned
+   `EINVAL` (593 refusals in 60 s) and ignored `base_time`. GT5's timer
+   threads (`MEfYS`, queue 8) use nothing else, so the 6-tick wait main
+   makes on the counter at `toc+0x271C` (`func_00BD5E94`, waits for the
+   counter to advance; `func_00BD5C30` ticks it) never ended. Now: one-shot
+   and periodic with an absolute first expiry, `data2` from connect,
+   `data3` = expiry time (`PS3_TIMER_ONESHOT=0` restores the old timer).
+   The guest clock is shared as `ps3_system_time_us()`.
+7. **No WWS job bodies were lifted.** The policy module streamed bodies into
+   LS and fell to the SPU interpreter (`[spu-smc] microstep img=1
+   pc=0x0AD58`), while thread 26 spun in `func_00CD29E8` (the job-list
+   completion wait, a minimum over per-SPU progress halfwords). 28 bodies
+   found by `scripts/diag/find_bodies.py` (now follows `GT5P_TARGET`) are in
+   `wws_job_bodies`, all at LS `0x4000`: 28,467 SPU functions. After this:
+   no interpreter fallbacks, flips 2 -> 21-28, opens 6 -> 56-96.
+
+Also: `cellKbRead` (`0xFF0A21B7`) and `cellKbGetConfiguration`
+(`0x1F71ECBE`) were unresolved; the runtime's reader was named
+`cellKbGetData`, which no title imports. Both added.
+
+New diagnostics: `GT5P_FIND=<value>` (scan guest memory for a word, with
+each main-stack dump), `PS3_HLE_TRACE_NIDS=<hex>,...` (trace only these
+imports), `PS3_LWCOND_TRACE=1`.
+
+### Open: the exit after the cached data loads
+
+Every run, headless or windowed, now ends in `sys_process_exit(1)` from
+`func_00D19F8C`, called up from `func_00D0C6E0` / `func_01027F1C`. A fresh
+PDIPFS cache (the old one is in `scratch/pdipfs-bak-1`) changes when, not
+whether. The first divergence on main is earlier: `func_00B835A4` takes the
+head of a context list (`func_00B71878(0)`), reads its `+4` as a function
+descriptor and calls it. The head is `0x017C7BC0`, inside RTTI tables, so
+the "descriptor" is a `type_info` record (`{0x017F6E90 type_info vtable,
+0x01595E58 name, base}`) and the call goes to `0x017F6E90` (unresolved). A
+second unresolved call lands mid-function at `0x00B13404` (from
+`0x00B133A0`), which looks like a longjmp-style landing. Hypothesis, not
+tested: GT5's try/exception context push is a setjmp-like path that
+`setjmp_patch.py` does not cover. Main then stores instruction words as data
+and exits. The window shows white throughout.
+
+Other open items: `sgx-spurs-printf-handler` (tid 18) makes ~16,000
+`sys_spu_thread_write_spu_mb` calls to `0x30040000`, an SPU thread id the
+runtime does not know (the `soc-job` chain's address); unresolved imports
+`cellUsbdSetThreadPriority2`, `cellUsbdRegisterExtraLdd2`,
+`sys_prx_get_module_list`; lv2 syscall 327 (page-fault notification) is a
+stub.
+
 ## Phase 2 — First lift, build and boot (2026-10-17)
 
 ### Baseline preparation
