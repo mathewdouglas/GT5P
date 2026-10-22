@@ -9,6 +9,41 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 122 - Ultrawide step 2, stage A: anamorphic 21:9 (2026-10-22)
+
+**What it does.** `GT5P_ULTRAWIDE=1`, which needs `GT5P_RESOLUTION=1080p`:
+
+- `main.cpp` writes 64/27 into `aspect_16_9_float` at load. It first checks
+  the word holds 16/9, and does nothing otherwise.
+- It sets `RSX_ULTRAWIDE`, so the backend makes the window 21:9 (2560x1080
+  for 1080p).
+- The backbuffer stays 1920x1080. DXGI's default stretch scaling spreads it
+  over the window, which undoes the squeeze the 21:9 aspect gives the
+  title's picture.
+
+The renderer is otherwise unchanged, so the cost is unchanged: the HSR race
+ran at a median 59 fps.
+
+**Measured** at 1080p/2x MSAA, from 2560x1080 window shots:
+
+- **HSR race (`uwA`):** correct 21:9 geometry. The gauges are round and the
+  boards keep their proportions. The scene fills the width and the race HUD
+  sits centred. Fence posts and barriers reach both edges, so there is no
+  culling at the sides.
+- **Acura dealer page (`uwD`):** the cars have correct proportions across
+  the full width.
+- **Main menu (`uwM`):** the 3D background is correct. Its 2D (popup, icon
+  row, text) is stretched by 4/3, because menus lay out at 16:9 whatever the
+  aspect. That is step 3.
+
+**Limits of stage A.**
+
+- Horizontal detail is the 16:9 frame's: 1920 samples spread over 2560
+  pixels. Races are already drawn 1280 wide by the title.
+- The F1 page and the opening movie are stretched too.
+- Native-width rendering, where the full-screen targets are created 4/3
+  wider, is stage B, the quality step. No new readings are needed for it.
+
 ## Phase 121 - Ultrawide step 1: where the game's aspect ratio lives (2026-10-22)
 
 The user wants a 2560x1080 (21:9) mode. The plan is in

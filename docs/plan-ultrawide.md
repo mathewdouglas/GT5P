@@ -1,6 +1,7 @@
 # Ultrawide (2560x1080, 21:9)
 
-Plan: 2026-10-22. Step 1 is done (Phase 121); the rest is not built yet.
+Plan: 2026-10-22. Step 1 is done (Phase 121). Step 2 stage A, anamorphic,
+is done (Phase 122): run it with `GT5P_ULTRAWIDE=1 GT5P_RESOLUTION=1080p`.
 
 The PS3 has no 21:9 output mode, and the game is told 1920x1080 at 16:9.
 The port keeps telling it that. It widens the picture in the renderer and
@@ -23,7 +24,12 @@ gives the game a 21:9 aspect ratio.
 ## Steps
 
 1. **Measure** (done): the aspect source, its readers, what it drives.
-2. **Prototype:**
+2. **Prototype.**
+   - **Stage A (done, Phase 122):** the aspect patch plus a 21:9 window,
+     with the swap chain stretching the 16:9 frame. The race and dealer
+     pages are correct, nothing is culled at the edges, and menu 2D is
+     stretched.
+   - **Stage B, native width:**
    - a 2560x1080 swap chain and window;
    - the full-screen targets rendered 4/3 wider, with full-width viewports
      and scissors scaled to match;

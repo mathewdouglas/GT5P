@@ -54,6 +54,10 @@ if(GT5P_PACER_LR_ERR)
 endif()
 # vtable of the title's mListBox widget: the settings page finds the race
 # pause bar by it (Phase 117); absent: none.
+string(JSON GT5P_ASPECT_ADDR ERROR_VARIABLE GT5P_ASPECT_ADDR_ERR GET "${GT5P_T}" aspect_16_9_float)
+if(GT5P_ASPECT_ADDR_ERR)
+    set(GT5P_ASPECT_ADDR "")
+endif()
 string(JSON GT5P_LISTBOX_VT ERROR_VARIABLE GT5P_LISTBOX_VT_ERR GET "${GT5P_T}" menu_listbox_vtable)
 if(GT5P_LISTBOX_VT_ERR)
     set(GT5P_LISTBOX_VT "")
@@ -192,7 +196,8 @@ set(GT5P_MAIN_DEFS
     "GT5P_CODE_END=${GT5P_CODE_END}u"
     "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\""
     "GT5P_PACER_LR=\"${GT5P_PACER_LR}\""
-    "GT5P_LISTBOX_VT=\"${GT5P_LISTBOX_VT}\"")
+    "GT5P_LISTBOX_VT=\"${GT5P_LISTBOX_VT}\""
+    "GT5P_ASPECT_ADDR=\"${GT5P_ASPECT_ADDR}\"")
 if(GT5P_HDD_TITLE)
     list(APPEND GT5P_MAIN_DEFS "GT5P_HDD_TITLE=1")
 endif()

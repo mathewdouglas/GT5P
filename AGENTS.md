@@ -99,7 +99,14 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: ultrawide step 1 (Phase 121).** The game's aspect ratio is one
+**Latest: ultrawide stage A (Phase 122).** Run it with
+`GT5P_ULTRAWIDE=1 GT5P_RESOLUTION=1080p`. The port patches the aspect at load
+and the backend makes the window 21:9 (`RSX_ULTRAWIDE`); the swap chain
+stretches the 16:9 frame over it. Races and the dealer are correct and
+nothing is culled at the edges. Menu 2D is stretched (step 3). Native-width
+targets are stage B.
+
+**Ultrawide step 1 (Phase 121).** The game's aspect ratio is one
 table entry, `aspect_16_9_float` (`0x01287DD0`), read once at boot by
 `func_007AE548`. Writing 64/27 there at load (`GT5P_POKE_BOOT=01287DD0=4017B426`)
 gives the race camera a 21:9 projection with the same vertical field of view,

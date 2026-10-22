@@ -916,6 +916,23 @@ int main(int argc, char* argv[])
         }
     }
 
+    /* GT5P_ULTRAWIDE=1: a 21:9 picture. The title takes its aspect ratio once,
+     * at boot, from a table entry (aspect_16_9_float, docs/plan-ultrawide.md);
+     * 64/27 there gives its cameras a 21:9 projection with the same vertical
+     * field of view and centres the race HUD. The window is made 21:9 too
+     * (RSX_ULTRAWIDE, read by the backend). */
+    { const char* uw = getenv("GT5P_ULTRAWIDE");
+      if (uw && uw[0] && uw[0] != '0' && GT5P_ASPECT_ADDR[0]) {
+          const uint32_t a = (uint32_t)strtoul(GT5P_ASPECT_ADDR, nullptr, 16);
+          uint32_t cur; memcpy(&cur, vm_base + a, 4);
+          if (_byteswap_ulong(cur) == 0x3FE38E39u) {          /* 16/9, as expected */
+              const uint32_t be = _byteswap_ulong(0x4017B426u);  /* 64/27 */
+              memcpy(vm_base + a, &be, 4);
+              if (!getenv("RSX_ULTRAWIDE")) _putenv_s("RSX_ULTRAWIDE", uw);
+              printf("[GT5P] ultrawide: 21:9 aspect at 0x%08X\n", a);
+          } else fprintf(stderr, "[GT5P] ultrawide: 0x%08X is not 16/9 (%08X); not patched\n", a, _byteswap_ulong(cur));
+      } }
+
     ppu_hle_register_all();
     ppu_sysprx_register();
     printf("[HLE] ps3recomp NID registry: %u handlers\n", ps3_hle_count());
