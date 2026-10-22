@@ -811,6 +811,10 @@ int main(int argc, char* argv[])
      * (docs/progress-gt5.md, Phase 3). PS3_LWCOND_REAL=0 for the poll. */
     if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_LWCOND_REAL"))
         _putenv_s("PS3_LWCOND_REAL", "1");
+    /* GT5's timer threads arm lv2 one-shots (period 0, absolute base time),
+     * which the runtime's old timer refused. PS3_TIMER_ONESHOT=0 for it. */
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_TIMER_ONESHOT"))
+        _putenv_s("PS3_TIMER_ONESHOT", "1");
 
     /* SPU render lanes on cores of their own (strict pinning): 1.14 times
      * faster lanes, Ferrari at a median 28.2 fps against 24.8 free, and no

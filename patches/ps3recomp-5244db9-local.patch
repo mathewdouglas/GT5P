@@ -27844,7 +27844,7 @@ index a297bf5..d0a5714 100644
  int64_t sys_ppu_thread_join(ppu_context* ctx);
  int64_t sys_ppu_thread_detach(ppu_context* ctx);
 diff --git a/runtime/syscalls/sys_timer.c b/runtime/syscalls/sys_timer.c
-index d8f4081..3ccb9ca 100644
+index d8f4081..4eeb6fb 100644
 --- a/runtime/syscalls/sys_timer.c
 +++ b/runtime/syscalls/sys_timer.c
 @@ -2,6 +2,7 @@
@@ -27958,7 +27958,7 @@ index d8f4081..3ccb9ca 100644
  #else
      struct timespec ts;
      clock_gettime(CLOCK_REALTIME, &ts);
-@@ -329,9 +379,56 @@ int64_t sys_time_get_timebase_frequency(ppu_context* ctx)
+@@ -329,9 +379,57 @@ int64_t sys_time_get_timebase_frequency(ppu_context* ctx)
   * -----------------------------------------------------------------------*/
  
  /* Forward declaration */
@@ -27966,14 +27966,15 @@ index d8f4081..3ccb9ca 100644
 +static void timer_send_event(sys_timer_info* t, uint64_t expired_at);
 +uint64_t ps3_system_time_us(void);   /* ppu_sysprx.cpp: the guest's system time */
 +
-+/* PS3_TIMER_ONESHOT=0: the old timer, periodic only, base time ignored and
-+ * period 0 refused. lv2 takes period 0 as a one-shot at base_time, and an
++/* PS3_TIMER_ONESHOT=1: lv2 timer semantics. Default is the old timer:
++ * periodic only, base time ignored and period 0 refused, kept so titles
++ * already tuned against it do not change. lv2 takes period 0 as a one-shot at base_time, and an
 + * absolute base_time as the first expiry; Gran Turismo 5's timer threads use
 + * nothing else, and every refusal left a thread waiting for ever. */
 +static int timer_lv2(void)
 +{
 +    static int v = -1;
-+    if (v < 0) { const char* e = getenv("PS3_TIMER_ONESHOT"); v = !(e && e[0] == '0'); }
++    if (v < 0) { const char* e = getenv("PS3_TIMER_ONESHOT"); v = (e && e[0] == '1') ? 1 : 0; }
 +    return v;
 +}
  
@@ -28016,7 +28017,7 @@ index d8f4081..3ccb9ca 100644
  static DWORD WINAPI timer_thread_proc(LPVOID param)
  {
      sys_timer_info* t = (sys_timer_info*)param;
-@@ -346,7 +443,7 @@ static DWORD WINAPI timer_thread_proc(LPVOID param)
+@@ -346,7 +444,7 @@ static DWORD WINAPI timer_thread_proc(LPVOID param)
          }
  
          if (t->running) {
@@ -28025,7 +28026,7 @@ index d8f4081..3ccb9ca 100644
          }
      }
  
-@@ -373,7 +470,7 @@ static void* timer_thread_proc(void* param)
+@@ -373,7 +471,7 @@ static void* timer_thread_proc(void* param)
  
          if (rc == ETIMEDOUT) {
              pthread_mutex_unlock(&t->mtx);
@@ -28034,7 +28035,7 @@ index d8f4081..3ccb9ca 100644
              pthread_mutex_lock(&t->mtx);
          }
      }
-@@ -383,7 +480,7 @@ static void* timer_thread_proc(void* param)
+@@ -383,7 +481,7 @@ static void* timer_thread_proc(void* param)
  }
  #endif
  
@@ -28043,7 +28044,7 @@ index d8f4081..3ccb9ca 100644
  {
      if (t->event_queue_id <= 0 || t->event_queue_id > SYS_EVENT_QUEUE_MAX)
          return;
-@@ -395,8 +492,8 @@ static void timer_send_event(sys_timer_info* t)
+@@ -395,8 +493,8 @@ static void timer_send_event(sys_timer_info* t)
      sys_event_t evt;
      evt.source = t->source;
      evt.data1  = t->data1;
@@ -28054,7 +28055,7 @@ index d8f4081..3ccb9ca 100644
  
      /* Push event (ignore if queue full) */
  #ifdef _WIN32
-@@ -532,6 +629,7 @@ int64_t sys_timer_connect_event_queue(ppu_context* ctx)
+@@ -532,6 +630,7 @@ int64_t sys_timer_connect_event_queue(ppu_context* ctx)
      t->event_queue_id = (int32_t)queue_id;
      t->source         = source;
      t->data1          = data1;
@@ -28062,7 +28063,7 @@ index d8f4081..3ccb9ca 100644
  
      return CELL_OK;
  }
-@@ -579,6 +677,28 @@ int64_t sys_timer_start(ppu_context* ctx)
+@@ -579,6 +678,28 @@ int64_t sys_timer_start(ppu_context* ctx)
      if (t->running)
          return (int64_t)(int32_t)CELL_EBUSY;
  

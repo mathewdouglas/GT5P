@@ -893,7 +893,8 @@ about 28 times, then calls `sys_process_exit(1)`. The window stays white:
 timers, job bodies); the open divergence is a context-list lookup in
 `func_00B835A4` that returns a pointer into the RTTI tables. Read
 [docs/progress-gt5.md](docs/progress-gt5.md) Phase 3 before continuing.
-GT5 sets `PS3_LWCOND_REAL=1` by default (Prologue keeps the 1 ms poll).
+GT5 sets `PS3_LWCOND_REAL=1` and `PS3_TIMER_ONESHOT=1` by default; Prologue
+keeps the old runtime behaviour for both.
 
 ## What is tied to v02.00
 

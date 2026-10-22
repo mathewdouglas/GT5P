@@ -49,7 +49,8 @@ visual boot yet. Each fix, in the order found, with its measurement:
    makes on the counter at `toc+0x271C` (`func_00BD5E94`, waits for the
    counter to advance; `func_00BD5C30` ticks it) never ended. Now: one-shot
    and periodic with an absolute first expiry, `data2` from connect,
-   `data3` = expiry time (`PS3_TIMER_ONESHOT=0` restores the old timer).
+   `data3` = expiry time. `PS3_TIMER_ONESHOT=1` enables this; GT5 sets it
+   in `main.cpp`, and the runtime default keeps the old timer for Prologue.
    The guest clock is shared as `ps3_system_time_us()`.
 7. **No WWS job bodies were lifted.** The policy module streamed bodies into
    LS and fell to the SPU interpreter (`[spu-smc] microstep img=1
