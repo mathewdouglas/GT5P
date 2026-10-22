@@ -49,6 +49,8 @@
 #include "gt5p_glyphs.h"
 #include "gt5p_keymap.h"
 
+#pragma comment(lib, "msimg32.lib")   /* AlphaBlend */
+
 extern "C" {
 extern volatile int g_pad_input_blocked;        /* cellPad.c */
 extern volatile uint32_t g_pad_menu_buttons;    /* cellPad.c: bit 16 = PS button */
@@ -912,9 +914,35 @@ void paint_hint(HDC dc)
     static HFONT fBtn = font(16, FW_SEMIBOLD), fLbl = font(18, FW_NORMAL);
     SetBkMode(dc, TRANSPARENT);
     fill(dc, 0, 0, kHintW, kHintH, kKey);
-    pill(dc, 0, 4, 82, kHintH - 4, false);
-    text(dc, fBtn, 41, 9, grey(232), L"SELECT", TA_CENTER);
     text(dc, fLbl, 92, 8, grey(212), L"PC settings");
+    /* The Select button of the device in use (gt5p_glyphs.h): Create, Share,
+     * View, minus or the bound key; a PS3 pad keeps the "SELECT" pill. */
+    const double sc = s_paint_scale;
+    const int hp = (int)(29 * sc + 0.5);
+    std::vector<unsigned char> px;
+    const int iw = gt5p_glyphs_select_icon(hp, (int)(82 * sc), px);
+    if (!iw) {
+        pill(dc, 0, 4, 82, kHintH - 4, false);
+        text(dc, fBtn, 41, 9, grey(232), L"SELECT", TA_CENTER);
+        return;
+    }
+    DeviceSpace ds(dc);
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+    bi.bmiHeader.biWidth = iw; bi.bmiHeader.biHeight = -hp;
+    bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC mdc = CreateCompatibleDC(dc);
+    HBITMAP bm = mdc ? CreateDIBSection(mdc, &bi, DIB_RGB_COLORS, &bits, NULL, 0) : NULL;
+    if (bm) {
+        memcpy(bits, px.data(), px.size());
+        HGDIOBJ o = SelectObject(mdc, bm);
+        BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+        AlphaBlend(dc, (int)((92 - 10) * sc + 0.5) - iw, (int)(4 * sc + 0.5), iw, hp, mdc, 0, 0, iw, hp, bf);
+        SelectObject(mdc, o);
+        DeleteObject(bm);
+    }
+    if (mdc) DeleteDC(mdc);
 }
 
 bool hint_enabled()
@@ -1559,8 +1587,10 @@ DWORD WINAPI ui_thread(LPVOID)
         /* The title's Options screen: show the tag while nothing else is up. */
         const bool want_hint = s_in_options && !s_open && !s_quit && hint_enabled() && !legacy_ui_flag() &&
                                rsx_d3d12_overlay_available();
+        static int hint_id;
+        if (want_hint && s_hint_shown && gt5p_glyphs_select_id() != hint_id) s_hint_shown = false;   /* new device or key */
         if (want_hint != s_hint_shown) {
-            if (want_hint) push_image(kHintW, kHintH, paint_hint, true, 0);
+            if (want_hint) { hint_id = gt5p_glyphs_select_id(); push_image(kHintW, kHintH, paint_hint, true, 0); }
             else if (!s_open && !s_quit) rsx_d3d12_overlay_set(nullptr, 0, 0, 0, 0);
             s_hint_shown = want_hint;
         }

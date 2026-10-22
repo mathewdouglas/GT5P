@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include <vector>
+
 /* Style codes, as the settings page stores them. */
 enum { GT5P_GLYPHS_AUTO = 0, GT5P_GLYPHS_PLAYSTATION = 1, GT5P_GLYPHS_XBOX = 2,
        GT5P_GLYPHS_NINTENDO = 3, GT5P_GLYPHS_KEYBOARD = 4 };
@@ -27,6 +29,14 @@ void gt5p_glyphs_set_style(int style);
 
 /* A keyboard binding changed (gt5p_keymap.cpp): redraw the key art. */
 void gt5p_glyphs_keys_changed();
+
+/* The Select button as the settings tag on the game's Options screen shows
+ * it (gt5p_settings_ui.cpp): Create on a DualSense, Share on a DualShock 4,
+ * View, minus or the bound key in the other styles. The icon is hpx pixels
+ * high, at most maxw wide, as premultiplied BGRA; returns its width, or 0 for
+ * the original "SELECT" pill. select_id changes whenever the icon would. */
+int gt5p_glyphs_select_icon(int hpx, int maxw, std::vector<unsigned char>& bgra);
+int gt5p_glyphs_select_id();
 
 /* The style in effect now (never AUTO), for reports. */
 int gt5p_glyphs_effective();

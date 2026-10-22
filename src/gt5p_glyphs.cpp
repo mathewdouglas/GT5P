@@ -50,6 +50,7 @@ void rsx_tex_set_replacer(gt5p_repl_fn fn);
 void rsx_tex_replace_invalidate(void);
 /* cellPad.c */
 extern volatile int g_pad_device_family;
+extern volatile int g_pad_device_type;
 int pad_keyboard_vk(unsigned btn);
 }
 
@@ -89,6 +90,8 @@ struct Entry { unsigned w, h; std::vector<Cell> cells; int inset = 0, ring = 5; 
 
 std::map<unsigned long long, Entry> g_table;
 Img g_art[5][B_N];                     /* [style][button], empty = keep */
+Img g_ps_select[2];                    /* Select on a DualShock 4 (Share), a DualSense (Create) */
+bool g_enabled;                        /* the module runs (GT5P_GLYPHS is not 0) */
 std::mutex g_cache_mu;
 std::map<std::pair<unsigned long long, int>, std::vector<uint8_t>> g_cache;
 std::atomic<int> g_choice{GT5P_GLYPHS_AUTO};
@@ -571,6 +574,9 @@ void load_keyboard_art()
 
 void load_art()
 {
+    if (!load_png("assets/glyphs/kenney/playstation4_button_share.png", g_ps_select[0]) ||
+        !load_png("assets/glyphs/kenney/playstation5_button_create.png", g_ps_select[1]))
+        fprintf(stderr, "[glyphs] cannot read the PlayStation Select art%c", 10);
     for (int b = 0; b < B_N; b++) {
         load_one(GT5P_GLYPHS_XBOX, b, kXbox[b]);
         load_one(GT5P_GLYPHS_NINTENDO, b, kNintendo[b]);
@@ -608,10 +614,58 @@ int gt5p_glyphs_effective() { return g_eff.load(); }
 
 void gt5p_glyphs_keys_changed() { g_keys_dirty = true; }
 
+namespace {
+/* The art for Select in the style in effect, or nullptr for the original
+ * "SELECT" (a PS3 pad, or nothing known). Under g_cache_mu. */
+const Img* select_art()
+{
+    if (!g_enabled) return nullptr;
+    const Img* a = nullptr;
+    switch (g_eff.load()) {
+    case GT5P_GLYPHS_PLAYSTATION:
+        a = g_pad_device_type == 4 ? &g_ps_select[0] : g_pad_device_type == 7 ? &g_ps_select[1] : nullptr;
+        break;
+    case GT5P_GLYPHS_XBOX: a = &g_art[GT5P_GLYPHS_XBOX][B_SELECT]; break;
+    case GT5P_GLYPHS_NINTENDO: a = &g_art[GT5P_GLYPHS_NINTENDO][B_SELECT]; break;
+    case GT5P_GLYPHS_KEYBOARD: a = &g_art[GT5P_GLYPHS_KEYBOARD][B_SELECT]; break;
+    }
+    return a && !a->px.empty() ? a : nullptr;
+}
+}  // namespace
+
+int gt5p_glyphs_select_id()
+{
+    std::lock_guard<std::mutex> lk(g_cache_mu);
+    const Img* a = select_art();
+    return a ? (int)(1 + g_eff.load() + 8 * g_pad_device_type + 256 * g_keygen) : 0;
+}
+
+int gt5p_glyphs_select_icon(int hpx, int maxw, std::vector<uint8_t>& bgra)
+{
+    std::lock_guard<std::mutex> lk(g_cache_mu);
+    const Img* a = select_art();
+    int x0, y0, x1, y1;
+    if (!a || hpx <= 0 || !alpha_bbox(*a, 8, &x0, &y0, &x1, &y1)) return 0;
+    const double aspect = (double)(x1 - x0 + 1) / (y1 - y0 + 1);
+    const int w = std::max(1, std::min(maxw, (int)std::lround(hpx * aspect)));
+    Img im; im.w = w; im.h = hpx; im.px.assign((size_t)w * hpx * 4, 0);
+    draw_fit(im, 0, 0, w, hpx, *a);
+    bgra.resize(im.px.size());
+    for (size_t i = 0; i < im.px.size(); i += 4) {   /* premultiplied BGRA, for AlphaBlend */
+        const unsigned al = im.px[i + 3];
+        bgra[i + 0] = (uint8_t)(im.px[i + 2] * al / 255);
+        bgra[i + 1] = (uint8_t)(im.px[i + 1] * al / 255);
+        bgra[i + 2] = (uint8_t)(im.px[i + 0] * al / 255);
+        bgra[i + 3] = (uint8_t)al;
+    }
+    return w;
+}
+
 void gt5p_glyphs_init()
 {
     const char* e = getenv("GT5P_GLYPHS");
     if (e && (!strcmp(e, "0") || !_stricmp(e, "off"))) return;
+    g_enabled = true;
     g_dbg = getenv("GT5P_GLYPHS_DBG") != nullptr;
     /* The variable wins, also under GT5P_NO_SETTINGS (test runs). */
     int style = gt5p_settings().button_prompts;

@@ -4855,7 +4855,7 @@ index 5166a47..c627e66 100644
      if (!path || !sb)
          return CELL_EFAULT;
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c11..b77f11e 100644
+index f2b4c11..5a16b60 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -52,6 +52,7 @@
@@ -4866,7 +4866,7 @@ index f2b4c11..b77f11e 100644
  
  typedef struct {
      int  connected;
-@@ -75,6 +76,21 @@ typedef struct {
+@@ -75,6 +76,23 @@ typedef struct {
      u8   press_r1;
  } PadHostState;
  
@@ -4884,11 +4884,13 @@ index f2b4c11..b77f11e 100644
 + * 4 Nintendo, 5 another pad. A PAD_HOLD script does not count as a device.
 + * Updated by each poll. */
 +volatile int g_pad_device_family;
++/* Port 0's SDL_GameControllerType when SDL reads it (4 PS4, 7 PS5, ...), else 0. */
++volatile int g_pad_device_type;
 +
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,13 +156,239 @@ static int pad_host_window_focused(void)
+@@ -140,13 +158,239 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
@@ -5131,7 +5133,7 @@ index f2b4c11..b77f11e 100644
      if (!pad_host_window_focused()) {
          /* Release everything on focus loss, or a key held while alt-tabbing
           * would stay down forever. */
-@@ -157,19 +399,7 @@ static void pad_poll_keyboard(void)
+@@ -157,19 +401,7 @@ static void pad_poll_keyboard(void)
          return;
      }
  
@@ -5152,7 +5154,7 @@ index f2b4c11..b77f11e 100644
  
      hs->buttons   = btns;
      hs->connected = 1;
-@@ -390,6 +620,287 @@ static void pad_shutdown_backend(void)
+@@ -390,6 +622,294 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -5195,6 +5197,7 @@ index f2b4c11..b77f11e 100644
 +} s_sdl;
 +static void* s_sdl_pad[PAD_MAX_HOST_PORTS];
 +static int   s_sdl_family[PAD_MAX_HOST_PORTS];   /* g_pad_device_family codes */
++static int   s_sdl_type[PAD_MAX_HOST_PORTS];     /* SDL_GameControllerType, 0 unknown */
 +static int   s_sdl_ok = 0;
 +
 +/* SDL_GameControllerType, else the name, to a g_pad_device_family code. */
@@ -5286,6 +5289,7 @@ index f2b4c11..b77f11e 100644
 +        if (s_sdl_pad[slot]) {
 +            const char* nm = s_sdl.GameControllerName(s_sdl_pad[slot]);
 +            s_sdl_family[slot] = pad_sdl_family(s_sdl_pad[slot]);
++            s_sdl_type[slot] = s_sdl.GameControllerGetType ? s_sdl.GameControllerGetType(s_sdl_pad[slot]) : 0;
 +            printf("[cellPad] port %d: %s (type %d, family %d)%c", slot, nm ? nm : "controller",
 +                   s_sdl.GameControllerGetType ? s_sdl.GameControllerGetType(s_sdl_pad[slot]) : -1,
 +                   s_sdl_family[slot], 10);
@@ -5382,7 +5386,9 @@ index f2b4c11..b77f11e 100644
 +static unsigned s_sdl_snapshot_guide;
 +static PadHostState s_sdl_snapshot[PAD_MAX_HOST_PORTS];
 +static int s_sdl_snapshot_family[PAD_MAX_HOST_PORTS];
++static int s_sdl_snapshot_type[PAD_MAX_HOST_PORTS];
 +static int s_host_family[PAD_MAX_HOST_PORTS];   /* family of each host port's pad */
++static int s_host_type[PAD_MAX_HOST_PORTS];     /* and its SDL type */
 +static DWORD WINAPI pad_sdl_worker(void* ready)
 +{
 +    int ok = pad_sdl_dyn_init();
@@ -5395,6 +5401,7 @@ index f2b4c11..b77f11e 100644
 +        AcquireSRWLockExclusive(&s_sdl_snapshot_lock);
 +        memcpy(s_sdl_snapshot, s_sdl_state, sizeof(s_sdl_snapshot));
 +        memcpy(s_sdl_snapshot_family, s_sdl_family, sizeof(s_sdl_snapshot_family));
++        memcpy(s_sdl_snapshot_type, s_sdl_type, sizeof(s_sdl_snapshot_type));
 +        s_sdl_snapshot_guide = s_sdl_guide;
 +        ReleaseSRWLockExclusive(&s_sdl_snapshot_lock);
 +        if (ready) { SetEvent((HANDLE)ready); ready = NULL; }
@@ -5415,6 +5422,7 @@ index f2b4c11..b77f11e 100644
 +        pad_poll_sdl_dyn();
 +        memcpy(s_host_state, s_sdl_state, sizeof(s_host_state));
 +        memcpy(s_host_family, s_sdl_family, sizeof(s_host_family));
++        memcpy(s_host_type, s_sdl_type, sizeof(s_host_type));
 +        s_guide = s_sdl_guide;
 +        return 1;
 +    }
@@ -5430,6 +5438,7 @@ index f2b4c11..b77f11e 100644
 +    AcquireSRWLockShared(&s_sdl_snapshot_lock);
 +    memcpy(s_host_state, s_sdl_snapshot, sizeof(s_host_state));
 +    memcpy(s_host_family, s_sdl_snapshot_family, sizeof(s_host_family));
++    memcpy(s_host_type, s_sdl_snapshot_type, sizeof(s_host_type));
 +    s_guide = s_sdl_snapshot_guide;
 +    ReleaseSRWLockShared(&s_sdl_snapshot_lock);
 +    return 1;
@@ -5440,7 +5449,7 @@ index f2b4c11..b77f11e 100644
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -407,7 +918,6 @@ static void pad_shutdown_backend(void)
+@@ -407,7 +927,6 @@ static void pad_shutdown_backend(void)
   * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
   * a real DualShock 3's own report rate), so no game can tell the difference,
   * including one sampling for button-press edges. */
@@ -5448,7 +5457,7 @@ index f2b4c11..b77f11e 100644
  
  static unsigned long long pad_now_ms(void)
  {
-@@ -421,13 +931,44 @@ static unsigned long long pad_now_ms(void)
+@@ -421,13 +940,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -5496,14 +5505,14 @@ index f2b4c11..b77f11e 100644
      s_last_ms = now;
      /* A real pad streams reports at roughly this rate whether or not anything
       * changed, and libpad buffers them; a fresh sweep is a fresh report for
-@@ -435,12 +976,76 @@ static void pad_poll_backend(void)
+@@ -435,12 +985,77 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT
 -    pad_poll_xinput();
 +    if (!pad_sdl_dyn_read()) {
 +        pad_poll_xinput();
-+        for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_host_family[_i] = 2;
++        for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) { s_host_family[_i] = 2; s_host_type[_i] = 0; }
 +    }
  #elif PAD_BACKEND_SDL2
      pad_poll_sdl2();
@@ -5523,6 +5532,7 @@ index f2b4c11..b77f11e 100644
 +      const PadHostState real = s_host_state[0];
 +      if (s_kbd_off < 0) s_kbd_off = getenv("PAD_NO_KEYBOARD") ? 1 : 0;
 +      g_pad_device_family = real.connected ? s_host_family[0] : s_kbd_off ? 0 : 1;
++      g_pad_device_type = real.connected ? s_host_type[0] : 0;
 +      if (!s_host_state[0].connected || scripted) pad_poll_keyboard();
 +      if (scripted && merge) {
 +          PadHostState* hs = &s_host_state[0];

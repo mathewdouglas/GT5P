@@ -11,6 +11,24 @@ hypothesis in the text itself.
 
 ## Phase 120 - Rebindable keyboard keys (2026-10-22)
 
+**Follow-up: the Options tag's Select.** The "SELECT  PC settings" tag on
+the game's Options screen is the port's own overlay, not a game texture,
+so the replacer never saw it.
+
+- **What it shows:** the tag now draws the Select button of the device in
+  use.
+  - A DualShock 4 shows Share and a DualSense shows Create
+    (`playstation4_button_share`, `playstation5_button_create`).
+  - Xbox shows View, Switch shows −, and the keyboard shows its bound key.
+  - A PS3 pad, or no known pad, keeps the "SELECT" pill.
+- **How:** cellPad now also exposes SDL's controller type for port 0
+  (`g_pad_device_type`). `gt5p_glyphs_select_icon()` renders the icon with
+  the glyph resampler as premultiplied BGRA, and `paint_hint` AlphaBlends it
+  just left of the label. The tag is re-pushed when
+  `gt5p_glyphs_select_id()` changes, after a new device, style or binding.
+- **Checked:** runs `sel-*` at 1080p showed Create (Auto, with the user's
+  DualSense), View, − and a Backspace keycap (`PAD_KEYMAP=select=Backspace`).
+
 The user asked for the keyboard's keys to be changeable, since a keyboard
 has far more keys than a pad has buttons.
 
