@@ -9,6 +9,50 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 134 - Re-lift with the GT5 branch's lifter (2026-10-23)
+
+The GT5 branch (BCUS98114) changed the shared ps3recomp checkout. This phase
+re-lifts GT5P with it and checks that nothing regressed.
+
+**What the PPU lifter change does here.** The PPU lift has the same
+50,065 functions as before. The GT5 work's new lowerings (`stdbrx`,
+`vexptefp`/`vlogefp`, `vpkuhum`) change no GT5P code. The `_cs_N`
+stack-offset fix (`PPU_LIFT_CS_R1DELTA`, lift time) is the only difference:
+
+- a lifted epilogue used to restore a callee-saved register from a snapshot
+  taken at its prologue store, even when r1 had changed in between by
+  something other than `addi`;
+- those 3,043 restores in ten chunks now load from the guest stack, as the
+  instruction does.
+
+The two forms differ only if the stack slot was written in between. On the
+GT5 branch that difference broke its boot.
+
+**The SPU lift is unchanged.** It is byte-identical: 9,115 functions, and
+`spu_workloads_bcus98158.c` has no diff. The HLE NID table gains seven
+entries, the same ones the GT5 branch added: `cellGcmMapEaIoAddressWithFlags`,
+`cellKbRead`, `cellKbGetConfiguration` and the debug-dump entries.
+
+**Runtime changes GT5P picks up by default.** One: `cellFsRead` now touches
+each 4 KB destination page before `fread` (`FS_READ_PRETOUCH=0` turns it
+off). A `ReadFile` into an uncommitted guest page failed silently. The GT5
+branch's real lwcond (`PS3_LWCOND_REAL`) and one-shot timers
+(`PS3_TIMER_ONESHOT`) are opt-in and stay off here.
+
+**Checks after a clean rebuild** (scratch/pv/relift-*):
+
+| Test | Result |
+| --- | --- |
+| `winshot.ps1`, Acura dealer | Page at 33 s; it draws correctly at 30 FPS |
+| `race.ps1 -FrameTest`, High Speed Ring | 59.1 FPS; median 16.6 ms; p99 21.5 ms; 1.4% late; walk 6.17 ms/frame |
+| `pitshot.ps1`, Daytona Race Mode | Page at 29 s, 29.6 FPS; the crew animate |
+
+Phase 108 measured 59.5 FPS, p99 20 ms and 1% late. The frame-test numbers
+are within the run-to-run spread. None of the three logs contains a
+recursion cap, a NULL `bctr`, an "indirect tail ... no lifted entry" line or
+`STUCK`. The pre-relift `generated/` and exe are kept in
+`scratch/gen-prerelift/` for rollback.
+
 ## Phase 133 - Anisotropic filtering (2026-10-22)
 
 The user reported distant objects blurry, then sharp up close, and asked

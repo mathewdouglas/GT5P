@@ -703,7 +703,7 @@ defaults to `GT5P_VM_INLINE=ON`. Phase 79 records the earlier observations.
 ### Local state of this machine
 
 - **ps3recomp** is at `../ps3recomp-gt5p-master`, based on `5244db9`, with
-  local changes in 63 files. `patches/ps3recomp-5244db9-local.patch` is
+  local changes in 67 files. `patches/ps3recomp-5244db9-local.patch` is
   their backup. After every change there, refresh it with bash, not
   PowerShell, whose `>` re-encodes the file:
 
@@ -712,12 +712,14 @@ defaults to `GT5P_VM_INLINE=ON`. Phase 79 records the earlier observations.
     && git apply --check -R ../GT5P/patches/ps3recomp-5244db9-local.patch
   ```
 
-- **`generated/` is current.** It was lifted with the PPU lifter of
-  Phase 69 and the SPU lifter of Phase 72, and `build/gt5p.exe` is built
-  from it. A ps3recomp lifter change needs a re-lift:
+- **`generated/` is current.** It was re-lifted on 2026-10-23 (Phase 134)
+  with the PPU lifter that has the GT5 branch's `_cs_` stack-offset fix, and
+  the SPU lifter of Phase 72; `build/gt5p.exe` is built from it. A ps3recomp
+  lifter change needs a re-lift:
   - PPU: the README steps, then `scripts/setjmp_patch.py`,
     `scripts/spin_patch.py` and `scripts/ui_mask_patch.py` (all required;
-    `--check` reports);
+    `--check` reports; on an already patched tree `setjmp_patch.py`
+    finds nothing and exits 1, which is not a failure);
   - SPU: `.venv\Scripts\python scripts\lift_spu_jobs.py`, which takes
     about 20 s and rewrites `src/gen/spu_workloads_bcus98158.c` (diff it),
     then `scripts/spu_native_patch.py` (required; also after `--chain`).
@@ -1411,7 +1413,7 @@ lifted chunks at once and exhausts memory. If a full rebuild is needed, set
 `CMAKE_BUILD_PARALLEL_LEVEL=4` first.
 
 The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in 63 files under `include/`, `libs/`, `runtime/` and `tools/` (2026-10-20). The disc build does not
+changes in 67 files under `include/`, `libs/`, `runtime/` and `tools/` (2026-10-23). The disc build does not
 boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
 `runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
 without the ones in `runtime/syscalls/sys_ppu_thread.*`.
