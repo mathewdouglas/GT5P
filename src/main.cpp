@@ -888,13 +888,18 @@ int main(int argc, char* argv[])
         cellVideoOut_set_resolution(1 /* CELL_VIDEO_OUT_RESOLUTION_1080 */);
         printf("[GT5P] reporting a 1920x1080 display\n");
     }
-    /* 1440p: the game renders at 1080p and the backend's output pass scales
-     * the picture to a 2560x1440 window (3440x1440 ultrawide). */
+    /* 1440p: the game is told 1080p and lays out and frames everything as
+     * it would there; the backend renders its full-screen surfaces 1440 rows
+     * tall (RSX_RENDER_HEIGHT), so the picture is the same, natively sharper.
+     * The window is 2560x1440 (3440x1440 ultrawide). GT5P_RENDER_NATIVE=0:
+     * render at 1080p and let the output pass scale it up instead. */
     const bool res1440 = gt5p_settings().resolution == 1440;
     if (res1440 && !getenv("RSX_OUTPUT_SIZE")) {
         const char* uw = getenv("GT5P_ULTRAWIDE");
         _putenv_s("RSX_OUTPUT_SIZE", (uw && uw[0] && uw[0] != '0') ? "3440x1440" : "2560x1440");
     }
+    { const char* nat = getenv("GT5P_RENDER_NATIVE");
+      if (res1440 && !(nat && nat[0] == '0') && !getenv("RSX_RENDER_HEIGHT")) _putenv_s("RSX_RENDER_HEIGHT", "1440"); }
 
     lv2_register_all_syscalls(&g_lv2_syscalls);
 

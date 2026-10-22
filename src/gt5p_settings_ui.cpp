@@ -103,8 +103,8 @@ const std::vector<Item>& items()
     static const std::vector<Item> v = {
         { L"VIDEO", L"Resolution",
           L"The display mode the game is told it has, and the window size. The game renders "
-          L"natively at 720p and 1080p; 1440p (3440 x 1440 at 21:9) is rendered at 1080p and "
-          L"scaled up.",
+          L"natively at it; 1440p is 3440 x 1440 at 21:9. The view is the same at every "
+          L"resolution, only sharper.",
           "GT5P_RESOLUTION", { {720, L"1280 x 720"}, {1080, L"1920 x 1080"}, {1440, L"2560 x 1440"} },
           [](const Gt5pSettings& s) { return s.resolution; },
           [](Gt5pSettings& s, int v) { s.resolution = v; }, nullptr },

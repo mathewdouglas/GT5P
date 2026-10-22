@@ -9,6 +9,53 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 128 - Native 1440p rendering (2026-10-22)
+
+The user asked for 1440p rendered natively, with the same field of view: the
+cars the same size in the window, only sharper.
+
+**How.** The game is still told 1080p, so its layout, cameras and field of
+view are those of 1080p. Stage B's horizontal scaling (Phase 125) now has a
+vertical twin. `RSX_RENDER_HEIGHT=<rows>` makes `s_d3d.height` that tall
+and the width follows: 2560 for 16:9, `uw_wide_w` (3440) for 21:9.
+
+- **Display-class surfaces:** full height, of display width or the race
+  scene's 2/3. They are made `rs_hw` x `rs_hh` (`uw_host_w/h` in
+  `off_rt_get` and `zb_get`), and `uw_guest_w/h` undo it.
+- **When scaling is on:** `rs_on()` = native ultrawide or a render height.
+  With neither, every helper is the identity, so 1080p and 720p are
+  unchanged.
+- **The y twins of stage B's x scaling:**
+  - the per-draw viewport and scissor;
+  - depth-clear rectangles;
+  - write-backs and NV3089 readbacks (host rows `hy..hy+hh`, guest row r
+    read from `(y + r) * ky - hy`);
+  - the guest height of a target sampled as a texture;
+  - the depth copy's `ky`.
+- **WPOS:** y is scaled back to guest pixels through `rsx_alphatest.w`,
+  which was unused.
+- **Settings:** `video.resolution = "1440p"` sets `RSX_RENDER_HEIGHT=1440`.
+  `GT5P_RENDER_NATIVE=0` keeps Phase 127's 1080p render with the bicubic
+  upscale.
+
+**Measured** on the 3440x1440 monitor:
+
+- **Dealer, 21:9 borderless (`n1440uw`):** rendered 3440x1440 with no output
+  pass. The framing matches the upscaled shot, and the wheel spokes and
+  panel lines are visibly finer.
+- **Dealer, 16:9 (`n1440`):** 2560x1440, correct.
+- **HSR frame test, 21:9 native, 2x MSAA:**
+  - first run (`n1440ft`): 38.6 FPS with stalls up to 959 ms while new
+    shaders compiled (the WPOS text differs); GPU about 4.5-5 ms;
+  - warm (`n1440ft2`): 58.7 FPS, median 16.6 ms, p99 20.1 ms, 1.0% late.
+  - The race framing matches the upscaled run exactly, and the HUD is
+    crisp.
+- **Exposure meter (`nrb`):** 60 valid readbacks a second, none zero.
+- **Pit, Track Select, menu popup (`nrt`), opening screens, F1 page:**
+  correct.
+- **1080p 16:9 frame test (`n1080ft`):** 59.1 FPS, unchanged.
+- **Tests:** `settings_test.ps1` and `debug_export.ps1` pass.
+
 ## Phase 127 - Borderless fullscreen and 1440p output (2026-10-22)
 
 The user asked for a borderless fullscreen option, and for 3440x1440 and

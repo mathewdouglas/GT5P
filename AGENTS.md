@@ -99,7 +99,13 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: borderless fullscreen and 1440p (Phase 127).** F1 VIDEO > Window
+**Latest: native 1440p (Phase 128).** `"1440p"` now renders natively
+(`RSX_RENDER_HEIGHT=1440`): stage B's scaling is applied in y as well
+(`uw_host_h`/`uw_guest_h`, `rs_on()`), and WPOS y goes through
+`rsx_alphatest.w`. The game still lays out at 1080p, so the field of view is
+unchanged. `GT5P_RENDER_NATIVE=0` renders 1080p and upscales instead.
+
+**Borderless fullscreen and 1440p (Phase 127).** F1 VIDEO > Window
 (`video.window`, `RSX_WINDOW_MODE=borderless`) and Resolution 2560 x 1440
 (`"1440p"`, 3440x1440 at 21:9). The backend's output pass scales the
 render into a swap chain of another size (`RSX_OUTPUT_SIZE`,
