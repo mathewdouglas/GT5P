@@ -99,7 +99,12 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: native 1440p (Phase 128).** `"1440p"` now renders natively
+**Latest: 4K (Phase 129).** `"2160p"` / `"4k"` renders natively at
+3840x2160 (5120x2160 at 21:9, 64/27). Depth buffers and the depth copy grow
+past 2048 rows, and zb surfaces may be up to 8192 per side. Warm HSR frame
+test: 59.2 FPS (59.3 ultrawide).
+
+**Native 1440p (Phase 128).** `"1440p"` now renders natively
 (`RSX_RENDER_HEIGHT=1440`): stage B's scaling is applied in y as well
 (`uw_host_h`/`uw_guest_h`, `rs_on()`), and WPOS y goes through
 `rsx_alphatest.w`. The game still lays out at 1080p, so the field of view is

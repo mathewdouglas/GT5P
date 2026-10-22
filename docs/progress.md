@@ -9,6 +9,43 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 129 - 4K (2026-10-22)
+
+**What.** `video.resolution = "2160p"` (also `"2160"`, `"4k"`; F1 shows
+"3840 x 2160 (4K)") is the native path of Phase 128 at
+`RSX_RENDER_HEIGHT=2160`.
+
+- **Output size:** 3840x2160, or 5120x2160 with 21:9.
+- **Aspect at 21:9:** 64/27, which is 5120x2160 exactly. Only 1440p uses
+  43/18.
+
+**Limits raised in the backend.**
+
+- `zb_get` took at most 4096 per side; it now takes 8192 (5120 wide at 4K
+  ultrawide).
+- The shared depth buffer and the depth copy were 2048 rows; they are now
+  at least the render height (`depth_copy_h`, which the depth texture's
+  `ky` uses). The two stay the same size.
+- The 2048 checks on `surface_clip` are in guest units and stay as they
+  are.
+
+**Measured.** This machine's monitor is 3440x1440. The 4K backbuffer was
+checked through `RSX_CAP`, and window shots are shrunk to the work area.
+
+- **Dealer 4K backbuffer (`k4`):** 3840x2160, the same framing, finer
+  detail (tyre sidewall, door seams).
+- **HSR frame test, 4K 16:9, 2x MSAA:**
+  - first run (`k4ft`): 56.0 FPS, 5.2% late;
+  - warm (`k4ft2`): 59.2 FPS, p99 19.6 ms, 0.9% late;
+  - GPU time about 4.3 ms a frame.
+- **HSR frame test, 5120x2160 (`k4uwft`):** 59.3 FPS, p99 21.1 ms, 1.1%
+  late. The race picture is correct in both modes.
+- **Exposure meter at 5120x2160 (`k4rb`):** 60 valid readbacks a second.
+- **4K ultrawide, borderless on the 1440 monitor (`k4bl`):** the output
+  pass scales it down, a supersampled picture of 3413x1440 at x 13. 64/27
+  is narrower than 43/18, hence the thin bars.
+- **Tests:** `settings_test.ps1` and `debug_export.ps1` pass.
+
 ## Phase 128 - Native 1440p rendering (2026-10-22)
 
 The user asked for 1440p rendered natively, with the same field of view: the

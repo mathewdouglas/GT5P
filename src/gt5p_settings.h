@@ -20,7 +20,7 @@
 
 struct Gt5pSettings {
     /* [video] */
-    int resolution = 720;       /* 720, 1080 or 1440 (the game is told 1080p; the picture is scaled) */
+    int resolution = 720;       /* 720, 1080, 1440 or 2160 (above 1080 the game is told 1080p) */
     int msaa       = 4;         /* samples for targets the game antialiases: 1 (off), 2, 4, 8 */
     bool ultrawide = false;     /* 21:9 picture (GT5P_ULTRAWIDE, docs/plan-ultrawide.md) */
     bool borderless = false;    /* a borderless window over the monitor (RSX_WINDOW_MODE) */

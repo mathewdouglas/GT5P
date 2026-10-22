@@ -888,18 +888,22 @@ int main(int argc, char* argv[])
         cellVideoOut_set_resolution(1 /* CELL_VIDEO_OUT_RESOLUTION_1080 */);
         printf("[GT5P] reporting a 1920x1080 display\n");
     }
-    /* 1440p: the game is told 1080p and lays out and frames everything as
-     * it would there; the backend renders its full-screen surfaces 1440 rows
-     * tall (RSX_RENDER_HEIGHT), so the picture is the same, natively sharper.
-     * The window is 2560x1440 (3440x1440 ultrawide). GT5P_RENDER_NATIVE=0:
-     * render at 1080p and let the output pass scale it up instead. */
-    const bool res1440 = gt5p_settings().resolution == 1440;
-    if (res1440 && !getenv("RSX_OUTPUT_SIZE")) {
+    /* 1440p and 2160p (4K): the game is told 1080p and lays out and frames
+     * everything as it would there; the backend renders its full-screen
+     * surfaces that many rows tall (RSX_RENDER_HEIGHT), so the picture is the
+     * same, natively sharper. The window is 2560x1440 / 3440x1440 ultrawide,
+     * or 3840x2160 / 5120x2160. GT5P_RENDER_NATIVE=0: render at 1080p and let
+     * the output pass scale it up instead. */
+    const int res = gt5p_settings().resolution;
+    const bool res1440 = res == 1440, res_hi = res > 1080;
+    if (res_hi && !getenv("RSX_OUTPUT_SIZE")) {
         const char* uw = getenv("GT5P_ULTRAWIDE");
-        _putenv_s("RSX_OUTPUT_SIZE", (uw && uw[0] && uw[0] != '0') ? "3440x1440" : "2560x1440");
+        const bool w = uw && uw[0] && uw[0] != '0';
+        _putenv_s("RSX_OUTPUT_SIZE", res1440 ? (w ? "3440x1440" : "2560x1440") : (w ? "5120x2160" : "3840x2160"));
     }
     { const char* nat = getenv("GT5P_RENDER_NATIVE");
-      if (res1440 && !(nat && nat[0] == '0') && !getenv("RSX_RENDER_HEIGHT")) _putenv_s("RSX_RENDER_HEIGHT", "1440"); }
+      if (res_hi && !(nat && nat[0] == '0') && !getenv("RSX_RENDER_HEIGHT"))
+          _putenv_s("RSX_RENDER_HEIGHT", res1440 ? "1440" : "2160"); }
 
     lv2_register_all_syscalls(&g_lv2_syscalls);
 
@@ -949,7 +953,7 @@ int main(int argc, char* argv[])
               const uint32_t a = (uint32_t)strtoul(as, nullptr, 16);
               uint32_t cur; memcpy(&cur, vm_base + a, 4);
               if (_byteswap_ulong(cur) == 0x3FE38E39u) {          /* 16/9, as expected */
-                  /* 64/27 (2560x1080), or 43/18 for 3440x1440. */
+                  /* 64/27 (2560x1080, 5120x2160), or 43/18 for 3440x1440. */
                   const uint32_t be = _byteswap_ulong(res1440 ? 0x4018E38Eu : 0x4017B426u);
                   memcpy(vm_base + a, &be, 4);
                   printf("[GT5P] ultrawide: 21:9 aspect at 0x%08X\n", a);

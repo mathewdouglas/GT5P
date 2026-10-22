@@ -129,10 +129,11 @@ void read_resolution(toml::node_view<const toml::node> v, int& out)
         if (*s == "720p" || *s == "720")   { out = 720;  return; }
         if (*s == "1080p" || *s == "1080") { out = 1080; return; }
         if (*s == "1440p" || *s == "1440") { out = 1440; return; }
+        if (*s == "2160p" || *s == "2160" || *s == "4k" || *s == "4K") { out = 2160; return; }
     } else if (auto n = v.value<int64_t>()) {
-        if (*n == 720 || *n == 1080 || *n == 1440) { out = (int)*n; return; }
+        if (*n == 720 || *n == 1080 || *n == 1440 || *n == 2160) { out = (int)*n; return; }
     }
-    warn("video.resolution must be \"720p\", \"1080p\" or \"1440p\"; keeping " +
+    warn("video.resolution must be \"720p\", \"1080p\", \"1440p\" or \"2160p\"; keeping " +
          std::to_string(out) + "p");
 }
 
@@ -390,8 +391,9 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "\n"
          "[video]\n"
          "# Display mode the game is told it has, and the window size:\n"
-         "# \"720p\" (1280x720), \"1080p\" (1920x1080) or \"1440p\" (2560x1440, 3440x1440\n"
-         "# at 21:9). Rendered natively at it; the view is the same, only sharper.\n"
+         "# \"720p\" (1280x720), \"1080p\" (1920x1080), \"1440p\" (2560x1440, 3440x1440\n"
+         "# at 21:9) or \"2160p\" (4K: 3840x2160, 5120x2160 at 21:9). Rendered natively\n"
+         "# at it; the view is the same, only sharper.\n"
          "resolution = \"" << s.resolution << "p\"\n"
          "# Aspect ratio: \"16:9\", or \"21:9\" for an ultrawide window (2560x1080 at\n"
          "# 1080p): a wider view in races and the dealer, menus centred. [GT5P_ULTRAWIDE]\n"
@@ -483,7 +485,8 @@ static void apply_resolution_env(Gt5pSettings& s)
         if (!strcmp(r, "1080p") || !strcmp(r, "1080")) s.resolution = 1080;
         else if (!strcmp(r, "720p") || !strcmp(r, "720")) s.resolution = 720;
         else if (!strcmp(r, "1440p") || !strcmp(r, "1440")) s.resolution = 1440;
-        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p, 1080p or 1440p; ignored");
+        else if (!strcmp(r, "2160p") || !strcmp(r, "2160") || !_stricmp(r, "4k")) s.resolution = 2160;
+        else warn(std::string("GT5P_RESOLUTION=\"") + r + "\" is not 720p, 1080p, 1440p or 2160p; ignored");
     }
 }
 
