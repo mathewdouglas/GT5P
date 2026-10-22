@@ -4,6 +4,83 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 5 — RPCS3 reference boot; the disc's update package (2026-10-23)
+
+**The RPCS3 first boot.** The user drove a first boot in RPCS3. Screen order:
+
+1. warning;
+2. an install prompt the player must accept, then the install itself
+   (about 5 minutes);
+3. logo;
+4. "adjust display area";
+5. "creating GT5 system files";
+6. logo;
+7. opening movie;
+8. main menu.
+
+The install prompt is drawn by the title. The RPCS3 log has no
+`cellMsgDialog` call.
+
+**What runs is not the disc executable.** Before GT5 starts, RPCS3 installs
+`PS3_GAME/INSDIR/DATA000.PKG`. It is a category-GD update, `APP_VER`
+01.04, 201 MB. Its contents:
+
+- `USRDIR/EBOOT.BIN`, 26,708,368 bytes. The disc's is 26,031,880, so this is
+  a different executable.
+- 1,330 `USRDIR/PDIPFS` files.
+- `PARAM.SFO`, `ICON0.PNG`, `PS3LOGO.DAT` and `TROPDIR`.
+
+RPCS3 then boots `/dev_hdd0/game/BCUS98114/USRDIR/EBOOT.BIN` ("Updates found
+at /dev_hdd0/game/BCUS98114/"). A console also installs the disc's INSDIR
+package and runs the newer executable. This port lifts the disc's 01.00
+executable, which a console normally never runs.
+
+**The 01.00 executable expects the package's files.** Right after the
+warning it opens `PDIPFS/K/4D` and `PDIPFS/K/7M`; both failed here before.
+The 1,330 package files were copied from RPCS3's install into
+`gamedata/dev_hdd0/game/BCUS98114` (the list comes from the log's
+`PKG: Created file` lines; ignored game data). The title now reads them: `K/*` and
+`9/*`. The screen after the warning is still black.
+
+The in-game install, which the player accepts, writes the rest of `PDIPFS`
+(from `GT.VOL`) and creates:
+
+- the SQLite databases `db/system.db`, `grim2/grim007.db` and
+  `pace/data/pace.db`;
+- `installed00.dat`;
+- `/dev_hdd1/game249.db`.
+
+The call order after the warning in RPCS3 is: `cellGameBootCheck`,
+`ContentPermit`, `cellGameDataCheck(type=3)`, `ContentPermit`,
+`cellSysCacheMount`, then `cellSaveDataAutoLoad2`, which fails with
+`CBRESULT` because no save exists. The save is written much later with
+`cellSaveDataAutoSave2` into `BCUS98114-GAME`.
+
+**Why the screen stays black (open).** About 12 s after boot, the main thread
+reaches the null branch of a NULL check in `func_00B13248`: it calls
+`0x00B00E28`, which looks like an assert or throw. It then carries on with the
+NULL object:
+
+- `func_00B128F4` writes state 3 to `NULL+0x50`; the write is dropped;
+- `func_00B3F930` walks a list at `NULL+0x18`, called from the virtual method
+  `func_00B12DB4` (descriptor `0x018356C8`);
+- that is about 10,000 NULL reads a second (1.9 M in 100 s; `[null-read]` in
+  stderr).
+
+The same happens with and without the package files, and with Cross pressed
+every 3 s from 15 s. Which object is missing, and whether `0x00B00E28`
+throws, is not known.
+
+**Decision pending.** Lift the 01.04 package executable (what consoles and
+RPCS3 run), or keep debugging the 01.00 disc executable. With 01.04, every
+build-specific value would be re-derived for the new executable: `code_end`,
+seeds, jump tables, `wws_job_bodies`, HLE stubs. The scripts from Phases 1-4
+cover each step. Decrypting it needs RPCS3's Decrypt PS3 Binaries on the
+installed `EBOOT.BIN`.
+
+Evidence (ignored, local): `scratch/rpcs3/gt5-firstboot.log` (RPCS3, 136 MB),
+`scratch/rpcs3/pkg_files.txt`, `scratch/gamedata-BCUS98114-before-pkg/`.
+
 ## Phase 4 — First screen: a lifter bug in split-off epilogues (2026-10-23)
 
 **GT5 boots to its own first screen** (the epilepsy warning, drawn by the
