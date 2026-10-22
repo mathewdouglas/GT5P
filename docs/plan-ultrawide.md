@@ -47,7 +47,8 @@ gives the game a 21:9 aspect ratio.
    post-processing pass (keep the full width). The race HUD needs nothing,
    since it centres itself. Check the menus, dealer pages, pit, pause,
    replays, loading screens and the opening movie.
-4. **Finish:** a setting (resolution "2560x1080 (21:9)", with an env switch),
+4. **Finish** (done, Phase 124): F1 VIDEO > Aspect ratio and
+   `video.aspect`. Original plan: a setting (resolution "2560x1080 (21:9)", with an env switch),
    docs, and the frame test at 2560x1080.
 
 ## Ruled out

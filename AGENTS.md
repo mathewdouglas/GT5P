@@ -99,7 +99,10 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: ultrawide step 3 (Phase 123).** `GT5P_ULTRAWIDE=1` also patches
+**Latest: ultrawide setting (Phase 124).** F1 VIDEO > Aspect ratio, or
+`video.aspect = "21:9"`, turns ultrawide on (restart needed).
+
+**Ultrawide step 3 (Phase 123).** `GT5P_ULTRAWIDE=1` also patches
 the menus' UI aspect (`ui_aspect_16_9_float`), so the game centres menus at
 16:9. Full-screen dims and fades are stretched to the 21:9 edges by the
 vertex shader (`vp_posoffset.w`, `RSX_ULTRAWIDE_EDGES`). Open: the My Page

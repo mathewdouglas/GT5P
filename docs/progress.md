@@ -9,6 +9,20 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 124 - Ultrawide step 4: the Aspect ratio setting (2026-10-22)
+
+- **The setting:** F1 VIDEO > Aspect ratio (16:9 / 21:9 ultrawide) takes
+  effect after a restart. The settings file key is
+  `video.aspect = "16:9" | "21:9"`; it sets `GT5P_ULTRAWIDE=1`, which still
+  wins when set by hand. F8 reports show `ultrawide=`.
+- **Checked:**
+  - A settings file with only `resolution = "1080p"` and `aspect = "21:9"`
+    (`uwSet`): both constants were patched and the window was 2560x1080.
+  - `settings_test.ps1` now also saves and reverts the new row (Vsync is one
+    row further down) and passes. `debug_export.ps1` passes.
+- **Other resolutions:** 720p with 21:9 makes a 1707x720 window by the same
+  route, but it has not been looked at.
+
 ## Phase 123 - Ultrawide step 3: menus centred, full-screen layers widened (2026-10-22)
 
 **Menus lay themselves out.** The display block's set A aspect

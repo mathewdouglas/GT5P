@@ -106,6 +106,12 @@ const std::vector<Item>& items()
           "GT5P_RESOLUTION", { {720, L"1280 x 720"}, {1080, L"1920 x 1080"} },
           [](const Gt5pSettings& s) { return s.resolution; },
           [](Gt5pSettings& s, int v) { s.resolution = v; }, nullptr },
+        { L"VIDEO", L"Aspect ratio",
+          L"21:9 makes the window ultrawide (2560x1080 at 1080p): races and the dealer show a "
+          L"wider view, menus stay centred at 16:9. Best with 1080p. Takes effect after a restart.",
+          "GT5P_ULTRAWIDE", { {0, L"16:9"}, {1, L"21:9 ultrawide"} },
+          [](const Gt5pSettings& s) { return s.ultrawide ? 1 : 0; },
+          [](Gt5pSettings& s, int v) { s.ultrawide = v != 0; }, nullptr },
         { L"VIDEO", L"Antialiasing",
           L"Multisampling for what the game antialiases. The console used 2x; 4x is smoother "
           L"and costs a little speed.",

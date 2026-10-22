@@ -185,7 +185,7 @@ void read_tristate(toml::node_view<const toml::node> v, const char* key, int& ou
 bool known_key(std::string_view section, std::string_view key)
 {
     static const struct { const char* section; const char* key; } kKnown[] = {
-        {"video", "resolution"},     {"video", "msaa"},
+        {"video", "resolution"},     {"video", "msaa"},           {"video", "aspect"},
         {"video", "vsync"},          {"video", "shader_cache"},
         {"video", "shader_indicator"}, {"video", "shader_precompile"}, {"video", "shader_warmup"}, {"video", "pipeline_async"}, {"video", "race_preload"},
         {"input", "sdl_controllers"}, {"input", "keyboard"}, {"input", "button_prompts"},
@@ -244,6 +244,11 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
     report_unknown_keys(tbl);
     read_resolution(tbl["video"]["resolution"], s.resolution);
     read_msaa(tbl["video"]["msaa"], s.msaa);
+    if (auto n = tbl["video"]["aspect"]) {
+        const auto v = n.value<std::string>();
+        if (v && (*v == "16:9" || *v == "21:9")) s.ultrawide = *v == "21:9";
+        else warn("video.aspect must be \"16:9\" or \"21:9\"; keeping the default");
+    }
     read_bool(tbl["video"]["vsync"], "video.vsync", s.vsync);
     read_bool(tbl["video"]["shader_cache"], "video.shader_cache", s.shader_cache);
     read_bool(tbl["video"]["shader_indicator"], "video.shader_indicator", s.shader_indicator);
@@ -277,6 +282,7 @@ void apply_env(const Gt5pSettings& s)
     char buf[16];
     snprintf(buf, sizeof buf, "%d", s.msaa);
     set_default_env("RSX_MSAA", buf);
+    if (s.ultrawide) set_default_env("GT5P_ULTRAWIDE", "1");
     set_default_env("RSX_PRESENT_SYNC", s.vsync ? "1" : "0");
     /* "0" turns the cache off; when on, leave RSX_SHADER_CACHE unset so the
      * backend keeps its own default folder. */
@@ -310,6 +316,7 @@ void reflect_env(Gt5pSettings& s)
         s.msaa = (n == 2 || n == 4 || n == 8) ? n : (n <= 1 ? 1 : 4);   /* as rsx_msaa_samples() */
     }
     if (const char* e = getenv("RSX_PRESENT_SYNC")) s.vsync = atoi(e) != 0;   /* as the backend reads it */
+    { const char* e = getenv("GT5P_ULTRAWIDE"); s.ultrawide = e && e[0] && e[0] != '0'; }
     if (const char* e = getenv("RSX_SHADER_CACHE")) s.shader_cache = !(e[0] == '0' && !e[1]);
     if (const char* e = getenv("GT5P_SHADER_INDICATOR")) s.shader_indicator = e[0] != '0';
     if (const char* e = getenv("RSX_SHADER_WARMUP")) s.shader_warmup = e[0] == '1';
@@ -376,6 +383,9 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "# Display mode the game is told it has, and the window size:\n"
          "# \"720p\" (1280x720) or \"1080p\" (1920x1080). The game renders natively at it.\n"
          "resolution = \"" << s.resolution << "p\"\n"
+         "# Aspect ratio: \"16:9\", or \"21:9\" for an ultrawide window (2560x1080 at\n"
+         "# 1080p): a wider view in races and the dealer, menus centred. [GT5P_ULTRAWIDE]\n"
+         "aspect = \"" << (s.ultrawide ? "21:9" : "16:9") << "\"\n"
          "# Antialiasing samples for what the game antialiases: 1 (off), 2, 4 or 8.\n"
          "# The console used 2. [RSX_MSAA]\n"
          "msaa = " << s.msaa << "\n"

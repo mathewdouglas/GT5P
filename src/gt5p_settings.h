@@ -22,6 +22,7 @@ struct Gt5pSettings {
     /* [video] */
     int resolution = 720;       /* 720 or 1080: the display mode the game is told */
     int msaa       = 4;         /* samples for targets the game antialiases: 1 (off), 2, 4, 8 */
+    bool ultrawide = false;     /* 21:9 picture (GT5P_ULTRAWIDE, docs/plan-ultrawide.md) */
     bool vsync        = true;   /* wait for the monitor's vblank when presenting */
     bool shader_cache = true;   /* keep compiled shaders in shadercache/ between runs */
     bool shader_indicator = true;   /* "Compiling shaders" over the game while it is busy */
