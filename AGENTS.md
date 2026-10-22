@@ -99,7 +99,15 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: no dither, no banding (Phase 131).** The title's 8-bit colour
+**Latest: cockpit mirrors (Phase 132).** The cockpit view stamps its
+mirror shapes into the scene's stencil (REPLACE, ref 1/3) and draws each
+mirror through a stencil test. The glyph-mask redirect
+(`rsx_stencil_mask_pass`) took those stamps. It now applies only to the
+text's fill and erase ops (INVERT, INCR/DECR_WRAP, ZERO;
+`RSX_STENCIL_MASK_ANY=1` old). Draws that test stencil keep their zeta
+(`RSX_STENCIL_ZETA=0` old).
+
+**No dither, no banding (Phase 131).** The title's 8-bit colour
 targets are kept at 16 bits per channel (`RSX_HIGH_PRECISION`, `rsx_hp()`,
 `R16G16B16A16_UNORM`). Guest-memory fills, write-backs and readbacks
 convert. The title's dither noise is neutral (a sample of 0.5, expanding to

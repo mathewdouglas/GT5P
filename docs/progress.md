@@ -9,6 +9,46 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 132 - Cockpit mirrors (2026-10-22)
+
+**The fault.** In the cockpit view the interior and door mirrors were black,
+in 8-bit as well as 16-bit.
+
+**How the title draws them** (1080p capture `cap_cock`, Select at +22 s):
+
+- The mirror views are drawn straight into the scene target `0x01980000`
+  at their screen places: 281x147 at (0,274) for the interior mirror, 321
+  draws; 211x164 at (1025,648) for the door mirror, 102 draws.
+- Before them, op310/311 stamp the mirror shapes into the scene's stencil:
+  colour writes off, compare ALWAYS, pass op REPLACE, ref 1 and 3
+  (`ds=0x35FE6231`).
+- A depth-only clear follows (op312), and the mirror draws test stencil
+  EQUAL ref.
+
+**The cause.** `rsx_stencil_mask_pass` sent every stencil-writing,
+colour-masked draw to the glyph-mask stand-in target keyed by the zeta
+offset. That is right for the 2D text, which the title then samples as a
+texture. The mirror stamps therefore reached no stencil buffer, and every
+mirror draw failed its test.
+
+**The fix.**
+
+- A mask pass needs the text's operations: INVERT (even-odd fill),
+  INCR/DECR_WRAP (winding) or ZERO (the erase after the cover). The menu
+  capture `cap_hpm` shows text using only INVERT (`0xF600C231`) and ZERO
+  (`0xF6004451`).
+- A first version without ZERO garbled the menu text (`mtxt`).
+- `RSX_STENCIL_MASK_ANY=1` restores the old rule.
+- A draw that tests stencil now keeps its zeta offset even with depth test
+  off (`RSX_STENCIL_ZETA=0` old), so the stamps bind the scene's
+  depth-stencil buffer.
+
+**Checked:**
+
+- Cockpit at 1080p (`cock2`, `cock4`): both mirrors show the view behind.
+- Cockpit at 3440x1440 native (`cock3`): the interior mirror works.
+- Pit, Track Select, popup and HUD text (`mtxt2`): intact.
+
 ## Phase 131 - No dither noise, no banding (2026-10-22)
 
 The user asked to remove the dithering and fix any banding.
