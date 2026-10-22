@@ -99,7 +99,14 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: cockpit mirrors (Phase 132).** The cockpit view stamps its
+**Latest: anisotropic filtering (Phase 133).** The title asks for none
+(TEXTURE_CONTROL0 max-aniso 0). The bank's linear and trilinear samplers
+are now `D3D12_FILTER_ANISOTROPIC` (`RSX_ANISO`, default 16; F1 GAME >
+Texture filtering, `game.anisotropy`). The root signature is part of the
+pipeline key, so the first run after changing it rebuilds every pipeline:
+captures then show missing draws. That is the rebuild, not a fault.
+
+**Cockpit mirrors (Phase 132).** The cockpit view stamps its
 mirror shapes into the scene's stencil (REPLACE, ref 1/3) and draws each
 mirror through a stencil test. The glyph-mask redirect
 (`rsx_stencil_mask_pass`) took those stamps. It now applies only to the

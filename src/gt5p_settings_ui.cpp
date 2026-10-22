@@ -205,6 +205,13 @@ const std::vector<Item>& items()
           "RSX_HIGH_PRECISION", kOnOff,
           [](const Gt5pSettings& s) { return s.smooth_colour ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.smooth_colour = v != 0; }, nullptr },
+        { L"GAME", L"Texture filtering",
+          L"Anisotropic filtering keeps the road, kerbs and boards sharp into the distance; the "
+          L"game's own is trilinear, which blurs surfaces seen at a slant. Takes effect after a "
+          L"restart.",
+          "RSX_ANISO", { {1, L"Trilinear"}, {4, L"4x anisotropic"}, {8, L"8x anisotropic"}, {16, L"16x anisotropic"} },
+          [](const Gt5pSettings& s) { return s.anisotropy; },
+          [](Gt5pSettings& s, int v) { s.anisotropy = v; }, nullptr },
         { L"GAME", L"Shader compile indicator",
           L"Show \"Compiling shaders\" in the corner while the game builds shaders.",
           "GT5P_SHADER_INDICATOR", kOnOff,

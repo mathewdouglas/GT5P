@@ -46,6 +46,7 @@ struct Gt5pSettings {
     /* [game] */
     bool skip_movie = false;    /* press through the opening movie (PAD_SKIP_MOVIE) */
     bool smooth_colour = true;  /* 16-bit targets, no dither noise (RSX_HIGH_PRECISION) */
+    int anisotropy = 16;        /* 1 (trilinear), 4, 8 or 16: forced anisotropic filtering (RSX_ANISO) */
 
     /* [performance] */
     int vblank_hz100 = 5994;    /* the vblank clock, in 1/100 Hz: 5994 (console) or 6250 */

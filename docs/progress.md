@@ -9,6 +9,37 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 133 - Anisotropic filtering (2026-10-22)
+
+The user reported distant objects blurry, then sharp up close, and asked
+about draw distance.
+
+**The cause:** texture filtering. The title sets no anisotropy
+(TEXTURE_CONTROL0 bits 4-6 are 0, for example `ctl0=0x80078000`), and the
+backend's bank of 12 static samplers was plain trilinear or bilinear. Road,
+grid markings, walls and boards seen at a slant took a small mip early.
+
+**The fix:** the bank's filtered entries are `D3D12_FILTER_ANISOTROPIC`
+with MaxAnisotropy `RSX_ANISO` (default 16, 1 = off). Point entries stay
+point. Setting: F1 GAME > Texture filtering (Trilinear / 4x / 8x / 16x),
+`game.anisotropy`.
+
+**Measured** at 1080p:
+
+- **Same race moment (`cap_an1` against `cap_an16`, QuickArcadeRoot+12 s):**
+  the distant grid-box lines, the wall lettering and the road texture stay
+  sharp.
+- **Warm frame test (`anft2`):** 59.4 FPS, 1.5% late.
+- **The first run after the change** rebuilds every pipeline, because the
+  root signature is in the pipeline key. The cold `anft` gave 53.7 FPS,
+  and a cold capture showed cars without bodies and the HUD over black.
+  Both cleared on the next run.
+- **Dealer (`andl`):** unchanged.
+
+**Not changed:** the title's geometry levels of detail (model swaps by
+distance). A draw-distance or LOD scale would have to be found in the
+title's code.
+
 ## Phase 132 - Cockpit mirrors (2026-10-22)
 
 **The fault.** In the cockpit view the interior and door mirrors were black,
