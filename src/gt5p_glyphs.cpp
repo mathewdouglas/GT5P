@@ -18,6 +18,7 @@
  * names the key cellPad has bound to each button (pad_keyboard_vk). */
 #include "gt5p_glyphs.h"
 #include "gt5p_settings.h"
+#include "gt5p_keymap.h"
 
 #define NOMINMAX
 #include <windows.h>
@@ -92,6 +93,8 @@ std::mutex g_cache_mu;
 std::map<std::pair<unsigned long long, int>, std::vector<uint8_t>> g_cache;
 std::atomic<int> g_choice{GT5P_GLYPHS_AUTO};
 std::atomic<int> g_eff{GT5P_GLYPHS_PLAYSTATION};
+std::atomic<bool> g_keys_dirty{false};   /* a binding changed: reload the keyboard art */
+int g_keygen;                            /* cache generation of the keyboard art (g_cache_mu) */
 bool g_dbg = false;
 
 /* ---- PNG through WIC ---------------------------------------------------- */
@@ -494,7 +497,7 @@ int rsx_replace(unsigned long long hash, unsigned w, unsigned h, unsigned fmt, u
     const int style = g_eff.load();
     if (style == GT5P_GLYPHS_PLAYSTATION) return 1;
     std::lock_guard<std::mutex> lk(g_cache_mu);
-    auto key = std::make_pair(hash, style);
+    auto key = std::make_pair(hash, style | (style == GT5P_GLYPHS_KEYBOARD ? g_keygen << 4 : 0));
     auto c = g_cache.find(key);
     if (c == g_cache.end()) {
         c = g_cache.emplace(key, build(it->second, style, w, h, fmt, levels, nbytes,
@@ -547,32 +550,32 @@ void load_table()
     }
 }
 
-std::string key_name(int vk)
+void load_one(int style, int b, const std::string& name)
 {
-    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return std::string(1, (char)tolower(vk));
-    switch (vk) {
-    case VK_RETURN: return "enter";   case VK_TAB: return "tab";       case VK_SPACE: return "space";
-    case VK_SHIFT: return "shift";    case VK_CONTROL: return "ctrl";  case VK_MENU: return "alt";
-    case VK_ESCAPE: return "escape";  case VK_BACK: return "backspace";
-    case VK_UP: return "arrow_up";    case VK_DOWN: return "arrow_down";
-    case VK_LEFT: return "arrow_left"; case VK_RIGHT: return "arrow_right";
-    default: return "";
+    g_art[style][b] = Img();
+    if (name.empty()) return;
+    const std::string path = "assets/glyphs/kenney/" + name + ".png";
+    if (!load_png(path, g_art[style][b])) fprintf(stderr, "[glyphs] cannot read %s%c", path.c_str(), 10);
+}
+
+/* The keyboard's art follows the keys bound now (an unbound button keeps the
+ * game's art). */
+void load_keyboard_art()
+{
+    for (int b = 0; b < B_N; b++) {
+        const int vk = kBtnPad[b] ? pad_keyboard_vk(kBtnPad[b]) : 0;
+        const char* stem = vk ? gt5p_key_art(vk) : nullptr;
+        load_one(GT5P_GLYPHS_KEYBOARD, b, stem ? std::string("keyboard_") + stem : "");
     }
 }
 
 void load_art()
 {
-    auto one = [](int style, int b, const std::string& name) {
-        if (name.empty()) return;
-        const std::string path = "assets/glyphs/kenney/" + name + ".png";
-        if (!load_png(path, g_art[style][b])) fprintf(stderr, "[glyphs] cannot read %s%c", path.c_str(), 10);
-    };
     for (int b = 0; b < B_N; b++) {
-        one(GT5P_GLYPHS_XBOX, b, kXbox[b]);
-        one(GT5P_GLYPHS_NINTENDO, b, kNintendo[b]);
-        const int vk = kBtnPad[b] ? pad_keyboard_vk(kBtnPad[b]) : 0;
-        one(GT5P_GLYPHS_KEYBOARD, b, vk ? "keyboard_" + key_name(vk) : "");
+        load_one(GT5P_GLYPHS_XBOX, b, kXbox[b]);
+        load_one(GT5P_GLYPHS_NINTENDO, b, kNintendo[b]);
     }
+    load_keyboard_art();
 }
 
 int resolve()
@@ -603,6 +606,8 @@ void gt5p_glyphs_set_style(int style)
 
 int gt5p_glyphs_effective() { return g_eff.load(); }
 
+void gt5p_glyphs_keys_changed() { g_keys_dirty = true; }
+
 void gt5p_glyphs_init()
 {
     const char* e = getenv("GT5P_GLYPHS");
@@ -630,6 +635,10 @@ void gt5p_glyphs_init()
             Sleep(250);
             if (cycle > 0 && tick % std::max(1, cycle / 250) == 0)
                 g_choice = 1 + (tick / std::max(1, cycle / 250)) % 4;
+            if (g_keys_dirty.exchange(false)) {
+                { std::lock_guard<std::mutex> lk(g_cache_mu); load_keyboard_art(); g_keygen++; }
+                if (g_eff.load() == GT5P_GLYPHS_KEYBOARD) rsx_tex_replace_invalidate();
+            }
             const int s = resolve();
             if (s == g_eff.load()) continue;
             g_eff = s;

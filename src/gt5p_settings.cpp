@@ -1,5 +1,6 @@
 /* Player settings: gt5p_settings.toml. See gt5p_settings.h. */
 #include "gt5p_settings.h"
+#include "gt5p_keymap.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -197,6 +198,9 @@ bool known_key(std::string_view section, std::string_view key)
     };
     for (const auto& k : kKnown)
         if (section == k.section && key == k.key) return true;
+    if (section == "keyboard")
+        for (int i = 0; i < GT5P_KEY_BUTTONS; i++)
+            if (key == gt5p_key_button(i).key) return true;
     return false;
 }
 
@@ -250,6 +254,15 @@ void parse_into(const toml::table& tbl, Gt5pSettings& s)
     read_bool(tbl["input"]["sdl_controllers"], "input.sdl_controllers", s.sdl_controllers);
     read_bool(tbl["input"]["keyboard"], "input.keyboard", s.keyboard);
     read_prompts(tbl["input"]["button_prompts"], s.button_prompts);
+    for (int i = 0; i < GT5P_KEY_BUTTONS; i++) {
+        const char* k = gt5p_key_button(i).key;
+        auto n = tbl["keyboard"][k];
+        if (!n) continue;
+        const auto v = n.value<std::string>();
+        const int vk = v ? gt5p_key_from_name(v->c_str()) : -1;
+        if (vk >= 0) s.keys[i] = vk;
+        else warn(std::string("keyboard.") + k + ": not a key this port can bind; keeping the default");
+    }
     read_bool(tbl["game"]["skip_movie"], "game.skip_movie", s.skip_movie);
     read_vblank(tbl["performance"]["vblank_hz"], s.vblank_hz100);
     read_lane_cores(tbl["performance"]["lane_pinning"], s.lane_cores);
@@ -276,6 +289,7 @@ void apply_env(const Gt5pSettings& s)
     /* The pad switches test for presence, so only the "off" case sets one. */
     if (!s.sdl_controllers) set_default_env("PAD_NO_SDL", "1");
     if (!s.keyboard)        set_default_env("PAD_NO_KEYBOARD", "1");
+    set_default_env("PAD_KEYMAP", gt5p_keymap_format(s.keys).c_str());
     set_default_env("GT5P_GLYPHS", kPromptNames[s.button_prompts >= 0 && s.button_prompts < 5 ? s.button_prompts : 0]);
     /* The screen whose first read starts the presses (cellPad.c). */
     if (s.skip_movie)       set_default_env("PAD_SKIP_MOVIE", "MovieRoot");
@@ -305,6 +319,7 @@ void reflect_env(Gt5pSettings& s)
     s.sdl_controllers = getenv("PAD_NO_SDL") == nullptr;
     s.keyboard        = getenv("PAD_NO_KEYBOARD") == nullptr;
     if (const char* e = getenv("GT5P_GLYPHS")) { const int c = prompt_code(e); if (c >= 0) s.button_prompts = c; }
+    if (const char* e = getenv("PAD_KEYMAP")) gt5p_keymap_parse(e, s.keys);
     { const char* e = getenv("PAD_SKIP_MOVIE"); s.skip_movie = e && *e && strcmp(e, "0") != 0; }
     if (const char* e = getenv("PS3_VERBOSE")) s.verbose_log = (e[0] && e[0] != '0') ? 1 : 0;
     if (const char* e = getenv("GT5P_VBLANK_HZ")) s.vblank_hz100 = atof(e) > 62.0 ? 6250 : 5994;
@@ -333,6 +348,17 @@ bool gt5p_settings_store(const Gt5pSettings& s)
     if (!gt5p_settings_save(s, g_path)) return false;
     g_file = s;
     return true;
+}
+
+/* The [keyboard] section's key = "name" lines. */
+static std::string keyboard_lines(const Gt5pSettings& s)
+{
+    std::string out;
+    for (int i = 0; i < GT5P_KEY_BUTTONS; i++) {
+        const char* n = gt5p_key_name(s.keys[i]);
+        out += std::string(gt5p_key_button(i).key) + " = \"" + (n ? n : "None") + "\"\n";
+    }
+    return out;
 }
 
 bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
@@ -388,6 +414,14 @@ bool gt5p_settings_save(const Gt5pSettings& s, const std::string& path)
          "# keyboard art; a PlayStation pad keeps the game's own), or one of\n"
          "# \"playstation\", \"xbox\", \"nintendo\", \"keyboard\". [GT5P_GLYPHS]\n"
          "button_prompts = \"" << kPromptNames[s.button_prompts >= 0 && s.button_prompts < 5 ? s.button_prompts : 0] << "\"\n"
+         "\n"
+         "[keyboard]\n"
+         "# The key for each button when playing with the keyboard (also the F1 page's\n"
+         "# Keyboard tab). Letters, digits, Up Down Left Right, Enter, Tab, Space,\n"
+         "# Backspace, Shift, Ctrl, Alt, Insert, Delete, Home, End, PageUp, PageDown,\n"
+         "# Apostrophe, Comma, Period, Minus, Equals, Semicolon, Slash, Backquote,\n"
+         "# LeftBracket, Backslash, RightBracket, or None. [PAD_KEYMAP]\n"
+         << keyboard_lines(s) <<
          "\n"
          "[game]\n"
          "# Skip the opening movie (it plays only when the TV content is installed):\n"

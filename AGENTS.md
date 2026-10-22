@@ -99,7 +99,13 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: button prompts follow the controller (Phase 119).** Kenney's
+**Latest: rebindable keyboard (Phase 120).** The settings file has a
+`[keyboard]` section and the F1 page a Keyboard tab (Cross/Enter, then the
+key; a key in use swaps; Defaults). Both go through `PAD_KEYMAP`
+(`cross=Z,...`). The code is `src/gt5p_keymap.*` and cellPad's
+`pad_keyboard_set_vk`. The key art follows the bindings.
+
+**Button prompts follow the controller (Phase 119).** Kenney's
 CC0 art (`assets/glyphs/kenney/`) is painted over the game's button
 textures, which are listed by content hash in `assets/glyphs/textures.txt`:
 the 52x52 Cross by "Enter", the 460x720 button-assignment diagram and

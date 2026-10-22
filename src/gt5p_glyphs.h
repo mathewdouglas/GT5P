@@ -25,5 +25,8 @@ void gt5p_glyphs_init();
 /* The settings page: a new style choice, live. */
 void gt5p_glyphs_set_style(int style);
 
+/* A keyboard binding changed (gt5p_keymap.cpp): redraw the key art. */
+void gt5p_glyphs_keys_changed();
+
 /* The style in effect now (never AUTO), for reports. */
 int gt5p_glyphs_effective();

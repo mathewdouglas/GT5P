@@ -47,6 +47,7 @@
 #include "gt5p_settings.h"
 #include "gt5p_debug_export.h"
 #include "gt5p_glyphs.h"
+#include "gt5p_keymap.h"
 
 extern "C" {
 extern volatile int g_pad_input_blocked;        /* cellPad.c */
@@ -80,9 +81,19 @@ struct Item {
     int  (*get)(const Gt5pSettings&);
     void (*set)(Gt5pSettings&, int);
     void (*apply)(int);                      /* live; nullptr: after a restart */
+    int key = -1;                            /* a keyboard binding: its button (gt5p_keymap.h) */
 };
 
 const std::vector<Choice> kOnOff = { {1, L"On"}, {0, L"Off"} };
+
+/* Keyboard bindings: one item per button, the value a virtual-key code. */
+template <int N> int key_get(const Gt5pSettings& s) { return s.keys[N]; }
+template <int N> void key_set(Gt5pSettings& s, int v) { s.keys[N] = v; }
+template <int N> void key_apply(int v) { gt5p_keymap_apply_one(N, v); }
+const wchar_t* const kKeyHelp =
+    L"Cross or Enter, then press the key for this button. Escape cancels. A key another "
+    L"button has moves to it. Used when no controller is connected.";
+#define KEY_ITEM(n, label) { L"KEYBOARD", label, kKeyHelp, "PAD_KEYMAP", {}, key_get<n>, key_set<n>, key_apply<n>, n }
 
 const std::vector<Item>& items()
 {
@@ -152,8 +163,8 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.sdl_controllers ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.sdl_controllers = v != 0; }, nullptr },
         { L"INPUT", L"Keyboard as controller",
-          L"Arrows, Z/X/A/S for Cross/Circle/Square/Triangle, Q/W for L1/R1, 1/2 for L2/R2, "
-          L"Enter for Start, Tab for Select. Used when no controller is connected.",
+          L"Play with the keyboard when no controller is connected. The keys are on the "
+          L"Keyboard page (Z Cross, X Circle, Enter Start, arrows ... unless changed there).",
           "PAD_NO_KEYBOARD", kOnOff,
           [](const Gt5pSettings& s) { return s.keyboard ? 1 : 0; },
           [](Gt5pSettings& s, int v) { s.keyboard = v != 0; },
@@ -166,6 +177,10 @@ const std::vector<Item>& items()
           [](const Gt5pSettings& s) { return s.button_prompts; },
           [](Gt5pSettings& s, int v) { s.button_prompts = v; },
           [](int v) { gt5p_glyphs_set_style(v); } },
+        KEY_ITEM(0, L"Cross"),  KEY_ITEM(1, L"Circle"), KEY_ITEM(2, L"Square"), KEY_ITEM(3, L"Triangle"),
+        KEY_ITEM(4, L"L1"),     KEY_ITEM(5, L"R1"),     KEY_ITEM(6, L"L2"),     KEY_ITEM(7, L"R2"),
+        KEY_ITEM(8, L"L3"), KEY_ITEM(9, L"R3"), KEY_ITEM(10, L"Start"), KEY_ITEM(11, L"Select"),
+        KEY_ITEM(12, L"Up"),    KEY_ITEM(13, L"Down"),  KEY_ITEM(14, L"Left"),  KEY_ITEM(15, L"Right"),
         { L"GAME", L"Skip opening movie",
           L"Press through the opening movie as soon as it starts. It only plays when the TV "
           L"content is installed.",
@@ -238,8 +253,15 @@ std::wstring s_status;
 bool s_quit;                    /* the quit question is up */
 int s_quit_sel;                 /* 0 Cancel, 1 OK */
 volatile LONG s_quit_req;       /* Escape pressed in the game window */
+int s_capture = -1;             /* a key item waiting for its new key */
+uint8_t s_cap_was[256];         /* keys held when the wait began */
 
-enum { kRowRestart = -1, kRowClose = -2, kRowHead = -3 };
+enum { kRowRestart = -1, kRowClose = -2, kRowHead = -3, kRowDefaults = -4 };
+bool is_button(int id) { return id == kRowRestart || id == kRowClose || id == kRowDefaults; }
+
+/* The Keyboard page: sixteen bindings in two columns of eight. */
+const int kKeyY = 180, kKeyH = 34, kKeyFieldW = 130;
+bool keyboard_page();
 
 bool legacy_ui_flag()
 {
@@ -277,9 +299,12 @@ std::vector<int> rows()
     const wchar_t* sec = sections()[s_section];
     for (int i = 0; i < (int)items().size(); i++) if (!wcscmp(items()[i].section, sec)) r.push_back(i);
     if (restart_pending()) r.push_back(kRowRestart);
+    if (keyboard_page()) r.push_back(kRowDefaults);
     r.push_back(kRowClose);
     return r;
 }
+
+bool keyboard_page() { return !wcscmp(sections()[s_section], L"KEYBOARD"); }
 
 /* Where each row sits: items down the panel, buttons side by side, centred. */
 struct Slot { int x0, x1, y; };
@@ -287,10 +312,15 @@ std::vector<Slot> layout(const std::vector<int>& r)
 {
     std::vector<Slot> out;
     int nbtn = 0, y = kRowY;
-    for (int id : r) nbtn += id == kRowRestart || id == kRowClose;
+    for (int id : r) nbtn += is_button(id);
     int bx = kW / 2 - (nbtn * kBtnW + (nbtn - 1) * kBtnGap) / 2;
     for (int id : r) {
         if (id == kRowHead) out.push_back({ kPx0 + 40, kPx1 - 40, kBarY });
+        else if (id >= 0 && items()[id].key >= 0) {
+            const int k = items()[id].key, col = k / 8;
+            const int x0 = col ? kW / 2 + 10 : kPx0 + 30;
+            out.push_back({ x0, x0 + (kPx1 - kPx0) / 2 - 40, kKeyY + (k % 8) * kKeyH });
+        }
         else if (id >= 0) { out.push_back({ kPx0 + 40, kPx1 - 40, y }); y += kRowH; }
         else { out.push_back({ bx, bx + kBtnW, kBtnY }); bx += kBtnW + kBtnGap; }
     }
@@ -334,11 +364,15 @@ void relaunch()
 void set_open(bool open);
 void set_value(int id, int v);
 
+void reset_keys();
+
 void change(int id, int dir)
 {
     if (id == kRowClose) { set_open(false); return; }
     if (id == kRowRestart) { relaunch(); return; }
+    if (id == kRowDefaults) { reset_keys(); return; }
     const Item& it = items()[id];
+    if (it.key >= 0) return;
     const int n = (int)it.choices.size();
     set_value(id, it.choices[(choice_index(it) + dir + n) % n].value);
 }
@@ -355,6 +389,53 @@ void set_value(int id, int v)
     if (over) s_status += L"  " + widen(it.env) + L" is set in the environment and wins over this.";
     else if (it.apply) { it.apply(v); s_status += L"  Applied."; }
     else if (it.get(s_edit) != it.get(s_boot)) s_status += L"  Takes effect after a restart.";
+}
+
+/* The item for button `k`'s binding. */
+int key_item(int k)
+{
+    for (int i = 0; i < (int)items().size(); i++) if (items()[i].key == k) return i;
+    return -1;
+}
+
+/* Bind button k to vk; a button that had vk gets k's old key. */
+void assign_key(int k, int vk)
+{
+    const int old = s_edit.keys[k];
+    std::wstring moved;
+    for (int j = 0; j < GT5P_KEY_BUTTONS; j++)
+        if (j != k && vk && gt5p_key_normalize(s_edit.keys[j]) == gt5p_key_normalize(vk)) {
+            set_value(key_item(j), old);
+            moved = widen(gt5p_key_name(vk)) + L" moved from " + gt5p_key_button(j).label + L"; " +
+                    gt5p_key_button(j).label + L" is now " + widen(gt5p_key_name(old) ? gt5p_key_name(old) : "None") + L".  ";
+        }
+    set_value(key_item(k), vk);
+    if (!moved.empty()) s_status = moved + s_status;
+}
+
+void reset_keys()
+{
+    for (int k = 0; k < GT5P_KEY_BUTTONS; k++) set_value(key_item(k), gt5p_key_button(k).default_vk);
+    s_status = L"Default keys.  " + s_status;
+}
+
+/* The key-wait's result: a key, Escape to cancel, or a key the port keeps. */
+void capture_key(int vk)
+{
+    if (s_capture < 0) return;
+    if (vk == VK_ESCAPE) { s_capture = -1; s_status = L"Not changed."; return; }
+    vk = gt5p_key_normalize(vk);
+    if (!gt5p_key_name(vk)) { s_status = L"That key cannot be bound (Escape and F1-F12 belong to the port)."; return; }
+    const int k = items()[s_capture].key;
+    s_capture = -1;
+    assign_key(k, vk);
+}
+
+void begin_capture(int id)
+{
+    s_capture = id;
+    for (int vk = 0; vk < 256; vk++) s_cap_was[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    s_status = L"";
 }
 
 /* ---- drawing ---- */
@@ -621,12 +702,25 @@ void paint(HDC dc)
         const bool sel = (int)i == s_sel;
         if (id == kRowHead) { section_bar(dc, sl[i].x0, sl[i].x1, y, sections()[s_section], sel); continue; }
         if (id < 0) {
-            button(dc, sl[i].x0, y, id == kRowRestart ? L"Restart" : L"Close", sel);
+            button(dc, sl[i].x0, y, id == kRowRestart ? L"Restart" : id == kRowDefaults ? L"Defaults" : L"Close", sel);
             if (sel) cursor(dc, sl[i].x0 + kBtnW / 2 + 2, y + 18);
             continue;
         }
         const Item& it = items()[id];
         const bool over = gt5p_settings_overridden(it.env);
+        if (it.key >= 0) {
+            /* A binding: the button's name, then its key in a box. */
+            const int x0 = sl[i].x0, fx = x0 + 160;
+            text_in(dc, fRow, x0, y, fx - 16, y + kKeyH - 6, over ? grey(100) : grey(190), it.label, DT_RIGHT);
+            fill(dc, fx - 1, y - 1, fx + kKeyFieldW + 1, y + kKeyH - 5, sel ? RGB(168, 0, 0) : grey(5));
+            fill(dc, fx, y, fx + kKeyFieldW, y + kKeyH - 6, RGB(0, 4, 0));
+            const char* kn = gt5p_key_name(it.get(s_edit));
+            const std::wstring v = s_capture == id ? L"Press a key" : kn ? widen(kn) : L"?";
+            text_in(dc, fRow, fx + 12, y, fx + kKeyFieldW - 6, y + kKeyH - 7,
+                    s_capture == id ? RGB(237, 60, 60) : over ? grey(100) : grey(204), v.c_str(), DT_LEFT);
+            if (sel && s_capture != id) cursor(dc, fx + kKeyFieldW - 18, y + 8);
+            continue;
+        }
         const bool later = !it.apply && !over && it.get(s_edit) != it.get(s_boot);
         /* A dotted rule under every row but the last. */
         if (i + 1 < r.size() && r[i + 1] >= 0)
@@ -653,7 +747,11 @@ void paint(HDC dc)
         RECT rc = { kPx0 + 40, kHelpY, kPx1 - 40, kRule2 - 6 };
         HGDIOBJ o = SelectObject(dc, fHelp);
         SetTextColor(dc, grey(150)); SetTextAlign(dc, TA_LEFT | TA_TOP);
-        DrawTextW(dc, items()[r[s_sel]].help, -1, &rc, DT_WORDBREAK | DT_NOPREFIX | DT_CENTER);
+        std::wstring help = items()[r[s_sel]].help;
+        if (s_capture >= 0)
+            help = std::wstring(L"Press the key for ") + items()[s_capture].label +
+                   L". Escape (or Circle) cancels.";
+        DrawTextW(dc, help.c_str(), -1, &rc, DT_WORDBREAK | DT_NOPREFIX | DT_CENTER);
         SelectObject(dc, o);
     } else if (s_sel == 0) {
         text_in(dc, fHelp, kPx0, kHelpY, kPx1, kHelpY + 24, grey(150), L"L1 / R1, or Left / Right here: the other settings pages");
@@ -719,6 +817,8 @@ void click(int mx, int my)
             }
         } else if (id < 0) {
             if (my >= y && my < y + kBtnH && mx >= sl[i].x0 && mx < sl[i].x1) { s_sel = (int)i; press(); return; }
+        } else if (items()[id].key >= 0) {
+            if (my >= y && my < y + kKeyH - 4 && mx >= sl[i].x0 && mx < sl[i].x1) { s_sel = (int)i; press(); return; }
         } else if (my >= y && my < y + kFieldH && mx >= kPx0 && mx < kFieldX + kFieldW + 12 + kDropW) {
             s_sel = (int)i;
             if (mx >= kFieldX) press();
@@ -1136,7 +1236,7 @@ void quit_choose(int k)
 int first_button(const std::vector<int>& r)
 {
     int nb = 0;
-    for (int id : r) nb += id == kRowRestart || id == kRowClose;
+    for (int id : r) nb += is_button(id);
     return (int)r.size() - nb;
 }
 
@@ -1164,6 +1264,7 @@ void switch_section(int dir)
     const int n = (int)sections().size();
     s_section = (s_section + dir + n) % n;
     s_drop = false;
+    s_capture = -1;
     if (s_sel != 0) s_sel = 1;
 }
 
@@ -1175,6 +1276,11 @@ void activate(int dir)
     const std::vector<int> r = rows();
     if (s_sel < 0 || s_sel >= (int)r.size()) return;
     if (r[s_sel] == kRowHead) { switch_section(dir); return; }
+    if (r[s_sel] >= 0 && items()[r[s_sel]].key >= 0) {   /* the other column, same line */
+        const int other = key_item((items()[r[s_sel]].key + 8) % 16);
+        for (int i = 0; i < (int)r.size(); i++) if (r[i] == other) s_sel = i;
+        return;
+    }
     if (r[s_sel] >= 0) { change(r[s_sel], dir); return; }
     const int fb = first_button(r), nb = (int)r.size() - fb;
     s_sel = fb + ((s_sel - fb + dir + nb) % nb);
@@ -1199,6 +1305,7 @@ void press()
     const std::vector<int> r = rows();
     if (s_sel < 0 || s_sel >= (int)r.size()) return;
     if (r[s_sel] == kRowHead) { switch_section(+1); return; }
+    if (r[s_sel] >= 0 && items()[r[s_sel]].key >= 0) { begin_capture(r[s_sel]); return; }
     if (r[s_sel] >= 0) { s_drop = true; s_drop_sel = choice_index(items()[r[s_sel]]); return; }
     change(r[s_sel], +1);
 }
@@ -1206,7 +1313,8 @@ void press()
 /* Circle/Escape: close the list if it is open, else the page. */
 void back()
 {
-    if (s_drop) s_drop = false;
+    if (s_capture >= 0) { s_capture = -1; s_status = L"Not changed."; }
+    else if (s_drop) s_drop = false;
     else set_open(false);
 }
 
@@ -1241,6 +1349,7 @@ LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
             redraw();
             return 0;
         }
+        if (s_capture >= 0) { capture_key((int)w); redraw(); return 0; }
         switch (w) {
         case VK_UP:    move_sel(-1); break;
         case VK_DOWN:  move_sel(+1); break;
@@ -1349,7 +1458,17 @@ DWORD WINAPI ui_thread(LPVOID)
         if (modal && !modal_was)
             for (int vk : keys) key_was[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
         modal_was = modal;
-        if (modal && game_fg) {
+        /* Waiting for a binding's key: every key, its first new press. */
+        if (s_capture >= 0 && s_open && s_overlay && game_fg) {
+            for (int vk = 8; vk < 256; vk++) {
+                const bool held = (GetAsyncKeyState(vk) & 0x8000) != 0;
+                const bool hit = held && !s_cap_was[vk];
+                s_cap_was[vk] = held;
+                if (hit && s_capture >= 0) { capture_key(vk); redraw(); }
+            }
+            if (s_capture < 0)   /* the key that ended the wait is not a page press */
+                for (int vk : keys) key_was[vk] = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        } else if (modal && game_fg) {
             const ULONGLONG t = GetTickCount64();
             bool changed = false;
             for (int vk : keys) {
@@ -1419,6 +1538,9 @@ DWORD WINAPI ui_thread(LPVOID)
             else if (act & kCircle) set_quit(false);
         } else if ((down & kSelect) && !s_open && s_in_options && hint_enabled() && game_fg) set_open(true);
         else if ((down & kPs) && (s_open || game_fg)) set_open(!s_open);
+        else if (s_open && s_capture >= 0) {
+            if (act & kCircle) { back(); redraw(); }
+        }
         else if (s_open) {
             if (act & kUp) move_sel(-1);
             if (act & kDown) move_sel(+1);

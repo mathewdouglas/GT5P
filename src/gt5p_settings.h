@@ -35,6 +35,12 @@ struct Gt5pSettings {
     bool keyboard        = true;    /* keyboard as pad 1 when no controller is connected */
     int button_prompts   = 0;       /* 0 auto, 1 PlayStation, 2 Xbox, 3 Nintendo, 4 keyboard (gt5p_glyphs.h) */
 
+    /* [keyboard]: the key (Windows virtual-key code, 0 none) for each button,
+     * in gt5p_keymap.h's order: Cross Circle Square Triangle L1 R1 L2 R2 L3
+     * R3 Start Select Up Down Left Right. */
+    int keys[16] = { 'Z', 'X', 'A', 'S', 'Q', 'W', '1', '2', 0, 0,
+                     0x0D /* Enter */, 0x09 /* Tab */, 0x26, 0x28, 0x25, 0x27 /* arrows */ };
+
     /* [game] */
     bool skip_movie = false;    /* press through the opening movie (PAD_SKIP_MOVIE) */
 

@@ -9,6 +9,52 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 120 - Rebindable keyboard keys (2026-10-22)
+
+The user asked for the keyboard's keys to be changeable, since a keyboard
+has far more keys than a pad has buttons.
+
+- **cellPad:** `s_kbd_map` is now a mutable table of all 16 buttons, with
+  L3/R3 included and unbound by default. `pad_keyboard_set_vk(btn, vk)`
+  rebinds while running; the poll skips unbound entries.
+- **`src/gt5p_keymap.*`:** holds the button table (settings key, label, pad
+  bit, default) and the bindable keys, each with name, virtual-key code and
+  Kenney art.
+  - Bindable keys: letters, digits, arrows, Enter, Tab, Space, Backspace,
+    Shift, Ctrl, Alt, Insert, Delete, Home, End, PageUp, PageDown and the
+    punctuation keys.
+  - Left and right Shift/Ctrl/Alt read as one key. Escape and F1-F12 are
+    refused, because the port uses them.
+  - It also parses and formats `PAD_KEYMAP` (`cross=Z,circle=X,...`).
+- **Settings file:** a new `[keyboard]` section (`cross = "Z"` ...) goes to
+  `PAD_KEYMAP`, which wins over the file. `gt5p_keymap_init()` applies it at
+  start-up, before the glyph module loads its art.
+- **F1 page:** a new Keyboard tab shows two columns of eight bindings.
+  - Cross or Enter waits for a key. Escape or Circle cancels.
+  - A key another button had swaps onto the old key, and the status line
+    says so. Left/Right jump between the columns.
+  - A Defaults button restores the original keys.
+  - The page's own navigation keys stay fixed; they only drive the page.
+- **Prompts:** a rebinding sets a flag. The glyph watcher reloads the
+  keyboard art and bumps a cache generation, which keys the keyboard style's
+  cache. Old entries are kept, not freed, so an upload in progress never
+  reads freed bytes. The listed textures then upload again. The extra key
+  art takes `assets/glyphs/kenney/` to 89 PNGs (234 KB).
+- **Checked:**
+  - `keys_t` posts keys to the page against a scratch settings file:
+    - Cross K: saved.
+    - Circle K: saved, and Cross took X.
+    - F1 while waiting: refused.
+    - Escape: left the binding unchanged.
+    - R3 Comma: saved.
+    - Defaults: restored Z and None.
+  - `keyslive` ran with `PAD_KEYMAP=circle=K,right=L,left=J,cross=I` and
+    SDL off, so the keyboard was pad 0, and sent real key events. K closed
+    the menu popup, L and J moved along the tabs and I opened a page. The
+    prompt read "I Enter".
+  - `debug_export.ps1` passes. It now builds `gt5p_keymap.cpp`, with two
+    more stubs.
+
 ## Phase 119 - Button prompts for the controller in use (2026-10-22)
 
 The user asked for the prompts to follow the connected controller, using

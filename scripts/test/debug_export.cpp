@@ -34,6 +34,8 @@ extern "C" void gt5p_debug_snapshot(FILE* out) {
 extern "C" void gt5p_pv_export(FILE* out) { fprintf(out, "test frame marker\n"); }
 extern "C" volatile int g_pad_device_family = 0;   /* cellPad.c */
 int gt5p_glyphs_effective() { return 1; }            /* gt5p_glyphs.cpp */
+void gt5p_glyphs_keys_changed() {}
+extern "C" void pad_keyboard_set_vk(unsigned, int) {}   /* cellPad.c */
 
 static void wait_report(int expected) {
     char message[256];

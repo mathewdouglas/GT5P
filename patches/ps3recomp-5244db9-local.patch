@@ -4855,7 +4855,7 @@ index 5166a47..c627e66 100644
      if (!path || !sb)
          return CELL_EFAULT;
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c11..a4ce0f8 100644
+index f2b4c11..b77f11e 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -52,6 +52,7 @@
@@ -4888,7 +4888,7 @@ index f2b4c11..a4ce0f8 100644
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,13 +156,229 @@ static int pad_host_window_focused(void)
+@@ -140,13 +156,239 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
@@ -5064,7 +5064,9 @@ index f2b4c11..a4ce0f8 100644
 +static int s_kbd_off = -1;
 +void pad_set_keyboard_enabled(int on) { s_kbd_off = on ? 0 : 1; }
 +
-+static const struct { int vk; u16 btn; } s_kbd_map[] = {
++/* The key for each button; 0 leaves it unbound. The port may rebind them
++ * while running (pad_keyboard_set_vk): one int store each, read by the poll. */
++static struct { volatile int vk; u16 btn; } s_kbd_map[] = {
 +    { VK_UP,     CELL_PAD_CTRL_UP },      { VK_DOWN,  CELL_PAD_CTRL_DOWN },
 +    { VK_LEFT,   CELL_PAD_CTRL_LEFT },    { VK_RIGHT, CELL_PAD_CTRL_RIGHT },
 +    { 'Z',       CELL_PAD_CTRL_CROSS },   { 'X',      CELL_PAD_CTRL_CIRCLE },
@@ -5072,7 +5074,15 @@ index f2b4c11..a4ce0f8 100644
 +    { 'Q',       CELL_PAD_CTRL_L1 },      { 'W',      CELL_PAD_CTRL_R1 },
 +    { '1',       CELL_PAD_CTRL_L2 },      { '2',      CELL_PAD_CTRL_R2 },
 +    { VK_RETURN, CELL_PAD_CTRL_START },   { VK_TAB,   CELL_PAD_CTRL_SELECT },
++    { 0,         CELL_PAD_CTRL_L3 },      { 0,        CELL_PAD_CTRL_R3 },
 +};
++
++/* Bind one CELL_PAD_CTRL_* button to a virtual-key code (0: none). */
++void pad_keyboard_set_vk(unsigned btn, int vk)
++{
++    for (unsigned i = 0; i < sizeof s_kbd_map / sizeof s_kbd_map[0]; i++)
++        if (s_kbd_map[i].btn == btn) s_kbd_map[i].vk = vk;
++}
 +
 +/* The Windows virtual-key code bound to one CELL_PAD_CTRL_* button (of the
 + * digital1 word), 0 if none: the port's prompts name the real key. */
@@ -5091,7 +5101,7 @@ index f2b4c11..a4ce0f8 100644
 +    if (s_kbd_off || !pad_host_window_focused()) return 0;
 +    u16 btns = 0;
 +    for (unsigned i = 0; i < sizeof s_kbd_map / sizeof s_kbd_map[0]; i++)
-+        if (GetAsyncKeyState(s_kbd_map[i].vk) & 0x8000) btns |= s_kbd_map[i].btn;
++        if (s_kbd_map[i].vk && (GetAsyncKeyState(s_kbd_map[i].vk) & 0x8000)) btns |= s_kbd_map[i].btn;
 +    return btns;
 +}
 +
@@ -5121,7 +5131,7 @@ index f2b4c11..a4ce0f8 100644
      if (!pad_host_window_focused()) {
          /* Release everything on focus loss, or a key held while alt-tabbing
           * would stay down forever. */
-@@ -157,19 +389,7 @@ static void pad_poll_keyboard(void)
+@@ -157,19 +399,7 @@ static void pad_poll_keyboard(void)
          return;
      }
  
@@ -5142,7 +5152,7 @@ index f2b4c11..a4ce0f8 100644
  
      hs->buttons   = btns;
      hs->connected = 1;
-@@ -390,6 +610,287 @@ static void pad_shutdown_backend(void)
+@@ -390,6 +620,287 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -5430,7 +5440,7 @@ index f2b4c11..a4ce0f8 100644
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -407,7 +908,6 @@ static void pad_shutdown_backend(void)
+@@ -407,7 +918,6 @@ static void pad_shutdown_backend(void)
   * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
   * a real DualShock 3's own report rate), so no game can tell the difference,
   * including one sampling for button-press edges. */
@@ -5438,7 +5448,7 @@ index f2b4c11..a4ce0f8 100644
  
  static unsigned long long pad_now_ms(void)
  {
-@@ -421,13 +921,44 @@ static unsigned long long pad_now_ms(void)
+@@ -421,13 +931,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -5486,7 +5496,7 @@ index f2b4c11..a4ce0f8 100644
      s_last_ms = now;
      /* A real pad streams reports at roughly this rate whether or not anything
       * changed, and libpad buffers them; a fresh sweep is a fresh report for
-@@ -435,12 +966,76 @@ static void pad_poll_backend(void)
+@@ -435,12 +976,76 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT

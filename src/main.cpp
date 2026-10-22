@@ -37,6 +37,7 @@
 #include "gt5p_settings.h"
 #include "gt5p_debug_export.h"
 #include "gt5p_glyphs.h"
+#include "gt5p_keymap.h"
 
 /* The lifter's function table, defined in the generated sources. Declared here
  * rather than including generated/ppu_recomp.h: that header defines its own
@@ -731,6 +732,7 @@ int main(int argc, char* argv[])
 
     rsx_d3d12_on_close = window_closed;
     gt5p_debug_init();
+    gt5p_keymap_init();   /* the keyboard's bindings ([keyboard], PAD_KEYMAP) */
     gt5p_glyphs_init();   /* button prompts for the device in use (GT5P_GLYPHS=0: off) */
 
     /* Schedule guest threads by their PS3 priority on two host cores, as the
