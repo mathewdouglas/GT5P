@@ -9,6 +9,66 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 123 - Ultrawide step 3: menus centred, full-screen layers widened (2026-10-22)
+
+**Menus lay themselves out.** The display block's set A aspect
+(`0x0138D2B0`) is what the menus' 2D layout reads.
+
+- Set at 21:9 before the menus load (a kept `GT5P_POKE` at `CursorRoot`), the
+  game centres every menu at 16:9 proportions inside the 21:9 frame. That
+  covers My Page, Track Select, Race Mode, the pit, Driving Options, the
+  starting grid and the loading logo.
+- Set A takes its value from `func_000156D0`, through `func_007AE2A0`, from a
+  second 16/9 constant at `0x0126AE5C`. No other code reads it.
+- That address is now `ui_aspect_16_9_float` in `config/targets.json`.
+  `GT5P_ULTRAWIDE=1` patches both constants at load; `GT5P_ULTRAWIDE_UI=0`
+  leaves menus stretched.
+- Other 16/9 constants are read by functions around `0x5C1000`-`0x675000`.
+  Their use is unknown; the screens checked so far do not need them.
+
+**Full-screen 2D layers.** Laid out to the 16:9 width, the popup dimming,
+the menu's bottom shading bar and the page fades covered only the middle 3/4
+and left the sides bright. RenderDoc (`uwdim`) shows those draws end exactly
+at clip x = ±0.75.
+
+- **The fix:** in ultrawide mode only, the vertex shader epilogue
+  (`rsx_vp_decompiler.c`) moves vertices on ±0.75 to the screen's edge, for
+  draws the backend marks in `vp_posoffset.w`. Other runs keep their cached
+  shaders.
+- **What gets marked** (`vp_record_cb`):
+  - a draw into the display surface (`rt_off` 0, where the 2D layer is drawn)
+    or a display-sized target;
+  - depth test off, colour written, stencil test off (bit 0 of the stencil
+    key), so not the text's glyph-outline passes;
+  - no sampled unit wider than 16 texels (`rsx_fp_texture_mask`, cached per
+    program; leftover bindings do not count).
+- **Scissor:** these layers are also scissored to the 16:9 area
+  (240,0,1440x1080). That scissor, and only one exactly that size and place,
+  is widened at replay. A first version widened any marked draw's scissor and
+  blacked out the race: the rear-view mirror's box drew over the whole
+  screen.
+- **Switches:** `RSX_ULTRAWIDE_EDGES=0` turns this off.
+  `RSX_ULTRAWIDE_EDGEDBG=1` logs the candidate draws.
+
+**Measured** at 1080p/2x MSAA, from 2560x1080 window shots:
+
+- Tour `uwT3` (menu, Arcade, Daytona pit, Driving Options, grid, race,
+  pause) and menu popup `uwE6`: the dimming and fades cover the full width,
+  and the text is intact.
+- HSR race `uwR`: correct, with the HUD centred by the game.
+- HSR frame test (`uwFT`): 59.0 FPS, median 16.6 ms, p99 24.5 ms, 1.6% late,
+  walk 7.0 ms.
+
+**Known issues.**
+
+- **My Page icon row:** the labels end at guest x ~1280, so "2P Battle" is
+  cut and "Events" is missing; the icons themselves draw. The cut sits at
+  1706 x 0.75, which looks like a label fade mask placed by scaled
+  coordinates without the centring offset. That is the game's own aspect
+  handling, not a scissor; the row's scissor (398-1521) is right.
+- **Still stretched:** the F1 page (the port's overlay, drawn into the 16:9
+  backbuffer) and the opening movie.
+
 ## Phase 122 - Ultrawide step 2, stage A: anamorphic 21:9 (2026-10-22)
 
 **What it does.** `GT5P_ULTRAWIDE=1`, which needs `GT5P_RESOLUTION=1080p`:

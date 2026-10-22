@@ -38,7 +38,11 @@ gives the game a 21:9 aspect ratio.
    Then follow what draws in pixels: MSAA resolves, the depth copy, frame
    copies, NV3089 blits, texel-addressed sampling and write-backs. Look for
    pop-in at the screen edges.
-3. **2D:** menus and other full-width 2D. Class each draw as 2D (pillarbox
+3. **2D** (done, Phase 123): the game centres menus itself once its UI
+   aspect constant is patched (`ui_aspect_16_9_float`). Full-screen
+   untextured or gradient layers have their 16:9 edges stretched to the
+   screen in the vertex shader. Open: the My Page label cut-off, and the F1
+   page and movie still stretched. Original plan: menus and other full-width 2D. Class each draw as 2D (pillarbox
    it to the middle 1920 by scaling clip x by 3/4) or as a full-screen
    post-processing pass (keep the full width). The race HUD needs nothing,
    since it centres itself. Check the menus, dealer pages, pit, pause,

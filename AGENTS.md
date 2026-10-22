@@ -99,7 +99,13 @@ has the evidence, newest phase first (Phase 108 is the latest).
 
 ### Open work, in the order the user left it
 
-**Latest: ultrawide stage A (Phase 122).** Run it with
+**Latest: ultrawide step 3 (Phase 123).** `GT5P_ULTRAWIDE=1` also patches
+the menus' UI aspect (`ui_aspect_16_9_float`), so the game centres menus at
+16:9. Full-screen dims and fades are stretched to the 21:9 edges by the
+vertex shader (`vp_posoffset.w`, `RSX_ULTRAWIDE_EDGES`). Open: the My Page
+label cut-off, and the F1 page and movie still stretched.
+
+**Ultrawide stage A (Phase 122).** Run it with
 `GT5P_ULTRAWIDE=1 GT5P_RESOLUTION=1080p`. The port patches the aspect at load
 and the backend makes the window 21:9 (`RSX_ULTRAWIDE`); the swap chain
 stretches the 16:9 frame over it. Races and the dealer are correct and
