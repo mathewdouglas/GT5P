@@ -43,6 +43,12 @@ if(GT5P_T_ERR)
     message(FATAL_ERROR "GT5P_TARGET=${GT5P_TARGET} is not in config/targets.json")
 endif()
 string(JSON GT5P_CODE_END     GET "${GT5P_T}" code_end)
+# The game's title id, when the target key is not one (BCUS98114-v104 is the
+# 01.04 update executable of BCUS98114).
+string(JSON GT5P_TITLE ERROR_VARIABLE GT5P_TITLE_ERR GET "${GT5P_T}" title_id)
+if(GT5P_TITLE_ERR)
+    set(GT5P_TITLE "${GT5P_TARGET}")
+endif()
 string(JSON GT5P_EXE_NAME     ERROR_VARIABLE GT5P_EXE_NAME_ERR GET "${GT5P_T}" exe_name)
 if(GT5P_EXE_NAME_ERR)
     set(GT5P_EXE_NAME "gt5p")
@@ -207,7 +213,7 @@ set_source_files_properties(src/gt5p_debug_export.cpp PROPERTIES
 # change to one of these recompiles every lifted chunk -- ten files of ~35 MB
 # each, enough at once to exhaust memory.
 set(GT5P_MAIN_DEFS
-    "GT5P_TITLE_ID=\"${GT5P_TARGET}\""
+    "GT5P_TITLE_ID=\"${GT5P_TITLE}\""
     "GT5P_CODE_END=${GT5P_CODE_END}u"
     "GT5P_BOOT_FROM=\"${GT5P_BOOT_FROM}\""
     "GT5P_GCM_CTRL_BASE=${GT5P_GCM_CTRL_BASE}u"
@@ -225,7 +231,7 @@ else()
     list(APPEND GT5P_MAIN_DEFS "GT5P_SPURS_SYNTH_DONE=0")
 endif()
 set_source_files_properties(src/main.cpp PROPERTIES COMPILE_DEFINITIONS "${GT5P_MAIN_DEFS}")
-if(GT5P_TARGET STREQUAL "BCUS98114")
+if(GT5P_TITLE STREQUAL "BCUS98114")
     set_source_files_properties(src/gt5p_present.cpp PROPERTIES
         COMPILE_DEFINITIONS "GT5P_DEFAULT_WINDOW_TITLE=\"Gran Turismo 5 (ps3recomp)\"")
 endif()

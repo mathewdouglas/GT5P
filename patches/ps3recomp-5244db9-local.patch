@@ -4752,10 +4752,20 @@ index 0000000..e8aa9f7
 +
 +#endif
 diff --git a/libs/filesystem/cellFs.c b/libs/filesystem/cellFs.c
-index 5166a47..2c95eac 100644
+index 5166a47..1ea280b 100644
 --- a/libs/filesystem/cellFs.c
 +++ b/libs/filesystem/cellFs.c
-@@ -126,6 +126,24 @@ static int translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
+@@ -74,6 +74,9 @@ static void init_default_mappings(void)
+     cellfs_add_path_mapping("/dev_flash/", "gamedata/dev_flash/");
+     cellfs_add_path_mapping("/app_home/",  "gamedata/app_home/");
+     cellfs_add_path_mapping("/dev_usb000/","gamedata/dev_usb/");
++    /* The system cache drive cellSysCacheMount hands out (GT5 keeps its
++     * paging files there). Unmapped, every stat/mkdir under it failed. */
++    cellfs_add_path_mapping("/dev_hdd1/",  "gamedata/dev_hdd1/");
+ }
+ 
+ void cellfs_set_root_path(const char* root)
+@@ -126,6 +129,24 @@ static int translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
      if (!ps3_path || !host_buf || buf_size == 0)
          return -1;
  
@@ -4780,7 +4790,86 @@ index 5166a47..2c95eac 100644
      /* Find longest matching prefix */
      int best = -1;
      size_t best_len = 0;
-@@ -322,27 +340,53 @@ typedef struct {
+@@ -215,6 +236,78 @@ int cellfs_translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
+     return translate_path(ps3_path, host_buf, buf_size);
+ }
+ 
++static void ensure_parent_dirs(const char* path);
++
++/* Delete everything below a host directory, keeping the directory itself. */
++static void host_clear_dir(const char* dir)
++{
++#ifdef _WIN32
++    char pat[CELL_FS_MAX_FS_PATH_LENGTH + 4];
++    snprintf(pat, sizeof(pat), "%s/*", dir);
++    WIN32_FIND_DATAA fd;
++    HANDLE h = FindFirstFileA(pat, &fd);
++    if (h == INVALID_HANDLE_VALUE) return;
++    do {
++        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
++        char sub[CELL_FS_MAX_FS_PATH_LENGTH];
++        snprintf(sub, sizeof(sub), "%s/%s", dir, fd.cFileName);
++        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
++            host_clear_dir(sub);
++            RemoveDirectoryA(sub);
++        } else {
++            SetFileAttributesA(sub, FILE_ATTRIBUTE_NORMAL);
++            DeleteFileA(sub);
++        }
++    } while (FindNextFileA(h, &fd));
++    FindClose(h);
++#else
++    DIR* d = opendir(dir);
++    if (!d) return;
++    struct dirent* e;
++    while ((e = readdir(d)) != NULL) {
++        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
++        char sub[CELL_FS_MAX_FS_PATH_LENGTH];
++        snprintf(sub, sizeof(sub), "%s/%s", dir, e->d_name);
++        HOST_STAT_T st;
++        if (HOST_STAT(sub, &st) == 0 && S_ISDIR(st.st_mode)) {
++            host_clear_dir(sub);
++            rmdir(sub);
++        } else {
++            unlink(sub);
++        }
++    }
++    closedir(d);
++#endif
++}
++
++/* Back the system cache (/dev_hdd1) for cellSysCacheMount. As on the console,
++ * a mount with the cache id of the previous one keeps the contents (returns 1,
++ * CELL_SYSCACHE_RET_OK_RELAYED); any other id gets an empty cache (returns 0,
++ * CELL_SYSCACHE_RET_OK_CLEARED). The id is kept beside the folder, not in it,
++ * so the title never sees it. */
++int cellfs_syscache_prepare(const char* cache_id)
++{
++    char dir[CELL_FS_MAX_FS_PATH_LENGTH];
++    if (translate_path("/dev_hdd1", dir, sizeof(dir)) != 0)
++        return -1;
++    char probe[CELL_FS_MAX_FS_PATH_LENGTH + 2];
++    snprintf(probe, sizeof(probe), "%s/x", dir);
++    ensure_parent_dirs(probe);
++
++    char idfile[CELL_FS_MAX_FS_PATH_LENGTH + 8];
++    snprintf(idfile, sizeof(idfile), "%s.id", dir);
++    char prev[64] = {0};
++    FILE* f = fopen(idfile, "rb");
++    if (f) { size_t n = fread(prev, 1, sizeof(prev) - 1, f); prev[n] = 0; fclose(f); }
++    if (prev[0] && strcmp(prev, cache_id) == 0)
++        return 1;
++
++    host_clear_dir(dir);
++    f = fopen(idfile, "wb");
++    if (f) { fputs(cache_id, f); fclose(f); }
++    return 0;
++}
++
+ /* ---------------------------------------------------------------------------
+  * Host stat -> CellFsStat conversion
+  * -----------------------------------------------------------------------*/
+@@ -322,27 +415,53 @@ typedef struct {
  static FsFileSlot s_files[MAX_OPEN_FILES];
  static FsDirSlot  s_dirs[MAX_OPEN_DIRS];
  
@@ -4838,7 +4927,7 @@ index 5166a47..2c95eac 100644
  }
  
  /* Build fopen mode string from PS3 flags */
-@@ -408,6 +452,7 @@ static void ensure_parent_dirs(const char* path)
+@@ -408,6 +527,7 @@ static void ensure_parent_dirs(const char* path)
  s32 cellFsOpen(const char* path, s32 flags, CellFsFd* fd, const void* arg, u64 size)
  {
      printf("[cellFs] Open(path='%s', flags=0x%X)\n", gpath(path) ? gpath(path) : "<null>", flags);
@@ -4846,7 +4935,7 @@ index 5166a47..2c95eac 100644
      { extern char* getenv(const char*); static int _bt=-1; if(_bt<0){ const char* e=getenv("PS3_FSLOG_BT"); _bt=(e&&*e&&*e!='0')?1:0; } if(_bt){ extern unsigned int ppu_prof_resolve_host(void*); void* fr[24]; unsigned short n=RtlCaptureStackBackTrace(0,24,fr,0); char ln[600]; int p=snprintf(ln,sizeof ln,"[FSBT]"); unsigned int prev=0; for(unsigned short i=0;i<n;i++){ unsigned int g=ppu_prof_resolve_host(fr[i]); if(g&&g!=prev){ prev=g; p+=snprintf(ln+p,sizeof(ln)-p," %08X",g); } } fprintf(stderr,"%s%c",ln,10); } }
  
      if (!path || !fd)
-@@ -491,6 +536,23 @@ s32 cellFsRead(CellFsFd fd, void* buf, u64 nbytes, u64* nread)
+@@ -491,6 +611,23 @@ s32 cellFsRead(CellFsFd fd, void* buf, u64 nbytes, u64* nread)
      u64 bytes_read = 0;
  
      if (s_files[fd].host_fp) {
@@ -4870,7 +4959,7 @@ index 5166a47..2c95eac 100644
          /* gptr(buf): the DATA buffer is a guest address like every other
           * pointer parameter. The nread out-param below was already translated,
           * which made this look handled -- but the file contents were being read
-@@ -615,6 +677,7 @@ s32 cellFsFstat(CellFsFd fd, CellFsStat* sb)
+@@ -615,6 +752,7 @@ s32 cellFsFstat(CellFsFd fd, CellFsStat* sb)
  s32 cellFsStat(const char* path, CellFsStat* sb)
  {
      printf("[cellFs] Stat(path='%s')\n", gpath(path) ? gpath(path) : "<null>");
@@ -4878,6 +4967,21 @@ index 5166a47..2c95eac 100644
  
      if (!path || !sb)
          return CELL_EFAULT;
+diff --git a/libs/filesystem/cellFs.h b/libs/filesystem/cellFs.h
+index a6262c9..1a1e5c3 100644
+--- a/libs/filesystem/cellFs.h
++++ b/libs/filesystem/cellFs.h
+@@ -127,6 +127,10 @@ void cellfs_add_path_mapping(const char* ps3_prefix, const char* host_path);
+  * Returns 0 on success, -1 if no mapping found. */
+ int cellfs_translate_path(const char* ps3_path, char* host_buf, size_t buf_size);
+ 
++/* Prepare <root>/gamedata/dev_hdd1 for cellSysCacheMount: 1 = kept (same id),
++ * 0 = cleared, -1 = no mapping. */
++int cellfs_syscache_prepare(const char* cache_id);
++
+ /* ---------------------------------------------------------------------------
+  * File operations
+  * -----------------------------------------------------------------------*/
 diff --git a/libs/input/cellKb.c b/libs/input/cellKb.c
 index 6b4cdbc..e71148c 100644
 --- a/libs/input/cellKb.c
@@ -7646,6 +7750,44 @@ index 071b9ec..74fc692 100644
      return CELL_OK;
  }
  
+diff --git a/libs/system/cellSysutil.c b/libs/system/cellSysutil.c
+index 252c3e8..b37c46d 100644
+--- a/libs/system/cellSysutil.c
++++ b/libs/system/cellSysutil.c
+@@ -408,14 +408,31 @@ s32 cellSysCacheMount(char* param)
+     cache_id[32] = '\0';
+     printf("[cellSysutil] SysCacheMount(id='%s')\n", cache_id);
+ 
+-    snprintf(s_cache_path, CELL_SYSCACHE_PATH_MAX, "/dev_hdd1/cache/%s", cache_id);
++    /* The console mounts the title's cache AT /dev_hdd1 and reports that path.
++     * The old "/dev_hdd1/cache/<id>" had no backing (nothing mapped /dev_hdd1):
++     * GT5 stat'd it, then /dev_hdd1, tried to mkdir /dev_hdd1, gave up on its
++     * paging files and later ran its loader on a NULL object.
++     * PS3_SYSCACHE_LEGACY=1 restores the old path and the constant result. */
++    static int legacy = -1;
++    if (legacy < 0) { const char* e = getenv("PS3_SYSCACHE_LEGACY"); legacy = (e && *e == '1'); }
++    s32 ret = CELL_OK;   /* CELL_SYSCACHE_RET_OK_CLEARED */
++    if (legacy) {
++        snprintf(s_cache_path, CELL_SYSCACHE_PATH_MAX, "/dev_hdd1/cache/%s", cache_id);
++    } else {
++        extern int cellfs_syscache_prepare(const char* cache_id);
++        snprintf(s_cache_path, CELL_SYSCACHE_PATH_MAX, "/dev_hdd1");
++        if (cellfs_syscache_prepare(cache_id) == 1)
++            ret = 1;     /* CELL_SYSCACHE_RET_OK_RELAYED: same id, contents kept */
++        printf("[cellSysutil] SysCacheMount -> %s (%s)\n", s_cache_path,
++               ret == 1 ? "relayed" : "cleared");
++    }
+     size_t n = strlen(s_cache_path);
+     if (n > 135) n = 135;
+     memcpy(vm_base + ea + 0x20, s_cache_path, n);
+     vm_base[ea + 0x20 + n] = '\0';
+     s_cache_mounted = 1;
+ 
+-    return CELL_OK;   /* CELL_SYSCACHE_RET_OK_CLEARED */
++    return ret;
+ }
+ 
+ s32 cellSysCacheClear(void)
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
 index cdb0464..ddd1a32 100644
 --- a/libs/video/cellGcmSys.c
@@ -22247,7 +22389,7 @@ index acbaf12..484d7b2 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index e73a151..8356d58 100644
+index e73a151..cd1cde5 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -20,6 +20,7 @@
@@ -22925,7 +23067,54 @@ index e73a151..8356d58 100644
      /* PS3_SCTRACE_TID: trace every lv2 syscall made by the loader/worker thread
       * (tid=1) so we can see what it does AFTER receiving its q=1 event and why
       * it never registers handlers / loads assets. */
-@@ -3202,8 +3610,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3023,10 +3431,43 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+         uint32_t align = (uint32_t)ctx->gpr[5];
+         uint32_t out   = (uint32_t)ctx->gpr[6];
+         if (align < 0x100000u) align = 0x100000u;   /* 1 MB min */
+-        s_next_va = (s_next_va + align - 1) & ~(align - 1);
+-        uint32_t va = s_next_va;
+-        s_next_va += (size + 0xFFFFFu) & ~0xFFFFFu;
++        size = (size + 0xFFFFFu) & ~0xFFFFFu;
++        /* Areas must not overlap each other or the windows the runtime hands
++         * out itself. The old counter put GT5's 512 MB area (0x30000000..
++         * 0x50000000) across sys_memory_allocate's 0x40000000 window, so the
++         * game's heap and runtime allocations shared memory. Lowest free
++         * aligned area, as lv2 does. PS3_MMAPPER_AREA_LEGACY=1: the counter. */
++        static int legacy = -1;
++        if (legacy < 0) { const char* e = getenv("PS3_MMAPPER_AREA_LEGACY"); legacy = (e && *e == '1'); }
++        uint32_t va = 0;
++        if (legacy) {
++            s_next_va = (s_next_va + align - 1) & ~(align - 1);
++            va = s_next_va;
++            s_next_va += size;
++        } else {
++            static uint32_t s_area_lo[32], s_area_hi[32];
++            static int s_areas = 0;
++            static const uint32_t busy[][2] = {
++                { 0x00000000u, 0x11000000u },   /* image and main memory */
++                { 0x40000000u, 0x50000000u },   /* sys_memory_allocate window */
++                { 0xC0000000u, 0xFFFFFFFFu },   /* RSX local, stacks, SPU */
++            };
++            uint64_t first = (0x11000000ull + align - 1) & ~(uint64_t)(align - 1);
++            for (uint64_t c = first; c + size <= 0xC0000000u; c += align) {
++                uint64_t lo = c, hi = c + size;
++                bool clash = false;
++                for (auto& b : busy) if (lo < b[1] && hi > b[0]) clash = true;
++                for (int k = 0; k < s_areas && !clash; k++)
++                    if (lo < s_area_hi[k] && hi > s_area_lo[k]) clash = true;
++                if (!clash) { va = (uint32_t)c; break; }
++            }
++            if (!va) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x80010004; return; }   /* ENOMEM */
++            if (s_areas < 32) { s_area_lo[s_areas] = va; s_area_hi[s_areas] = va + size; s_areas++; }
++        }
+         if (out) vm_write32(out, va);
++        { static int n = 0; if (n++ < 16)
++            fprintf(stderr, "[mmapper] allocate_address(size=0x%X, flags=0x%X, align=0x%X) -> 0x%08X\n",
++                    size, (uint32_t)ctx->gpr[4], align, va); }
+         ctx->gpr[3] = 0;
+         return;
+     }
+@@ -3202,8 +3643,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                      (unsigned long long)ctx->gpr[3], (unsigned long long)ctx->gpr[4],
                      (unsigned)ctx->lr);
              fflush(stderr); } }
@@ -22936,7 +23125,7 @@ index e73a151..8356d58 100644
              static ULONGLONG s_acc[1024]={0}; static uint32_t s_cnt[1024]={0}; static ULONGLONG s_win=0;
              uint32_t _a3=(uint32_t)ctx->gpr[3], _a4=(uint32_t)ctx->gpr[4], _a5=(uint32_t)ctx->gpr[5];
              ULONGLONG _t0 = GetTickCount64();
-@@ -3545,6 +3953,48 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
+@@ -3545,6 +3986,48 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
          s_opd_fixups[s_opd_fixup_n].code = code; s_opd_fixups[s_opd_fixup_n].toc = toc; s_opd_fixup_n++; }
  }
  
@@ -22985,7 +23174,7 @@ index e73a151..8356d58 100644
  extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
                                     uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                                     uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
-@@ -3569,10 +4019,7 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
+@@ -3569,10 +4052,7 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
                  vm_read32(opd_addr + 8), vm_read32(opd_addr + 12));
          return 0; }
  
@@ -22997,7 +23186,7 @@ index e73a151..8356d58 100644
  
      ppu_context ctx;
      memset(&ctx, 0, sizeof(ctx));
-@@ -3616,8 +4063,7 @@ extern "C" uint64_t ppu_guest_call_ct(uint32_t code, uint32_t toc,
+@@ -3616,8 +4096,7 @@ extern "C" uint64_t ppu_guest_call_ct(uint32_t code, uint32_t toc,
      ppu_fn fn = ppu_lookup(code);
      if (!fn) { fprintf(stderr, "[ppu] guest_call_ct: code 0x%08X not registered\n", code); return 0; }
  

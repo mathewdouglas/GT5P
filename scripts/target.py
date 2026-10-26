@@ -40,6 +40,7 @@ if NAME not in _all:
     raise SystemExit(f"unknown target {NAME!r}; config/targets.json has {sorted(_all)}")
 TARGET = _all[NAME]
 EXE_NAME = TARGET.get("exe_name", "gt5p")
+TITLE_ID = TARGET.get("title_id", NAME)   # the game's id when the key is not one
 
 
 def addr(key):

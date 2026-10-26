@@ -897,6 +897,19 @@ re-lift to pick that up. Read
 GT5 sets `PS3_LWCOND_REAL=1` and `PS3_TIMER_ONESHOT=1` by default; Prologue
 keeps the old runtime behaviour for both.
 
+**Since Phase 6 (2026-10-27) the target is the 01.04 update executable,**
+`BCUS98114-v104` in `config/targets.json` (`title_id` keeps the game id
+BCUS98114). That is what consoles and RPCS3 run: the disc's
+`INSDIR/DATA000.PKG` installs it to the hard disk before the first boot.
+`input/EMAIN.ELF` is its decrypted `EBOOT.BIN`. The 01.00 disc executable is
+kept in `input/disc/EBOOT.elf`, and its lift in `analysis/v100-generated/`.
+Build with `scripts\build.cmd -DGT5P_TARGET=BCUS98114-v104`.
+
+`gamedata/dev_hdd0/game/BCUS98114` must hold the package's 1,330 `PDIPFS`
+files. They are copied from RPCS3's install; the list is
+`scratch/rpcs3/pkg_files.txt`. Read [docs/progress-gt5.md](docs/progress-gt5.md)
+Phase 6 first.
+
 ## What is tied to v02.00
 
 These are the known build-specific inputs. Each one has to be re-derived or

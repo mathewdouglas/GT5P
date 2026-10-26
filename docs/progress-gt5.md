@@ -4,6 +4,108 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 6 — The 01.04 executable; system cache and address areas (2026-10-27)
+
+**Retarget.** The port now lifts the 01.04 update executable. It was
+decrypted with RPCS3 from its install of the disc's `INSDIR/DATA000.PKG`.
+`BCUS98114-v104` in `config/targets.json` carries its values; CMake and
+`scripts/target.py` gained `title_id`, so a config key need not be a title
+id. Re-derived for 01.04:
+
+| Value | 01.00 | 01.04 |
+| --- | --- | --- |
+| `code_end` | `0x0111C684` | `0x011752A4` |
+| setjmp / longjmp | `0x00D00D74` / `0x00D00E98` | `0x00D49E94` / `0x00D49FB8` |
+| Policy module | `0x0177F200` | `0x0182C400` (byte-identical) |
+| Job bodies | 28 | 36 (11 byte-identical, moved) |
+| Jump tables / seeds | 338 / 4,486 | 349 / 4,617 |
+| Lifted PPU functions | 83,175 | 84,413 |
+| Import stubs | 716 | 702 |
+
+The job bodies are every 16-byte-aligned header with the `0xC0DEC0DE` magic,
+the same rule that gave 01.00's list. The policy module and 11 bodies were
+found in 01.04 by exact byte search. The SPU lift has 32,747 functions, the
+14 job images captured under 01.00 still match, and no new job image missed.
+Import changes: on-screen-keyboard and NP additions and one `cellUsbd` call;
+`cellImeJp` is dropped.
+
+**01.04 behaves like 01.00 after the warning.** The NULL object of Phase 5
+appears at the same code (`func_00B5169C` in 01.04 is `func_00B128F4` in
+01.00). The executable mismatch was not its cause. 01.04 stays the target
+because it is what the data and RPCS3 correspond to.
+
+**System cache (runtime fix).** `cellSysCacheMount` reported
+`/dev_hdd1/cache/<id>`, and nothing mapped `/dev_hdd1`. GT5 stat'd the path,
+then `/dev_hdd1`, tried to mkdir `/dev_hdd1` and gave up on its paging
+directory. Now:
+
+- `/dev_hdd1/` maps to `gamedata/dev_hdd1/`;
+- the mount reports `/dev_hdd1`, as firmware and RPCS3 do;
+- the same cache id mounted again keeps the contents (relayed, 1); any other
+  id clears them (0). The id is stored in `gamedata/dev_hdd1.id`.
+
+`PS3_SYSCACHE_LEGACY=1` restores the old behaviour. GT5 now creates
+`/dev_hdd1/mem/page` exactly as RPCS3 does.
+
+**Address areas (runtime fix).** `sys_mmapper_allocate_address` (lv2 330,
+in `ppu_loader.cpp`) handed out addresses from a counter. GT5's 512 MB area
+landed on `0x30000000`-`0x50000000`, across the runtime's own
+`sys_memory_allocate` window (`0x40000000`-`0x50000000`). It now hands out
+the lowest free aligned area that overlaps neither earlier areas nor the
+runtime's fixed windows. `PS3_MMAPPER_AREA_LEGACY=1` restores the counter.
+
+| Area | RPCS3 | This port now |
+| --- | --- | --- |
+| 256 MB | `0x30000000` | `0x20000000` |
+| 512 MB | `0x40000000` | `0x50000000` |
+| Pager, 256 MB | `0x60000000` | `0x30000000` |
+
+RPCS3 also puts liblv2's own heap at `0x20000000`. Prologue's single request
+still gets `0x20000000`. Its dealer page was re-checked: 30 FPS, no fault
+markers.
+
+**Still black after the warning.** From a clean first-boot state (package
+files only; the old `PDIPFS` cache files from earlier runs removed), our file
+accesses match RPCS3's one for one for 145-152 operations. That includes the
+`PDIPFS_bdmark` rebuild, and the 32 files the title extracts are
+byte-identical to RPCS3's. The stopping point then varies between runs: after
+`9/QW/GV` once, after `K/AK` another time.
+
+The main thread spins in the NULL path:
+
+- `func_00BC22A8` takes a reference-counted pointer from `func_00B4EAB0`;
+- that function allocates 0x90 bytes, constructs the object
+  (`func_00B4E6AC`) and wraps it;
+- its landing pad `0x00B4EAE4` deletes the object and rethrows;
+- the allocator wrapper `func_00B3E4FC` retries for ever, so it cannot
+  return NULL.
+
+Hypothesis, untested: the constructor throws a guest C++ exception, and
+unwinding through lifted code leaves the pointer NULL. `func_00BC22A8` then
+calls its assert routine (`0x00B3FBB4`, which returns) and carries on with
+NULL. That loop is the black screen. Every other thread is idle in normal
+waits.
+
+**Also measured, not yet fixed:**
+
+- GT5 pages memory itself. It reserves a 256 MB area, calls
+  `sys_mmapper_enable_page_fault_notification` (lv2 327, still a stub here),
+  and its thread `MpAnk` serves the faults: it receives the event on the
+  queue, maps 64 KB shared memory, loads the page from `/dev_hdd1/mem/page`
+  and calls `sys_ppu_thread_recover_page_fault` (lv2 57). RPCS3 serves 605
+  faults on a first boot.
+- The pager's event layout, read from its code (`0x00C4784C`):
+  - source is `0xFFFE000000000000`;
+  - data1 is the fault address;
+  - data2 is (type << 32) | thread id, with type 0 for PPU and 1 for SPU;
+  - data3 & 3 == 2.
+- This runtime commits any untouched page as zeros, so the pager is never
+  asked. That is correct only until a page is evicted and touched again.
+  `sys_mmapper_unmap_shared_memory` and `_free_shared_memory` are not
+  implemented either.
+- One job image (`jD58063CD`, LS `0x410`) falls back to the SPU interpreter
+  8 times per boot. 01.00 did not, and the NULL path happens either way.
+
 ## Phase 5 — RPCS3 reference boot; the disc's update package (2026-10-23)
 
 **The RPCS3 first boot.** The user drove a first boot in RPCS3. Screen order:
