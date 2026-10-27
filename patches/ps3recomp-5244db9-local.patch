@@ -22389,7 +22389,7 @@ index acbaf12..484d7b2 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index e73a151..cd1cde5 100644
+index e73a151..86d244f 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -20,6 +20,7 @@
@@ -23067,7 +23067,7 @@ index e73a151..cd1cde5 100644
      /* PS3_SCTRACE_TID: trace every lv2 syscall made by the loader/worker thread
       * (tid=1) so we can see what it does AFTER receiving its q=1 event and why
       * it never registers handlers / loads assets. */
-@@ -3023,10 +3431,43 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3023,10 +3431,56 @@ extern "C" void lv2_syscall(ppu_context* ctx)
          uint32_t align = (uint32_t)ctx->gpr[5];
          uint32_t out   = (uint32_t)ctx->gpr[6];
          if (align < 0x100000u) align = 0x100000u;   /* 1 MB min */
@@ -23090,9 +23090,22 @@ index e73a151..cd1cde5 100644
 +        } else {
 +            static uint32_t s_area_lo[32], s_area_hi[32];
 +            static int s_areas = 0;
-+            static const uint32_t busy[][2] = {
++            /* PS3_MMAPPER_LV2_AREA=1 lays memory out as lv2 does with liblv2
++             * running natively (RPCS3, GT5): liblv2's own heap area takes
++             * 0x20000000..0x30000000 first, and titles carve blocks from it with
++             * search_and_map(0x20000000, ...) -- GT5's first area otherwise
++             * landed there. sys_memory_allocate then lives at 0x10000000
++             * (sys_memory.c), and the sys_vm window, which GT5 never uses, is
++             * not held back, so GT5's areas land at 0x30000000, 0x40000000 and
++             * 0x60000000 as in RPCS3. */
++            static int lv2_area = -1;
++            if (lv2_area < 0) { const char* e = getenv("PS3_MMAPPER_LV2_AREA"); lv2_area = (e && *e == '1'); }
++            extern uint32_t ps3_sys_memory_window_base(void);
++            uint32_t smw = ps3_sys_memory_window_base();
++            const uint32_t busy[][2] = {
 +                { 0x00000000u, 0x11000000u },   /* image and main memory */
-+                { 0x40000000u, 0x50000000u },   /* sys_memory_allocate window */
++                { smw, smw + 0x10000000u },     /* sys_memory_allocate window */
++                { 0x20000000u, lv2_area ? 0x30000000u : 0x20000000u },
 +                { 0xC0000000u, 0xFFFFFFFFu },   /* RSX local, stacks, SPU */
 +            };
 +            uint64_t first = (0x11000000ull + align - 1) & ~(uint64_t)(align - 1);
@@ -23114,7 +23127,16 @@ index e73a151..cd1cde5 100644
          ctx->gpr[3] = 0;
          return;
      }
-@@ -3202,8 +3643,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3054,6 +3508,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+          * its DMA guard sees an uncommitted EA and skips the transfer, and the
+          * job's results are silently dropped. */
+         vm_commit(va, size);
++        { extern void ps3_mmapper_on_map(uint32_t mem_id, uint32_t addr);
++          ps3_mmapper_on_map(mem_id, va); }   /* contents follow the block */
+         if (outp) vm_write32(outp, va);
+         ctx->gpr[3] = 0;
+         return;
+@@ -3202,8 +3658,8 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                      (unsigned long long)ctx->gpr[3], (unsigned long long)ctx->gpr[4],
                      (unsigned)ctx->lr);
              fflush(stderr); } }
@@ -23125,7 +23147,7 @@ index e73a151..cd1cde5 100644
              static ULONGLONG s_acc[1024]={0}; static uint32_t s_cnt[1024]={0}; static ULONGLONG s_win=0;
              uint32_t _a3=(uint32_t)ctx->gpr[3], _a4=(uint32_t)ctx->gpr[4], _a5=(uint32_t)ctx->gpr[5];
              ULONGLONG _t0 = GetTickCount64();
-@@ -3545,6 +3986,48 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
+@@ -3545,6 +4001,48 @@ extern "C" void ppu_register_opd_fixup(uint32_t opd, uint32_t code, uint32_t toc
          s_opd_fixups[s_opd_fixup_n].code = code; s_opd_fixups[s_opd_fixup_n].toc = toc; s_opd_fixup_n++; }
  }
  
@@ -23174,7 +23196,7 @@ index e73a151..cd1cde5 100644
  extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
                                     uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
                                     uint64_t a4, uint64_t a5, uint64_t a6, uint64_t a7)
-@@ -3569,10 +4052,7 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
+@@ -3569,10 +4067,7 @@ extern "C" uint64_t ppu_guest_call(uint32_t opd_addr,
                  vm_read32(opd_addr + 8), vm_read32(opd_addr + 12));
          return 0; }
  
@@ -23186,7 +23208,7 @@ index e73a151..cd1cde5 100644
  
      ppu_context ctx;
      memset(&ctx, 0, sizeof(ctx));
-@@ -3616,8 +4096,7 @@ extern "C" uint64_t ppu_guest_call_ct(uint32_t code, uint32_t toc,
+@@ -3616,8 +4111,7 @@ extern "C" uint64_t ppu_guest_call_ct(uint32_t code, uint32_t toc,
      ppu_fn fn = ppu_lookup(code);
      if (!fn) { fprintf(stderr, "[ppu] guest_call_ct: code 0x%08X not registered\n", code); return 0; }
  
@@ -23197,10 +23219,18 @@ index e73a151..cd1cde5 100644
      ppu_context ctx;
      memset(&ctx, 0, sizeof(ctx));
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index d857f30..7841499 100644
+index d857f30..18a7045 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
-@@ -27,6 +27,7 @@ extern "C" uint32_t vm_read32(uint64_t a);
+@@ -16,6 +16,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <unordered_map>
+ /* win32_compat.h is <windows.h> on Windows (CRITICAL_SECTION for the real
+  * lwmutex exclusion) and the POSIX shims elsewhere -- Sleep, DWORD, QPC. */
+ #include "../platform/win32_compat.h"
+@@ -27,6 +28,7 @@ extern "C" uint32_t vm_read32(uint64_t a);
  extern "C" uint64_t vm_read64(uint64_t a);
  extern "C" void     vm_write32(uint64_t a, uint32_t v);
  extern "C" void     vm_write64(uint64_t a, uint64_t v);
@@ -23208,7 +23238,7 @@ index d857f30..7841499 100644
  
  /* Simple bump allocator for TLS areas, in a free vm region below the stack. */
  static uint32_t s_tls_next = 0x0E000000u;
-@@ -61,18 +62,30 @@ static void sys_initialize_tls(ppu_context* ctx)
+@@ -61,18 +63,30 @@ static void sys_initialize_tls(ppu_context* ctx)
   * lands here) paced the intro at ~1/10th speed: video decoded at <1 fps,
   * the audio preload threshold took forever to fill (movie stayed silent),
   * and every frontend animation timed off it crawled. */
@@ -23243,7 +23273,7 @@ index d857f30..7841499 100644
  
  /* sys_process_is_stack(u32 addr) -> 1 if addr is in the stack region. We model
   * a single stack just below the TLS region; good enough for boot checks. */
-@@ -149,7 +162,8 @@ static void sys_lwmutex_create(ppu_context* ctx)
+@@ -149,7 +163,8 @@ static void sys_lwmutex_create(ppu_context* ctx)
  #define LWM_HASH 65536u
  static struct LwmSlot { volatile long addr; HANDLE sem;
      volatile long holder; volatile long long acq_us; volatile long long acq_fences;
@@ -23253,7 +23283,7 @@ index d857f30..7841499 100644
  extern "C" { extern volatile long long g_gcm_ref_pub_count;    /* cellGcmSys.c */
               unsigned long long ppu_thread_cpu_us(unsigned tid);   /* sys_ppu_thread.c */
               unsigned ppu_thread_prof_pc(unsigned tid); }
-@@ -159,7 +173,42 @@ static volatile long g_lwm_tab_lock = 0;
+@@ -159,7 +174,42 @@ static volatile long g_lwm_tab_lock = 0;
   * contended block it logs who holds it and for how long; on unlock it flags a
   * long hold. The leaf holder (the one blocked on a non-lwmutex wait) is the
   * convoy root. Default OFF. */
@@ -23296,7 +23326,7 @@ index d857f30..7841499 100644
  static long long lwm_now_us(void){
  #ifdef _WIN32
      static LARGE_INTEGER freq={0}; if(!freq.QuadPart) QueryPerformanceFrequency(&freq);
-@@ -228,10 +277,12 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -228,10 +278,12 @@ static void sys_lwmutex_lock(ppu_context* ctx)
           * Only the holder ever stamps owner=self, so this check is race-free. */
          if (vm_read32(lwm + LWM_OWNER) == self && vm_read32(lwm + LWM_RECUR) > 0) {
              vm_write32(lwm + LWM_RECUR, vm_read32(lwm + LWM_RECUR) + 1);
@@ -23309,7 +23339,7 @@ index d857f30..7841499 100644
              /* Contended: log who we're stuck behind (owner stamped at acquire),
               * then block. Bounded diagnostics for park hunts; uncapped while the
               * probe window is open (g_nd_inpump). */
-@@ -259,6 +310,8 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -259,6 +311,8 @@ static void sys_lwmutex_lock(ppu_context* ctx)
          }
      }
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
@@ -23318,7 +23348,7 @@ index d857f30..7841499 100644
  #endif
      vm_write32(lwm + LWM_OWNER, self);
      vm_write32(lwm + LWM_RECUR, 1);
-@@ -279,6 +332,7 @@ static void sys_lwmutex_trylock(ppu_context* ctx)
+@@ -279,6 +333,7 @@ static void sys_lwmutex_trylock(ppu_context* ctx)
          if (WaitForSingleObject(s, 0) != WAIT_OBJECT_0) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x8001000Bu; return; } // EBUSY
      }
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
@@ -23326,7 +23356,7 @@ index d857f30..7841499 100644
  #endif
      vm_write32(lwm + LWM_OWNER, self);
      vm_write32(lwm + LWM_RECUR, 1);
-@@ -290,12 +344,15 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
+@@ -290,12 +345,15 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
      uint32_t rc = vm_read32(lwm + LWM_RECUR);
      if (rc > 1) {                       /* recursive hold: count down, keep the lock */
          vm_write32(lwm + LWM_RECUR, rc - 1);
@@ -23342,7 +23372,7 @@ index d857f30..7841499 100644
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm);
          if (sl && sl->holder) { long long held = lwm_now_us() - sl->acq_us;
              if (held > 100000) {
-@@ -349,10 +406,92 @@ static void sys_lwcond_create(ppu_context* ctx)
+@@ -349,10 +407,92 @@ static void sys_lwcond_create(ppu_context* ctx)
      vm_write32(lwcond + 0x08, ++s_lwcond_id);
      ctx->gpr[3] = 0;
  }
@@ -23438,7 +23468,7 @@ index d857f30..7841499 100644
  /* Now that the lwmutex is REAL, a no-op wait that keeps holding it deadlocks the
   * signaler. Release the paired lwmutex, wait briefly, reacquire (poll-style: the
   * guest's while(!predicate) loop re-checks; signalers stay no-ops). Handles the
-@@ -363,14 +502,75 @@ static void sys_lwcond_wait(ppu_context* ctx)
+@@ -363,14 +503,75 @@ static void sys_lwcond_wait(ppu_context* ctx)
      uint32_t lwmutex = (uint32_t)vm_read64(lwcond + 0x00);
  #ifdef _WIN32
      HANDLE s = lwm_sem(lwmutex);
@@ -23514,7 +23544,7 @@ index d857f30..7841499 100644
          vm_write32(lwmutex + LWM_OWNER, own);
          vm_write32(lwmutex + LWM_RECUR, rc ? rc : 1);
      }
-@@ -378,6 +578,104 @@ static void sys_lwcond_wait(ppu_context* ctx)
+@@ -378,6 +579,104 @@ static void sys_lwcond_wait(ppu_context* ctx)
      ctx->gpr[3] = 0;
  }
  
@@ -23619,7 +23649,127 @@ index d857f30..7841499 100644
  /* sys_ppu_thread_get_id(vm::ptr<u64> id) -> *id = calling thread's real id.
   * The old fixed "1" broke every am-I-the-designated-thread check in
   * multithreaded titles (LBP's job system routes work by thread identity, so
-@@ -911,6 +1209,14 @@ extern "C" void ppu_sysprx_register(void)
+@@ -397,21 +696,115 @@ static void sys_ppu_thread_get_id(ppu_context* ctx)
+  * search_and_map just needs a non-zero id to track. */
+ /* id -> size so sys_mmapper_search_and_map (lv2 337) can lay blocks out
+  * without overlap. Ids are dense from 0x1000. */
+-static uint32_t s_mm_sizes[256];
++/* Memory blocks (lv2 "shared memory" behind liblv2's sys_mmapper_*_memory).
++ *
++ * A block keeps its contents while unmapped and takes them to wherever it is
++ * mapped next; a new block maps as zeros. Map/unmap/free used to be no-ops, so
++ * a block remapped elsewhere arrived empty, and a new block mapped where an old
++ * one had been showed the old one's data. Gran Turismo 5 cycles some 1,900
++ * blocks through its heaps on a first boot (64 KB and 1 MB), and its objects
++ * then read stale words as vtables. Opt-in while unproven: PS3_MMAPPER_SHM=1
++ * (GT5 Phase 7 crashed earlier with it; see docs/progress-gt5.md there). */
++struct MmBlock { uint32_t size; uint32_t mapped_at; uint8_t* saved; };
++static std::unordered_map<uint32_t, MmBlock>* s_mm_blocks;
++static SRWLOCK s_mm_lock = SRWLOCK_INIT;
+ static uint32_t s_mmapper_next_id = 0x1000;
++
++static int mm_legacy()
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("PS3_MMAPPER_SHM"); v = !(e && *e == '1'); }
++    return v;
++}
++
+ extern "C" uint32_t ps3_mmapper_block_size(uint32_t mem_id)
+ {
+-    uint32_t i = mem_id - 0x1000u;
+-    return (i < 256) ? s_mm_sizes[i] : 0;
++    AcquireSRWLockShared(&s_mm_lock);
++    uint32_t sz = 0;
++    if (s_mm_blocks) { auto it = s_mm_blocks->find(mem_id); if (it != s_mm_blocks->end()) sz = it->second.size; }
++    ReleaseSRWLockShared(&s_mm_lock);
++    return sz;
+ }
+ 
+ static uint32_t mmapper_new_id(uint32_t size)
+ {
++    AcquireSRWLockExclusive(&s_mm_lock);
++    if (!s_mm_blocks) s_mm_blocks = new std::unordered_map<uint32_t, MmBlock>();
+     uint32_t id = s_mmapper_next_id++;
+-    if (id - 0x1000u < 256) s_mm_sizes[id - 0x1000u] = size;
++    (*s_mm_blocks)[id] = MmBlock{ size, 0, nullptr };
++    ReleaseSRWLockExclusive(&s_mm_lock);
+     return id;
+ }
+ 
++/* Called for every mapping of a block, from map_memory and from
++ * sys_mmapper_search_and_map (lv2 337, ppu_loader.cpp). */
++extern "C" void ps3_mmapper_on_map(uint32_t mem_id, uint32_t addr)
++{
++    if (mm_legacy()) return;
++    AcquireSRWLockExclusive(&s_mm_lock);
++    MmBlock* b = nullptr;
++    if (s_mm_blocks) { auto it = s_mm_blocks->find(mem_id); if (it != s_mm_blocks->end()) b = &it->second; }
++    if (b && b->size) {
++        vm_commit(addr, b->size);
++        if (b->saved) { memcpy(vm_base + addr, b->saved, b->size); free(b->saved); b->saved = nullptr; }
++        else            memset(vm_base + addr, 0, b->size);
++        b->mapped_at = addr;
++    }
++    ReleaseSRWLockExclusive(&s_mm_lock);
++}
++
++/* sys_mmapper_map_memory(u32 addr, u32 mem_id, u64 flags) */
++static void sys_mmapper_map_memory(ppu_context* ctx)
++{
++    ps3_mmapper_on_map((uint32_t)ctx->gpr[4], (uint32_t)ctx->gpr[3]);
++    ctx->gpr[3] = 0;
++}
++
++/* sys_mmapper_unmap_memory(u32 addr, vm::ptr<u32> mem_id): keep the contents
++ * with the block and take the pages away, so nothing reads them afterwards. */
++static void sys_mmapper_unmap_memory(ppu_context* ctx)
++{
++    uint32_t addr = (uint32_t)ctx->gpr[3], id_ptr = (uint32_t)ctx->gpr[4];
++    if (mm_legacy()) { ctx->gpr[3] = 0; return; }
++    uint32_t id = 0;
++    AcquireSRWLockExclusive(&s_mm_lock);
++    if (s_mm_blocks) for (auto& kv : *s_mm_blocks) {
++        MmBlock& b = kv.second;
++        if (b.mapped_at != addr || !b.size) continue;
++        b.saved = (uint8_t*)malloc(b.size);
++        if (b.saved) memcpy(b.saved, vm_base + addr, b.size);
++        memset(vm_base + addr, 0, b.size);
++#ifdef _WIN32
++        VirtualFree(vm_base + addr, b.size, MEM_DECOMMIT);
++#endif
++        b.mapped_at = 0;
++        id = kv.first;
++        break;
++    }
++    ReleaseSRWLockExclusive(&s_mm_lock);
++    if (!id) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x80010002; return; }   /* EINVAL */
++    if (id_ptr) vm_write32(id_ptr, id);
++    ctx->gpr[3] = 0;
++}
++
++/* sys_mmapper_free_memory(u32 mem_id) */
++static void sys_mmapper_free_memory(ppu_context* ctx)
++{
++    uint32_t id = (uint32_t)ctx->gpr[3];
++    if (mm_legacy()) { ctx->gpr[3] = 0; return; }
++    int32_t rc = 0;
++    AcquireSRWLockExclusive(&s_mm_lock);
++    if (!s_mm_blocks || !s_mm_blocks->count(id)) {
++        rc = (int32_t)0x80010005;                                  /* ESRCH */
++    } else {
++        MmBlock& b = (*s_mm_blocks)[id];
++        if (b.mapped_at) rc = (int32_t)0x8001000A;                 /* EBUSY */
++        else { free(b.saved); s_mm_blocks->erase(id); }
++    }
++    ReleaseSRWLockExclusive(&s_mm_lock);
++    ctx->gpr[3] = (uint64_t)(int64_t)rc;
++}
++
+ static void sys_mmapper_allocate_memory(ppu_context* ctx)
+ {
+     uint32_t size       = (uint32_t)ctx->gpr[3];
+@@ -911,6 +1304,14 @@ extern "C" void ppu_sysprx_register(void)
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_all"), "sys_lwcond_signal_all", sys_lwcond_signal_all);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_to"),  "sys_lwcond_signal_to",  sys_lwcond_signal_to);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_wait"),       "sys_lwcond_wait",       sys_lwcond_wait);
@@ -23634,6 +23784,17 @@ index d857f30..7841499 100644
  
      /* Thread id + memory manager (high-frequency boot imports). The flat VM
       * means map/unmap/free are no-ops: the memory already exists everywhere. */
+@@ -919,7 +1320,7 @@ extern "C" void ppu_sysprx_register(void)
+     ps3_hle_register_ctx(ps3_compute_nid("sys_ppu_thread_exit"),        "sys_ppu_thread_exit",        hle_ppu_thread_exit);
+     ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_allocate_memory"), "sys_mmapper_allocate_memory", sys_mmapper_allocate_memory);
+     ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_allocate_memory_from_container"), "sys_mmapper_allocate_memory_from_container", sys_mmapper_allocate_memory_from_container);
+-    ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_map_memory"),     "sys_mmapper_map_memory",     crt_ok);
+-    ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_unmap_memory"),   "sys_mmapper_unmap_memory",   crt_ok);
+-    ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_free_memory"),    "sys_mmapper_free_memory",    crt_ok);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_map_memory"),     "sys_mmapper_map_memory",     sys_mmapper_map_memory);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_unmap_memory"),   "sys_mmapper_unmap_memory",   sys_mmapper_unmap_memory);
++    ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_free_memory"),    "sys_mmapper_free_memory",    sys_mmapper_free_memory);
+ }
 diff --git a/runtime/ppu/ppu_vm_inline.h b/runtime/ppu/ppu_vm_inline.h
 new file mode 100644
 index 0000000..96051f6
@@ -27423,7 +27584,7 @@ index 4f82063..a8af25d 100644
      fprintf(stderr, "[pm-flow] HUNG-RUN PARTIAL: %u transfers, live pc=0x%05X "
              "LS12A0=%02X%02X LS12C0=%02X%02X LS12F0=%02X%02X%02X%02X LS1300=%02X%02X:",
 diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
-index bcb1df4..8102958 100644
+index bcb1df4..0eb721a 100644
 --- a/runtime/syscalls/lv2_register.c
 +++ b/runtime/syscalls/lv2_register.c
 @@ -1606,8 +1606,20 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
@@ -27458,6 +27619,24 @@ index bcb1df4..8102958 100644
          } else {
              AcquireSRWLockShared(&s_spu_port_lock);
              spu_group_t* group = spu_find_group(spu->spu_group_id);
+@@ -2269,6 +2281,7 @@ static int64_t sys_process_get_sdk_version_handler(ppu_context* ctx)
+  * EINVAL; main memory, the sys_memory window and RSX local memory are
+  * reservation-capable; PPU stacks and sys_vm regions are not, and answer
+  * EPERM; anything outside those is EINVAL. */
++extern uint32_t ps3_sys_memory_window_base(void);   /* sys_memory.c */
+ static int64_t sys_process_is_spu_lock_line_reservation_address(ppu_context* ctx)
+ {
+     uint32_t addr  = (uint32_t)ctx->gpr[3];
+@@ -2279,7 +2292,8 @@ static int64_t sys_process_is_spu_lock_line_reservation_address(ppu_context* ctx
+         rc = (int64_t)(int32_t)CELL_EINVAL;
+     } else if (addr >= VM_MAIN_MEM_BASE && addr < VM_MAIN_MEM_BASE + VM_MAIN_MEM_SIZE) {
+         rc = 0;                                   /* main memory */
+-    } else if (addr >= 0x40000000u && addr < 0x50000000u) {
++    } else if (addr >= ps3_sys_memory_window_base() &&
++               addr < ps3_sys_memory_window_base() + 0x10000000u) {
+         rc = 0;                                   /* sys_memory window */
+     } else if (addr >= 0xC0000000u && addr < 0xD0000000u) {
+         rc = 0;                                   /* RSX local memory */
 diff --git a/runtime/syscalls/sys_cond.c b/runtime/syscalls/sys_cond.c
 index 45235ea..8b664d8 100644
 --- a/runtime/syscalls/sys_cond.c
@@ -27585,6 +27764,39 @@ index 45235ea..8b664d8 100644
      cond_unlock(c);
      return CELL_OK;
  }
+diff --git a/runtime/syscalls/sys_memory.c b/runtime/syscalls/sys_memory.c
+index bfbaac5..dfc7a93 100644
+--- a/runtime/syscalls/sys_memory.c
++++ b/runtime/syscalls/sys_memory.c
+@@ -5,6 +5,7 @@
+ #include "sys_memory.h"
+ #include <stdio.h>
+ #include <string.h>
++#include <stdlib.h>
+ 
+ /* ---------------------------------------------------------------------------
+  * Globals
+@@ -24,8 +25,18 @@ uint32_t g_sys_mem_bump_ptr = 0;
+  * 0x40000000+ matches where the real lv2 places these allocations (verified
+  * against an RPCS3 boot log of Yakuza: Dead Souls); the window is outside
+  * the pre-committed main region, so pages are committed on demand. */
+-#define SYS_MEM_ALLOC_BASE  0x40000000u
+-#define SYS_MEM_ALLOC_END   0x50000000u
++/* PS3_MMAPPER_LV2_AREA=1 (set for Gran Turismo 5) moves the window to
++ * 0x10000000, where RPCS3 puts that title's sys_memory_allocate blocks, so
++ * its mmapper areas can sit at 0x30000000/0x40000000 as on the console. */
++static uint32_t sys_mem_alloc_base(void)
++{
++    static uint32_t b = 0;
++    if (!b) { const char* e = getenv("PS3_MMAPPER_LV2_AREA"); b = (e && *e == '1') ? 0x10000000u : 0x40000000u; }
++    return b;
++}
++#define SYS_MEM_ALLOC_BASE  (sys_mem_alloc_base())
++#define SYS_MEM_ALLOC_END   (sys_mem_alloc_base() + 0x10000000u)
++uint32_t ps3_sys_memory_window_base(void) { return SYS_MEM_ALLOC_BASE; }
+ 
+ static uint32_t s_total_allocated = 0;
+ 
 diff --git a/runtime/syscalls/sys_mutex.c b/runtime/syscalls/sys_mutex.c
 index 2e760ea..7788f6f 100644
 --- a/runtime/syscalls/sys_mutex.c
