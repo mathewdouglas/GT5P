@@ -14,11 +14,12 @@ Writes a `{"stub": addr, "nid": nid}` list for --hle-stubs, plus a sibling
 and coverage reports; the lifter ignores it).
 """
 import json
+import os
 import struct
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "ps3recomp" / "tools"))
+sys.path.insert(0, str(Path(os.environ.get("PS3RECOMP_DIR", Path(__file__).resolve().parents[2] / "ps3recomp-gt5p-v018")) / "tools"))
 from elf_parser import ELFFile, PRXImportEntry, vaddr_to_offset  # noqa: E402
 
 try:

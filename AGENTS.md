@@ -36,14 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-21, Phase 108)
+## Start here: state of play (2026-10-27, Phase 135)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 108 is the latest).
+has the evidence, newest phase first (Phase 135 is the latest).
 
 ### What works now
 
+- **Runtime upgrade (Phase 135):** this branch pins ps3recomp v0.18.0
+  (`4e8f3ca8`) plus GT5P compatibility adapters. Use the isolated checkout
+  and setup instructions below. At 1080p/2x MSAA/VSync the upgraded Acura
+  page measured 29.5 FPS; a warmed HSR race measured 57.9 mean FPS, median
+  frame interval 16.7 ms. Read Phase 135 for first-run cache costs and the
+  unproven early VSync-wait episode; do not assume every upstream scheduler
+  or renderer change was adopted.
 - Boots to the main menu (a save exists; a "Confirmation" popup shows on
   News every boot), with the 3D scene behind it, about 30 fps.
 - Dealerships: every manufacturer page draws, cars and floor, 22 to 30 fps;
@@ -702,19 +709,24 @@ defaults to `GT5P_VM_INLINE=ON`. Phase 79 records the earlier observations.
 
 ### Local state of this machine
 
-- **ps3recomp** is at `../ps3recomp-gt5p-master`, based on `5244db9`, with
-  local changes in 67 files. `patches/ps3recomp-5244db9-local.patch` is
-  their backup. After every change there, refresh it with bash, not
-  PowerShell, whose `>` re-encodes the file:
+- **ps3recomp v0.18.0** is pinned at `4e8f3ca8` in the isolated
+  `../ps3recomp-gt5p-v018` checkout. Run `scripts/setup_runtime.py --check`
+  to verify the compatibility overlay. The older shared
+  `../ps3recomp-gt5p-master` and `../ps3recomp` junction are preserved for GT5
+  and older branches; do not reset or update them for this branch.
+  [docs/ps3recomp-upgrade.md](docs/ps3recomp-upgrade.md) explains the retained
+  title adapters and rollback. Refresh the new patch with Bash, including
+  staged runtime changes:
 
   ```bash
-  cd ../ps3recomp-gt5p-master && git diff > ../GT5P/patches/ps3recomp-5244db9-local.patch \
-    && git apply --check -R ../GT5P/patches/ps3recomp-5244db9-local.patch
+  cd ../ps3recomp-gt5p-v018 && git diff --binary HEAD > ../GT5P/patches/ps3recomp-4e8f3ca8-local.patch \
+    && git apply --check -R ../GT5P/patches/ps3recomp-4e8f3ca8-local.patch
   ```
 
-- **`generated/` is current.** It was re-lifted on 2026-10-23 (Phase 134)
-  with the PPU lifter that has the GT5 branch's `_cs_` stack-offset fix, and
-  the SPU lifter of Phase 72; `build/gt5p.exe` is built from it. A ps3recomp
+- **`generated/` is current.** PPU and SPU were re-lifted with the pinned
+  v0.18.0 tools (Phase 135): 50,064 PPU functions and 9,115 SPU functions.
+  Do not force-include the older `ppu_vm_inline.h` over the new generated
+  header; the lifter supplies its own inline memory model. A ps3recomp
   lifter change needs a re-lift:
   - PPU: the README steps, then `scripts/setjmp_patch.py`,
     `scripts/spin_patch.py` and `scripts/ui_mask_patch.py` (all required;
@@ -1408,17 +1420,16 @@ module streams in). Do not set `SPU_ATOM_EA`: it ignores its line cap and wrote
 1.8 GB in 30 s.
 
 Build note: `GT5P_*` compile definitions are scoped to `src/main.cpp`. Do not
-put a definition on the whole `gt5p` target; changing one recompiles all ten
-lifted chunks at once and exhausts memory. If a full rebuild is needed, set
-`CMAKE_BUILD_PARALLEL_LEVEL=4` first.
+put a definition on the whole `gt5p` target; changing one recompiles all
+lifted chunks at once and exhausts memory. For a full rebuild on this 16 GB machine, set
+`CMAKE_BUILD_PARALLEL_LEVEL=2` to leave memory for other applications.
 
-The ps3recomp checkout at `../ps3recomp-gt5p-master` carries local, uncommitted
-changes in 67 files under `include/`, `libs/`, `runtime/` and `tools/` (2026-10-23). The disc build does not
-boot without the ones in `libs/spurs/cellSpurs.c`, `libs/system/cellGame.c`
-`runtime/syscalls/lv2_register.c` and `libs/video/cellGcmSys.*`, and `src/main.cpp` no longer compiles
-without the ones in `runtime/syscalls/sys_ppu_thread.*`.
-A copy is kept in `patches/ps3recomp-5244db9-local.patch`; refresh it after any
-further change there, and do not reset that checkout without it.
+This branch uses pinned ps3recomp v0.18.0 plus
+`patches/ps3recomp-4e8f3ca8-local.patch`. The disc build needs its GT5P
+compatibility adapters; stock upstream is not sufficient. Set it up with
+`scripts/setup_runtime.py`; see [the integration notes](docs/ps3recomp-upgrade.md).
+The original shared checkout and `5244db9` patch are historical rollback
+inputs, not the runtime to edit for this branch.
 
 ### RPCS3 as a reference
 
@@ -1486,8 +1497,8 @@ Layout this machine uses for the disc build:
 - `input/pkg/` holds `PARAM.SFO` and `USRDIR/`. The large files in `USRDIR` are
   NTFS hard links to the dump, not copies. Deleting them is safe; writing to
   them changes the dump.
-- `../ps3recomp` is a junction to `../ps3recomp-gt5p-master`, because several
-  scripts look for the toolkit under that name.
+- `../ps3recomp` remains a junction to the older shared `../ps3recomp-gt5p-master`.
+  Current build and lift scripts select the isolated pinned checkout instead.
 
 ## Tools
 
@@ -1512,9 +1523,9 @@ Run Python through the repo's virtual environment: `.venv\Scripts\python`.
 
 ### ps3recomp
 
-Checked out at `../ps3recomp-gt5p-master`, on `master`. The README was tested at
-commit `795ac34`; if a build misbehaves, check that commit out before debugging
-anything else. `scripts/build.cmd` finds it by that path, or set `PS3RECOMP_DIR`.
+Checked out at `../ps3recomp-gt5p-v018`, pinned by `config/ps3recomp.json`.
+Run `scripts/setup_runtime.py` to prepare it. `PS3RECOMP_DIR` overrides the
+path for setup, build and lifting. Preserve the older shared checkout.
 
 Its `tools/` folder holds `pkg_extract.py`, `elf_parser.py`,
 `find_functions.py`, `ppu_lifter.py` and `gen_hle_nids.py`.

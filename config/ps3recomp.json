@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/sp00nznet/ps3recomp.git",
+  "version": "v0.18.0",
+  "commit": "4e8f3ca87a3e1d87bb83b8b7e9348fe2685cd514",
+  "directory": "ps3recomp-gt5p-v018",
+  "patch": "patches/ps3recomp-4e8f3ca8-local.patch"
+}

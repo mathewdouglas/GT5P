@@ -8,6 +8,8 @@ uint8_t* vm_base;
 uint32_t ppu_vm_size;
 sys_mutex_info g_sys_mutexes[SYS_MUTEX_MAX];
 static int pending, delivered, committed;
+/* The standalone fixture has no PPU creation scheduler. */
+void ppu_thread_note_block(uint64_t tid) { (void)tid; }
 void ps3_gcm_pump_if_present(void) {
     if (!pending) return;
     pending=0; delivered++;

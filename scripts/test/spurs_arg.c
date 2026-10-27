@@ -6,6 +6,9 @@
 #include <stdlib.h>
 static unsigned char memory[0x40000];
 static unsigned writes, last_write;
+int g_spu_ls_watch_n;
+void spu_ls_watch_slow(uint32_t lsa, int write, const uint8_t* p, uint32_t pc, uint32_t lr)
+{ (void)lsa; (void)write; (void)p; (void)pc; (void)lr; assert(!"unexpected LS diagnostic"); }
 void spu_indirect_branch(spu_context* c) { (void)c; }
 SPU_THREAD_LOCAL void (*g_spu_trampoline_fn)(spu_context*);
 static unsigned lsa, ea, size;

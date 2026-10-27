@@ -10,6 +10,7 @@
  * link dependencies. Fail if a test accidentally enters guest-memory code. */
 uint8_t* vm_base;
 uint32_t ppu_vm_size, g_ww_lo, g_ww_hi;
+uint32_t cellGcm_flip_request_count(void) { return 0; }
 int g_resv_store_active;
 void ps3_ww_report_inline(uint32_t a, uint64_t v, int w) { CHECK(0); }
 int spu_coh_is_reserved(uint32_t a) { CHECK(0); return 0; }

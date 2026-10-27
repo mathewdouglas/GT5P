@@ -475,11 +475,18 @@ static LONG CALLBACK report_crash(EXCEPTION_POINTERS* ep)
      * main_stack_dump. */
     {
         CONTEXT hc = *ep->ContextRecord;
+        const auto image = (uintptr_t)GetModuleHandleW(nullptr);
+        fprintf(stderr, "[GT5P]   image base=%p fault RVA=0x%llX\n",
+                (void*)image, (unsigned long long)(hc.Rip - image));
+        if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+            ep->ExceptionRecord->NumberParameters >= 2)
+            fprintf(stderr, "[GT5P]   fault address guest offset=0x%llX\n",
+                    (unsigned long long)(ep->ExceptionRecord->ExceptionInformation[1] - (uintptr_t)vm_base));
         fprintf(stderr, "[GT5P]   fault chain:");
         for (int f = 0; f < 16 && hc.Rip; f++) {
             uint32_t g = ppu_prof_resolve_host((void*)hc.Rip);
             if (g) fprintf(stderr, " func_%08X", g);
-            else   fprintf(stderr, " <host:%08X>", (unsigned)(hc.Rip & 0xFFFFFFFF));
+            else   fprintf(stderr, " <host:RVA+%llX>", (unsigned long long)(hc.Rip - image));
             DWORD64 imgBase = 0;
             PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(hc.Rip, &imgBase, nullptr);
             if (!rf) break;

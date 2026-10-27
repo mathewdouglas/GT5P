@@ -15,7 +15,11 @@ import uuid
 root = Path(__file__).resolve().parents[2]
 source = root / 'shadercache'
 work = root / 'scratch' / ('shader-warmup-' + uuid.uuid4().hex)
-recipes = sorted((source / 'warmup-v1').glob('*.recipe'))[:3]
+# Old cache entries may describe an earlier sampler/root-signature generation.
+# Use recipes learned by the current build's preceding smoke run; damaged-input
+# cases below still exercise rejection explicitly without touching the source cache.
+recipes = sorted((source / 'warmup-v1').glob('*.recipe'),
+                 key=lambda p: p.stat().st_mtime_ns, reverse=True)[:3]
 assert len(recipes) == 3, 'Run this build once to learn at least three pipeline recipes'
 assert b'gt5p.exe' not in subprocess.run(['tasklist', '/FI', 'IMAGENAME eq gt5p.exe', '/NH'],
                                        capture_output=True).stdout.lower(), 'Close the game first'

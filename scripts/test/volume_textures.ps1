@@ -1,7 +1,7 @@
 param([string]$Runtime = '')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-if (!$Runtime) { $Runtime = Join-Path (Split-Path $root -Parent) 'ps3recomp-gt5p-master' }
+if (!$Runtime) { $Runtime = $env:PS3RECOMP_DIR; if (!$Runtime) { $Runtime = Join-Path (Split-Path $root -Parent) 'ps3recomp-gt5p-v018' } }
 $dir = Join-Path $root 'scratch/volume-textures'
 New-Item -ItemType Directory -Force $dir | Out-Null
 @"

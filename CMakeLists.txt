@@ -12,12 +12,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # =============================================================================
 # ps3recomp runtime
 # =============================================================================
-set(PS3RECOMP_DIR "${CMAKE_SOURCE_DIR}/../ps3recomp" CACHE PATH "Path to ps3recomp")
+set(PS3RECOMP_DIR "${CMAKE_SOURCE_DIR}/../ps3recomp-gt5p-v018" CACHE PATH "Path to the pinned, GT5P-patched ps3recomp")
 
 if(NOT EXISTS "${PS3RECOMP_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
         "ps3recomp not found at ${PS3RECOMP_DIR}\n"
-        "Clone it from https://github.com/sp00nznet/ps3recomp\n"
+        "Run: python scripts/setup_runtime.py\n"
         "Or set -DPS3RECOMP_DIR=/path/to/ps3recomp")
 endif()
 
@@ -86,27 +86,16 @@ endif()
 list(LENGTH GENERATED_SOURCES N_CHUNKS)
 message(STATUS "lifted PPU chunks: ${N_CHUNKS}")
 
-# Guest loads and stores inline in the lifted chunks (plan-30fps step 5a).
-# ppu_vm_inline.h is force-included ahead of the generated ppu_recomp.h and
-# turns each vm_read*/vm_write* call into a range test and a byte-swapped
-# access, calling the out-of-line accessor only for the null page, the raw SPU
-# registers, the GCM ref register and SPU-reserved lines. VM_INLINE=0 at run
-# time sends every access out of line again. Changing this option recompiles
-# all the chunks: set CMAKE_BUILD_PARALLEL_LEVEL=4 first.
-# On by default since Phase 107: out-of-line accessors were about 65% of the
-# race render thread's CPU (14.1 -> 5.8 ms a frame inline). The exe is about
-# 176 MB instead of 97. -DGT5P_VM_INLINE=OFF builds the old way.
+# v0.18.0's lifter emits the inline memory model itself. Do not also force
+# include the old port shim: that redefines its access macros and nests two
+# different fast paths. Scope the rollback definition to lifted chunks only.
 option(GT5P_VM_INLINE "Inline guest memory access in the lifted PPU code" ON)
-if(GT5P_VM_INLINE)
-    set(GT5P_VM_INLINE_H "${PS3RECOMP_DIR}/runtime/ppu/ppu_vm_inline.h")
-    if(MSVC)
-        set_source_files_properties(${GENERATED_SOURCES} PROPERTIES
-            COMPILE_OPTIONS "/FI${GT5P_VM_INLINE_H}")
-    else()
-        set_source_files_properties(${GENERATED_SOURCES} PROPERTIES
-            COMPILE_OPTIONS "SHELL:-include ${GT5P_VM_INLINE_H}")
-    endif()
-    message(STATUS "lifted PPU chunks: guest memory access inline")
+if(NOT GT5P_VM_INLINE)
+    set_source_files_properties(${GENERATED_SOURCES} PROPERTIES
+        COMPILE_DEFINITIONS "PPU_NO_INLINE_LOADS;PPU_NO_INLINE_STORES")
+    message(STATUS "lifted PPU chunks: inline memory disabled")
+else()
+    message(STATUS "lifted PPU chunks: upstream inline memory model")
 endif()
 
 # The runtime library does not bundle the PPU loader/HLE/VFS translation units;

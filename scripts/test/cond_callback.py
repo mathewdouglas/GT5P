@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 root = Path(__file__).resolve().parents[2]
-runtime = root.parent / 'ps3recomp-gt5p-master'
+runtime = Path(os.environ.get('PS3RECOMP_DIR', root.parent / 'ps3recomp-gt5p-v018'))
 (root / 'scratch').mkdir(exist_ok=True)
 folder = Path(tempfile.mkdtemp(prefix='cond-callback-', dir=root/'scratch'))
 batch = folder/'build.cmd'

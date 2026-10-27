@@ -170,25 +170,19 @@ What the disc build needs that upstream does not:
   scripts through `scripts/target.py` and by CMake. Select a build with
   `GT5P_TARGET`, or by writing its title id to `input/target`; the default is
   NPUA80075, so upstream's flow is unchanged.
-- **Local ps3recomp changes.** The disc build does not boot on stock ps3recomp.
-  The changes are in
-  [patches/ps3recomp-5244db9-local.patch](patches/ps3recomp-5244db9-local.patch),
-  against ps3recomp `5244db9`. They touch 62 files and cover:
-  - SPURS and the job manager;
-  - the PPU and SPU lifters (jump tables, `bisl`, vector stores);
-  - the D3D12 RSX backend (render targets, MSAA, shadow compares, samplers,
-    vertex fetch);
-  - cellGcm, cellPad, the codecs, and the diagnostics the progress log
-    names.
-
-  Each change has an environment switch that undoes it. They have not been
-  sent to ps3recomp.
+- **Pinned ps3recomp runtime.** This branch uses upstream **v0.18.0**
+  (`4e8f3ca8`) plus the GT5P compatibility patch in
+  [patches/ps3recomp-4e8f3ca8-local.patch](patches/ps3recomp-4e8f3ca8-local.patch).
+  Run `python scripts/setup_runtime.py` to prepare its isolated checkout.
+  [The integration notes](docs/ps3recomp-upgrade.md) describe the retained
+  title-specific renderer, SPURS/codec adaptations, regeneration and rollback.
+  The old `5244db9` patch and shared checkout are preserved for older branches.
 
 Building the disc build, from a dump of your own disc:
 
 ```bash
-T=../ps3recomp-gt5p-master/tools
-git -C ../ps3recomp-gt5p-master apply ../GT5P/patches/ps3recomp-5244db9-local.patch
+python scripts/setup_runtime.py
+T=../ps3recomp-gt5p-v018/tools
 rpcs3 --decrypt <dump>/PS3_GAME/USRDIR/EMAIN.SELF     # writes EMAIN.elf beside it
 cp <dump>/PS3_GAME/USRDIR/EMAIN.elf input/EMAIN.ELF
 mkdir -p input/pkg && cp -r <dump>/PS3_GAME/PARAM.SFO <dump>/PS3_GAME/USRDIR input/pkg/
@@ -254,11 +248,11 @@ distributed — you lift it yourself, locally, into the gitignored `generated/`.
 **Prerequisites:** Windows 10/11 x64, Visual Studio 2022 (C++ workload), LLVM
 18+ (`clang-cl`), CMake 3.20+, Ninja, Python 3.10+, `ps3sce` or scetool, and a
 [ps3recomp](https://github.com/sp00nznet/ps3recomp) checkout next to this repo
-at `../ps3recomp-gt5p-master` on `master` (tested at `795ac34`).
+at `../ps3recomp-gt5p-v018`, prepared by `python scripts/setup_runtime.py`.
 
 1. `pip install -r requirements.txt`
 2. Unpack the package:
-   `python ../ps3recomp-gt5p-master/tools/pkg_extract.py your.pkg input/pkg`
+   `python ../ps3recomp-gt5p-v018/tools/pkg_extract.py your.pkg input/pkg`
 3. Decrypt the game SELF:
    ```bash
    MI=$(python scripts/self_metainfo.py input/pkg/USRDIR/EMAIN.SELF your.rap)
@@ -338,7 +332,7 @@ the same game.
 ## Building from source
 
 ```bash
-T=../ps3recomp-gt5p-master/tools
+T=../ps3recomp-gt5p-v018/tools
 python $T/elf_parser.py     input/EMAIN.ELF --imports > analysis/imports.json
 python $T/find_functions.py input/EMAIN.ELF --json     --seed-json config/extra_seeds.json --output analysis/functions.json
 # drop the .rodata find_functions mistook for code

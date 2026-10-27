@@ -9,6 +9,84 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 135 - Upgrade to pinned ps3recomp v0.18.0 (2026-10-27)
+
+Branch: `upgrade/ps3recomp-v0.18.0`. The upstream pin is
+`4e8f3ca87a3e1d87bb83b8b7e9348fe2685cd514`, v0.18.0 and upstream master
+at the start of this work (542 files changed from `5244db9`). The runtime
+lives in `../ps3recomp-gt5p-v018`. The old shared runtime and junction are
+preserved; its source diff matched the pre-upgrade backup byte for byte.
+
+`config/ps3recomp.json`, `scripts/setup_runtime.py` and
+`patches/ps3recomp-4e8f3ca8-local.patch` reproduce the pinned base and GT5P
+overlay. The patch applied to a pristine worktree, passed reverse checks,
+and was recognized on repeat setup/check runs. Setup refuses unrelated dirty
+checkouts and a destination inside GT5P that is not a separate checkout.
+
+**Compatibility decisions:** retain the port's complete D3D12 renderer,
+FIFO/command handling, SPURS policy scheduler, codec callbacks, optimized
+SPU helpers and diagnostic-aware chained dispatcher. Merge upstream lifters,
+HLE registrations, bounded memory mapping, dynamic MFC/coherency registries
+and extended shader APIs around them. This does not enable Vulkan/Metal
+or adopt every upstream scheduler/float implementation. Details and rollback:
+[ps3recomp-upgrade.md](ps3recomp-upgrade.md).
+
+**Integration faults fixed:** the merged SPU channel code declared process
+policy counters as TLS; that linked but crashed at dispatch. The declarations
+now agree with the retained policy scheduler. Pad polling mixed the old SRW
+lock with the new pad mutex; it now consistently uses the pad mutex with the
+SDL owner thread. Legacy volume-unit masks are converted for the new shader
+API. GT5P's renderer unwraps upstream's WPOS helper before its own conversion;
+otherwise its different b1 layout left `fp_alpha` undeclared in shaders.
+Crash logging gained executable-relative host addresses for native faults.
+
+The re-lift emits 50,064 PPU functions (one fewer: an interior epilogue is a
+local label in its parent), 9,115 SPU functions, and 1,236 HLE handlers across
+93 modules. The SPU workload registry is unchanged. All post-lift hooks were
+reapplied and checked. The new generated inline memory model replaces the
+older force-included shim, and uses the new coherency bitmap. Deferred
+callbacks and callback stacks remain; explicit-target calls are added.
+Release builds with two compiler processes fit this 16 GB machine. Derived
+code, old executable/tree, logs and captures stay ignored.
+
+**Fixtures passed:** volume textures/GPU sampling, fragment source ranges,
+upper-unit coordinates/samplers/pipeline keys, depth-clear reuse, async PSO
+scheduling, shader job ownership, deferred condition callbacks, SPURS
+arguments, native audio math/dispatch, SDL hotplug/WASAPI recovery and debug
+export gating/fault handling. Upstream's lock-line coherency fixture passed
+195 assertions through the PPU store path.
+
+**Live validation** uses 1080p, 2x MSAA, VSync and async shaders/PSOs, with
+settings disabled. Acura reached its milestone at 31.6 s and rendered at
+29.5 FPS (`upgrade-v018-dealer-final`). The first High Speed Ring run rendered
+the race, mirror, map and HUD; its 39.0 FPS mean includes new variant
+compilation and 135 seconds of retained race-prewarm processing, so it is
+not a steady-state comparison.
+
+The warmed High Speed Ring run (`upgrade-v018-hsr-warm`, bulk startup/race
+prewarm off) measured 57.9 mean FPS over 61.4 s, title median 60, median
+16.7 ms, p99 30.6 ms, max 200.5 ms and 2.6% over 20 ms. FIFO walk was
+6.25 ms/frame (6.06 ms CPU). New DXBC compilation was zero in the sample,
+though first driver-pipeline encounters remained. Phase 134's 59.1 FPS /
+p99 21.5 ms was an earlier run, not a paired A/B; no speedup is claimed.
+
+Daytona also reached actual racing: title median 58 FPS over a 20-second
+smoke sample (`upgrade-v018-daytona`), with the HUD/map/mirror visible.
+The opening movie rendered different frames through avcodec-61.dll at
+1080p (`upgrade-v018-movie`). `shader_warmup.py` passed blocking/background
+valid/damaged cases. The fixture selects recent smoke-run recipes rather
+than arbitrary oldest entries from earlier root-signature generations;
+its explicit damaged-input cases still verify rejection. No long race
+soak or claim of fixing all existing stutters is made by this upgrade.
+
+Two early startup checks had about 250 ms GPU-fence waits even with bulk
+startup warmup off. The saved pre-upgrade executable ran normally at the
+same path. After the diagnostic rebuild, startup/menu timings returned to
+normal in repeated VSync runs, including with diagnostics disabled; no root
+cause was established. `RSX_PRESENT_DIAG=1` logs sync interval, Present
+result/call time, GPU timestamps and foreground state if it recurs. Do not
+call this a proven compiler fault or a fixed deadlock.
+
 ## Phase 134 - Re-lift with the GT5 branch's lifter (2026-10-23)
 
 The GT5 branch (BCUS98114) changed the shared ps3recomp checkout. This phase

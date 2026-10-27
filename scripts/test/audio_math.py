@@ -1,8 +1,9 @@
 """Compare native SPU fused helpers against scalar fmaf, including tiny inputs."""
 from pathlib import Path
+import os
 import subprocess,tempfile
 root=Path(__file__).resolve().parents[2]
-runtime=root.parent/'ps3recomp-gt5p-master'
+runtime = Path(os.environ.get('PS3RECOMP_DIR', root.parent / 'ps3recomp-gt5p-v018'))
 (root/'scratch').mkdir(exist_ok=True)
 folder=Path(tempfile.mkdtemp(prefix='audio-math-',dir=root/'scratch'))
 clang='"C:\\Program Files\\LLVM\\bin\\clang-cl.exe"'

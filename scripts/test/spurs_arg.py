@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 root = Path(__file__).resolve().parents[2]
-runtime = root.parent / 'ps3recomp-gt5p-master'
+runtime = Path(os.environ.get('PS3RECOMP_DIR', root.parent / 'ps3recomp-gt5p-v018'))
 (root/'scratch').mkdir(exist_ok=True)
 folder = Path(tempfile.mkdtemp(prefix='spurs-arg-',dir=root/'scratch'))
 source = (root/'generated/spu_lifted/wwsjob/spu_recomp.c').read_text(encoding='utf-8')

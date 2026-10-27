@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 import os
 root=Path(__file__).resolve().parents[2]
-runtime=root.parent/'ps3recomp-gt5p-master'
+runtime = Path(os.environ.get('PS3RECOMP_DIR', root.parent / 'ps3recomp-gt5p-v018'))
 work=root/'scratch/pso-async-test';work.mkdir(exist_ok=True)
 s=(runtime/'libs/video/rsx_d3d12_backend.c').read_text(encoding='utf-8')
 block=s[s.index('/* PSO_ASYNC_BEGIN'):s.index('/* PSO_ASYNC_END */')]

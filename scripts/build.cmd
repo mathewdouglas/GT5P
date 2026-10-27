@@ -6,7 +6,7 @@ if errorlevel 1 exit /b 1
 REM PS3RECOMP_DIR defaults to a checkout used only by this port. Building
 REM against a copy keeps a half-finished edit in a shared ps3recomp tree from
 REM breaking this build, and vice versa.
-if "%PS3RECOMP_DIR%"=="" set PS3RECOMP_DIR=%~dp0..\..\ps3recomp-gt5p-master
+if "%PS3RECOMP_DIR%"=="" set PS3RECOMP_DIR=%~dp0..\..\ps3recomp-gt5p-v018
 cmake -S "%~dp0.." -B "%~dp0..\build" -G Ninja ^
   -DPS3RECOMP_DIR="%PS3RECOMP_DIR:\=/%" ^
   -DCMAKE_BUILD_TYPE=Release ^

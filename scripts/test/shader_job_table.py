@@ -5,7 +5,7 @@ import re
 import subprocess
 
 root = Path(__file__).resolve().parents[2]
-runtime = root.parent / 'ps3recomp-gt5p-master'
+runtime = Path(os.environ.get('PS3RECOMP_DIR', root.parent / 'ps3recomp-gt5p-v018'))
 source = (runtime / 'libs/video/rsx_d3d12_backend.c').read_text(encoding='utf-8')
 folder = root / 'scratch/shader-job-table'
 folder.mkdir(parents=True, exist_ok=True)

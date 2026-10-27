@@ -5,7 +5,7 @@
 param([string]$Runtime = "", [string]$Sdl = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-if (!$Runtime) { $Runtime = Join-Path (Split-Path $root -Parent) "ps3recomp-gt5p-master" }
+if (!$Runtime) { $Runtime = $env:PS3RECOMP_DIR; if (!$Runtime) { $Runtime = Join-Path (Split-Path $root -Parent) "ps3recomp-gt5p-v018" } }
 if (!$Sdl) { $Sdl = Join-Path $root "third_party/SDL2.dll" }
 $dir = Join-Path $root "scratch/hotplug"
 New-Item -ItemType Directory -Force $dir | Out-Null
