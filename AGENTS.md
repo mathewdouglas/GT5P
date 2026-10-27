@@ -909,7 +909,11 @@ Build with `scripts\build.cmd -DGT5P_TARGET=BCUS98114-v104`.
 files. They are copied from RPCS3's install; the list is
 `scratch/rpcs3/pkg_files.txt`. Since Phase 7 GT5 reaches its **logo** after the warning. Required
 pre-lift step: `scripts/code_labels.py --write` (computed-goto labels).
-Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 7 first.
+Since Phase 8 the first-boot SQLite database works (cellFs open-mode fix) and
+the install runs past `9/DC/DS`. GT5's pager is implemented, opt-in
+(`PS3_PAGE_FAULT=1`, with `PS3_MMAPPER_SHM=1`). Skipping the install by
+seeding RPCS3's finished one is noted there for later.
+Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 8 first.
 
 ## What is tied to v02.00
 

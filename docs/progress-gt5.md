@@ -4,6 +4,114 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 8 — SQLite fixed (file open modes); the pager implemented (2026-10-27)
+
+**Fixed: the install stopping after `PDIPFS/9/DC/DS`.** It was not memory.
+Right after that file GT5 commits its first SQLite transaction on
+`/dev_hdd1/game249.db`, which failed, and the title then showed (auto-dismissed
+by our dialog stub, so the run looked stuck):
+"Insufficient free space on Hard Disk Drive (HDD). At least 32MB required.
+0x00000001 [115]".
+
+- Cause: `cellFsOpen` mapped `RDWR|CREAT` without `TRUNC` (0x42, the db;
+  0xC2, the journal) to `fopen("a+b")`. That is append mode, so every write
+  went to the end of the file whatever the seek. `WRONLY|CREAT` mapped to
+  `"wb"`, which truncates.
+- Fix (ps3recomp `cellFs.c`): create without truncate or append opens in
+  place (`"r+b"`, creating with `"w+b"` if missing). `O_CREAT|O_EXCL` fails on
+  an existing file. `FS_OPEN_LEGACY_MODES=1` restores the old table.
+- Found with the new `HLE_BT_NID=<hex>` switch (guest stack at each call to
+  one import): the dialog is opened by a short-lived thread "PDI", and the
+  message was built on `n3FKY`, the script VM thread.
+- Result: SQLite transactions now succeed back to back, as in RPCS3 (68 in
+  two minutes, database at 100 KB). File accesses match RPCS3 for 708-715
+  operations and go on past `9/DC/DS` to `9/6L/LZ`. RPCS3 goes on to
+  `9/PO/MB` and `car/*`; ours stops. The screen stays on the GRAN TURISMO 5
+  logo. The main thread's `bctr to NULL` in `func_00524768` is still there.
+  That function walks a linked list (recursing into `next` at +4, then
+  calling virtual slot 0xC) and reaches a garbage node (`this=0x7E00165F`,
+  "vtable" word `0x24004024`, which looks like a saved CR value).
+
+**Also fixed in `cellFs`:**
+
+- `cellFsWrite` touches each source page from user mode before `fwrite`, as
+  `cellFsRead` already did. `WriteFile` from an uncommitted guest page fails
+  instead of faulting (`FS_WRITE_PRETOUCH=0` off; short writes are logged).
+- `cellFsFsync` and `cellFsAllocateFileAreaWithoutZeroFill` (NIDs `0x967A162B`
+  and `0x7A0329A1`) were unregistered and faked CELL_OK. GT5 sizes each
+  `PDIPFS/*.psctmp99999` copy with the second one. Both are implemented now:
+  a real flush, and setting the file size (`FS_ALLOCATE_AREA=0` off).
+  `src/gen/ppu_hle_nids.cpp` was regenerated (only these two lines change).
+  The helper `cellfs_syscache_prepare` was renamed `ps3_fs_syscache_prepare`,
+  because the generator registers every exported `cell*` name.
+
+**The pager, built and working, opt-in:** `PS3_PAGE_FAULT=1` (needs
+`PS3_MMAPPER_SHM=1`).
+
+- lv2 327 records each notified 256 MB area and its queue. GT5 asks twice,
+  for `0x60000000` and `0x30000000`, as in RPCS3.
+- A guest PPU thread faulting inside such an area queues
+  `(0xFFFE000000000000, address, thread id, 2)` and waits (10 s,
+  `PS3_PAGE_FAULT_MS`) for lv2 57. Then the access is retried.
+- GT5's `MpAnk` serves the faults in RPCS3's order (`0x60000000`,
+  `0x60110004`, `0x60010000`, ...) and writes its page files under
+  `/dev_hdd1/mem/page`.
+- Why it matters: without it our fault handler commits zero pages behind the
+  pager. With real blocks (`PS3_MMAPPER_SHM=1`) the pager's later map of such
+  a page wiped what the game had written there.
+- `search_and_map` (lv2 337) under block semantics is now a first fit inside
+  the area that holds `start_addr`, reusing unmapped room. The bump counter
+  never reused and rounded every block to 1 MB. GT5 never calls 337 in our
+  runs, though; it maps through `sys_mmapper_map_memory` at its own
+  addresses. No overlapping or double maps were found in a trace
+  (`PS3_MEMTRACE=1` now logs map and unmap).
+- With all three switches (`SHM`, `LV2_AREA`, `PAGE_FAULT`) runs still
+  corrupt: wild reads from `0x81560000` upwards and the same NULL-list call.
+  Not the default.
+
+**Runs vary a lot.** The same build and clean data give different outcomes:
+
+- About 1 boot in 3 dies in the first seconds in an endless recursion
+  between `0x00BE20D4` and `0x00BC1870` (`func_00BC183C` ->
+  `func_00BE1F2C`). It is not caused by this phase's changes: it happens with
+  `FS_WRITE_PRETOUCH=0` too.
+- One non-verbose 5-minute run created `USRDIR/grim2/grim007.db` (RPCS3 does
+  that about 3 s after `game249.db`) but no `game249.db`, went black from
+  10 s, and its policy module looped on one DMA until halted.
+- A verbose run once stopped silently after `PDIPFS/K/LG` (423 operations).
+
+**New diagnostics:**
+
+- `GT5P_FAULT_LOG=<n>`: log the first n committed faults (24 before), now
+  with the host thread and `rip exe+offset` (resolve with `build/gt5.map`).
+- `HLE_BT_NID=<hex>`.
+- `PS3_MEMTRACE=1`: also logs map, unmap and search_and_map.
+
+**For later (the user asked to note it): skip the install.** GT5's
+first-boot install is the game's own logic (it copies files from `GT.VOL` into
+`PDIPFS` and builds `game249.db`). It can't be removed, but it can be skipped
+by giving the port a finished install, as the Prologue port runs from
+`gamedata`. RPCS3 has one:
+
+- `dev_hdd0/game/BCUS98114`: 6.5 GB, 31,581 files, with `PDIPFS`,
+  `PDIPFS_bdmark`, `db`, `grim2`, `installed00.dat` and `pace`;
+- `dev_hdd1/caches/BCUS98114_BCUS98114`: `game249.db`, `grim2`, `mem`,
+  `tmp_save_work.dat`.
+
+To use it, copy the first to `gamedata/dev_hdd0/game/BCUS98114` and the
+second's contents to `gamedata/dev_hdd1`, with `gamedata/dev_hdd1.id`
+containing `BCUS98114` so the cache mount relays instead of clearing.
+
+- Test the installed path that way first, since it is what players will run.
+- Keep the from-scratch install (`reset_gd.py`) as a separate test.
+- Unverified: whether GT5 accepts RPCS3's cache as relayed.
+
+**Next:**
+
+1. Seed the install from RPCS3 and see how far the installed boot gets.
+2. The list corruption behind `func_00524768` (who links the garbage node).
+3. The early recursion at `0x00BC1870`.
+
 ## Phase 7 — Computed-goto labels: past the warning to the GT5 logo (2026-10-27)
 
 **Fixed: the black screen after the warning.**

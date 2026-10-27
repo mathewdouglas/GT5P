@@ -174,6 +174,8 @@ extern "C" {
     void cellFsStat(void);
     void cellFsTruncate(void);
     void cellFsFtruncate(void);
+    void cellFsFsync(void);
+    void cellFsAllocateFileAreaWithoutZeroFill(void);
     void cellFsGetBlockSize(void);
     void cellFsGetFreeSize(void);
     void cellFsChmod(void);
@@ -1384,6 +1386,8 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x7DE6DCEDu, "cellFsStat", (void*)cellFsStat);
     ps3_hle_register(0xC9DC3AC5u, "cellFsTruncate", (void*)cellFsTruncate);
     ps3_hle_register(0x0E2939E5u, "cellFsFtruncate", (void*)cellFsFtruncate);
+    ps3_hle_register(0x967A162Bu, "cellFsFsync", (void*)cellFsFsync);
+    ps3_hle_register(0x7A0329A1u, "cellFsAllocateFileAreaWithoutZeroFill", (void*)cellFsAllocateFileAreaWithoutZeroFill);
     ps3_hle_register(0x1A108AB7u, "cellFsGetBlockSize", (void*)cellFsGetBlockSize);
     ps3_hle_register(0xAA3B4BCDu, "cellFsGetFreeSize", (void*)cellFsGetFreeSize);
     ps3_hle_register(0x99406D0Bu, "cellFsChmod", (void*)cellFsChmod);

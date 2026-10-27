@@ -459,6 +459,7 @@ static DWORD WINAPI main_stack_dump(LPVOID secs)
  * of just working. Commits are logged -- a page the guest touches that nothing
  * allocated is still worth knowing about; this makes it survivable, not
  * invisible. GT5P_NO_FAULT_COMMIT=1 lets the fault stand. */
+extern "C" int ps3_pager_fault(uint32_t addr, int write);   /* ppu_loader.cpp */
 static LONG CALLBACK fault_commit(EXCEPTION_POINTERS* ep)
 {
     const EXCEPTION_RECORD* er = ep->ExceptionRecord;
@@ -468,13 +469,22 @@ static LONG CALLBACK fault_commit(EXCEPTION_POINTERS* ep)
     if (!vm_base || at < (uintptr_t)vm_base || at >= (uintptr_t)vm_base + 0x100000000ull)
         return EXCEPTION_CONTINUE_SEARCH;
     void* page = (void*)(at & ~(uintptr_t)0xFFFF);
+    /* A page the title pages itself (lv2 327; PS3_PAGE_FAULT=1): its pager maps
+     * and fills it, then the access is retried. The commit below is then a
+     * no-op on the mapped page. */
+    { if (ps3_pager_fault((uint32_t)(at - (uintptr_t)vm_base), er->ExceptionInformation[0] == 1)) {
+          VirtualAlloc(page, 0x10000, MEM_COMMIT, PAGE_READWRITE);
+          return EXCEPTION_CONTINUE_EXECUTION;
+      } }
     if (!VirtualAlloc(page, 0x10000, MEM_COMMIT, PAGE_READWRITE))
         return EXCEPTION_CONTINUE_SEARCH;
-    static LONG n = 0;
-    if (InterlockedIncrement(&n) <= 24)
-        fprintf(stderr, "[GT5P] faulted in guest page 0x%08X (%s) -- committed\n",
+    static LONG n = 0, limit = -1;   /* GT5P_FAULT_LOG=<n>: log the first n (24) */
+    if (limit < 0) { const char* e = getenv("GT5P_FAULT_LOG"); limit = e ? atol(e) : 24; }
+    if (InterlockedIncrement(&n) <= limit)
+        fprintf(stderr, "[GT5P] faulted in guest page 0x%08X (%s) -- committed (host tid %lu, rip exe+0x%llX)\n",
                 (uint32_t)((uintptr_t)page - (uintptr_t)vm_base),
-                er->ExceptionInformation[0] == 1 ? "write" : "read");
+                er->ExceptionInformation[0] == 1 ? "write" : "read", GetCurrentThreadId(),
+                (unsigned long long)((uintptr_t)er->ExceptionAddress - (uintptr_t)GetModuleHandleW(NULL)));
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
