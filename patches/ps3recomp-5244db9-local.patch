@@ -5879,6 +5879,125 @@ index f2b4c119..5a16b60a 100644
  #endif
  }
  
+diff --git a/libs/misc/cellMusicDecode2.c b/libs/misc/cellMusicDecode2.c
+index 2bbff7fc..a45daadf 100644
+--- a/libs/misc/cellMusicDecode2.c
++++ b/libs/misc/cellMusicDecode2.c
+@@ -74,3 +74,93 @@ s32 cellMusicDecode2SetSelectionContext(const void* ctx)
+     if (!s_initialized2) return (s32)CELL_MUSIC_DECODE2_ERROR_NOT_INITIALIZED;
+     return (s32)CELL_MUSIC_DECODE2_ERROR_NOT_SUPPORTED;
+ }
++
++/* ---------------------------------------------------------------------------
++ * cellMusicDecodeUtility's "2" API, as titles import it (cellMusicDecode*2).
++ * The functions above use names no title imports, so Gran Turismo 5's
++ * cellMusicDecodeInitialize2 went unresolved: it returned "success", the
++ * title waited for the initialise result on its callback and never got it
++ * (a black screen after the first-boot save). This is a console with no
++ * custom soundtrack: initialise and finalise succeed, and selecting,
++ * decoding and reading report that no content is active. Results reach the
++ * title's callback at its next cellSysutilCheckCallback, as on the console.
++ * CELL_MUSIC_DECODE2_CB=0: return without calling back (the old hang).
++ * ------------------------------------------------------------------------*/
++#include "../system/cellSysutil.h"
++#include <stdlib.h>
++
++enum {
++    MUSIC2_EVENT_INITIALIZE_RESULT = 1,
++    MUSIC2_EVENT_FINALIZE_RESULT = 2,
++    MUSIC2_EVENT_SELECT_CONTENTS_RESULT = 3,
++    MUSIC2_EVENT_SET_DECODE_COMMAND_RESULT = 4,
++    MUSIC2_EVENT_SET_SELECTION_CONTEXT_RESULT = 5,
++};
++#define MUSIC2_ERROR_NO_ACTIVE_CONTENT 0x8002C103u
++
++static u32 s_music2_cb, s_music2_user;
++static int s_music2_init;
++
++static void music2_post(u32 event, u32 result)
++{
++    static int on = -1;
++    if (on < 0) { const char* e = getenv("CELL_MUSIC_DECODE2_CB"); on = !(e && *e == '0'); }
++    printf("[cellMusicDecode2] event %u result 0x%08X%s\n", event, result, on ? "" : " (not delivered)");
++    if (!on || !s_music2_cb) return;
++    const u64 args[8] = { event, result, s_music2_user, 0, 0, 0, 0, 0 };
++    cellSysutilQueueGuestCallbackArgs(s_music2_cb, args);
++}
++
++s32 cellMusicDecodeInitialize2(u32 mode, u32 container, u32 spuPriority, u32 func,
++                               u32 userData, u32 speed, u32 bufSize)
++{
++    printf("[cellMusicDecode2] Initialize2(mode=%u container=0x%X prio=%u func=0x%08X user=0x%08X speed=%u buf=0x%X)\n",
++           mode, container, spuPriority, func, userData, speed, bufSize);
++    if (!func) return (s32)0x8002C101u;   /* PARAM */
++    s_music2_cb = func; s_music2_user = userData; s_music2_init = 1;
++    music2_post(MUSIC2_EVENT_INITIALIZE_RESULT, CELL_OK);
++    return CELL_OK;
++}
++
++s32 cellMusicDecodeFinalize2(void)
++{
++    printf("[cellMusicDecode2] Finalize2()\n");
++    music2_post(MUSIC2_EVENT_FINALIZE_RESULT, CELL_OK);
++    s_music2_init = 0;
++    return CELL_OK;
++}
++
++s32 cellMusicDecodeSelectContents2(void)
++{
++    music2_post(MUSIC2_EVENT_SELECT_CONTENTS_RESULT, MUSIC2_ERROR_NO_ACTIVE_CONTENT);
++    return CELL_OK;
++}
++
++s32 cellMusicDecodeSetDecodeCommand2(s32 command)
++{
++    printf("[cellMusicDecode2] SetDecodeCommand2(%d)\n", command);
++    music2_post(MUSIC2_EVENT_SET_DECODE_COMMAND_RESULT, MUSIC2_ERROR_NO_ACTIVE_CONTENT);
++    return CELL_OK;
++}
++
++s32 cellMusicDecodeGetSelectionContext2(u32 context)
++{
++    (void)context;
++    return (s32)MUSIC2_ERROR_NO_ACTIVE_CONTENT;
++}
++
++s32 cellMusicDecodeSetSelectionContext2(u32 context)
++{
++    (void)context;
++    music2_post(MUSIC2_EVENT_SET_SELECTION_CONTEXT_RESULT, MUSIC2_ERROR_NO_ACTIVE_CONTENT);
++    return CELL_OK;
++}
++
++s32 cellMusicDecodeRead2(u32 buf, u32 startTime, u64 reqSize, u32 readSize, u32 speed, u32 position)
++{
++    (void)buf; (void)reqSize; (void)speed;
++    if (startTime) vm_write32(startTime, 0);
++    if (readSize) vm_write32(readSize, 0);
++    if (position) vm_write32(position, 0);
++    return (s32)MUSIC2_ERROR_NO_ACTIVE_CONTENT;
++}
+diff --git a/libs/misc/cellMusicDecode2.h b/libs/misc/cellMusicDecode2.h
+index 70d8c7c9..6b9f01a4 100644
+--- a/libs/misc/cellMusicDecode2.h
++++ b/libs/misc/cellMusicDecode2.h
+@@ -44,6 +44,16 @@ s32 cellMusicDecode2GetInfo(CellMusicDecode2Info* info);
+ s32 cellMusicDecode2GetSelectionContext(void* ctx);
+ s32 cellMusicDecode2SetSelectionContext(const void* ctx);
+ 
++/* The exports titles import (cellMusicDecodeUtility). */
++s32 cellMusicDecodeInitialize2(u32 mode, u32 container, u32 spuPriority, u32 func,
++                               u32 userData, u32 speed, u32 bufSize);
++s32 cellMusicDecodeFinalize2(void);
++s32 cellMusicDecodeSelectContents2(void);
++s32 cellMusicDecodeSetDecodeCommand2(s32 command);
++s32 cellMusicDecodeGetSelectionContext2(u32 context);
++s32 cellMusicDecodeSetSelectionContext2(u32 context);
++s32 cellMusicDecodeRead2(u32 buf, u32 startTime, u64 reqSize, u32 readSize, u32 speed, u32 position);
++
+ #ifdef __cplusplus
+ }
+ #endif
 diff --git a/libs/network/cellHttpUtil.c b/libs/network/cellHttpUtil.c
 index 2c557f4d..c890d64a 100644
 --- a/libs/network/cellHttpUtil.c
@@ -22527,10 +22646,10 @@ index acbaf126..0c80b8d2 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index e73a1512..24981a5e 100644
+index e73a1512..f8847bb2 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -1,3870 +1,4492 @@
+@@ -1,3870 +1,4496 @@
 -/*
 - * ps3recomp - PPU runtime loader
 - *
@@ -28666,7 +28785,11 @@ index e73a1512..24981a5e 100644
 +                    "(r3=0x%08X r4=0x%08X "
 +                    "tid=%llu) -- returning with r3 untouched\n", who, opd, o0,
 +                    (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
-+                    (unsigned long long)ctx->thread_id); } }
++                    (unsigned long long)ctx->thread_id);
++            /* PPU_NULL_BT=1: and the guest stack for the first 8. */
++            static int bt = -1;
++            if (bt < 0) bt = getenv("PPU_NULL_BT") ? 1 : 0;
++            if (bt && n <= 8) ppu_dump_guest_stack(ctx, "null-bctr"); } }
 +        return;
 +        }
 +    }
@@ -30892,7 +31015,7 @@ index e73a1512..24981a5e 100644
 +}
 +
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index d857f308..891cf4d8 100644
+index d857f308..e0a1e9ea 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
 @@ -16,6 +16,9 @@
@@ -31324,7 +31447,7 @@ index d857f308..891cf4d8 100644
  /* sys_ppu_thread_get_id(vm::ptr<u64> id) -> *id = calling thread's real id.
   * The old fixed "1" broke every am-I-the-designated-thread check in
   * multithreaded titles (LBP's job system routes work by thread identity, so
-@@ -397,26 +698,196 @@ static void sys_ppu_thread_get_id(ppu_context* ctx)
+@@ -397,26 +698,210 @@ static void sys_ppu_thread_get_id(ppu_context* ctx)
   * search_and_map just needs a non-zero id to track. */
  /* id -> size so sys_mmapper_search_and_map (lv2 337) can lay blocks out
   * without overlap. Ids are dense from 0x1000. */
@@ -31416,7 +31539,21 @@ index d857f308..891cf4d8 100644
 +    AcquireSRWLockExclusive(&s_mm_lock);
 +    MmBlock* b = nullptr;
 +    if (s_mm_blocks) { auto it = s_mm_blocks->find(mem_id); if (it != s_mm_blocks->end()) b = &it->second; }
-+    if (b && b->size && mm_legacy()) b->mapped_at = addr;   /* contents stay put */
++    if (b && b->size && mm_legacy()) {
++        /* Two blocks mapped over each other share memory in legacy mode:
++         * say so (first 32). */
++        static int over = 0;
++        for (auto& kv : *s_mm_blocks) {
++            const MmBlock& o = kv.second;
++            if (&o == b || !o.mapped_at || over >= 32) continue;
++            if (addr < o.mapped_at + o.size && o.mapped_at < addr + b->size) {
++                over++;
++                fprintf(stderr, "[mmapper] OVERLAP: id 0x%X mapped at 0x%08X+0x%X over id 0x%X at 0x%08X+0x%X\n",
++                        mem_id, addr, b->size, kv.first, o.mapped_at, o.size);
++            }
++        }
++        b->mapped_at = addr;   /* contents stay put */
++    }
 +    else if (b && b->size) mm_map_locked(b, addr);
 +    ReleaseSRWLockExclusive(&s_mm_lock);
 +}
@@ -31527,7 +31664,7 @@ index d857f308..891cf4d8 100644
      if (getenv("PS3_MEMTRACE"))
          fprintf(stderr, "[mmapper] allocate_memory(size=0x%X flags=0x%llX id_ptr=0x%X) -> id 0x%X\n",
                  size, (unsigned long long)ctx->gpr[4], mem_id_ptr, id);
-@@ -430,7 +901,7 @@ static void sys_mmapper_allocate_memory_from_container(ppu_context* ctx)
+@@ -430,7 +915,7 @@ static void sys_mmapper_allocate_memory_from_container(ppu_context* ctx)
  {
      uint32_t size = (uint32_t)ctx->gpr[3];
      uint32_t mem_id_ptr = (uint32_t)ctx->gpr[6];
@@ -31536,7 +31673,56 @@ index d857f308..891cf4d8 100644
      if (getenv("PS3_MEMTRACE"))
          fprintf(stderr, "[mmapper] alloc_from_container(size=0x%X cid=0x%X flags=0x%llX id_ptr=0x%X) -> id 0x%X\n",
                  size, (uint32_t)ctx->gpr[4], (unsigned long long)ctx->gpr[5], mem_id_ptr, id);
-@@ -911,6 +1382,14 @@ extern "C" void ppu_sysprx_register(void)
+@@ -584,6 +1069,38 @@ static void hle_net_socket(ppu_context* ctx) { static uint32_t s_fd = 3; ctx->gp
+ /* sendto: report the full length as sent (packets vanish into the void, matching
+  * the RPCS3-offline oracle where broadcasts go out and nothing answers). */
+ static void hle_net_sendto(ppu_context* ctx) { ctx->gpr[3] = (uint32_t)ctx->gpr[5]; }
++/* getsockname(s, addr, addrlen) offline: the socket is bound nowhere, so
++ * AF_INET 0.0.0.0 port 0. Unresolved, it returned its own first argument and
++ * left the caller's sockaddr as it was (Gran Turismo 5's libpace). */
++static void hle_net_getsockname(ppu_context* ctx)
++{
++    uint32_t addr = (uint32_t)ctx->gpr[4], lenp = (uint32_t)ctx->gpr[5];
++    if (addr) {
++        for (uint32_t k = 0; k < 16; k += 4) vm_write32(addr + k, 0);
++        vm_write8(addr + 0, 16);  /* sin_len */
++        vm_write8(addr + 1, 2);   /* AF_INET */
++    }
++    if (lenp) vm_write32(lenp, 16);
++    ctx->gpr[3] = 0;
++}
++/* inet_pton(af, src, dst): AF_INET dotted quads; 1 converted, 0 not an
++ * address, -1 other families. Unresolved, it returned af (2) untouched. */
++static void hle_net_inet_pton(ppu_context* ctx)
++{
++    uint32_t af = (uint32_t)ctx->gpr[3], src = (uint32_t)ctx->gpr[4], dst = (uint32_t)ctx->gpr[5];
++    if (af != 2) { ctx->gpr[3] = (uint64_t)(int64_t)-1; return; }
++    uint32_t part[4] = {0, 0, 0, 0}; int n = 0, digits = 0, ok = src != 0;
++    for (uint32_t i = 0; ok && i < 16; i++) {
++        uint8_t c = vm_read8(src + i);
++        if (c >= '0' && c <= '9') { part[n] = part[n] * 10 + (c - '0'); if (++digits > 3 || part[n] > 255) ok = 0; }
++        else if (c == '.' && digits && n < 3) { n++; digits = 0; }
++        else if (c == 0) break;
++        else ok = 0;
++    }
++    if (!ok || n != 3 || !digits) { ctx->gpr[3] = 0; return; }
++    if (dst) for (int k = 0; k < 4; k++) vm_write8(dst + k, (uint8_t)part[k]);
++    ctx->gpr[3] = 1;
++}
+ 
+ /* _sys_spu_image_import (sysPrxForUser NID 0xEBE5F72F) -- the user-space wrapper
+  * libsre calls during cellSpursInitialize to load the SPURS SPU kernel into the
+@@ -875,6 +1392,9 @@ extern "C" void ppu_sysprx_register(void)
+     ps3_hle_register_ctx(0x3F09E20Au, "sys_net_bnet_select",    hle_net_select);
+     ps3_hle_register_ctx(0x139A9E9Bu, "netInitializeNetworkEx", hle_net_zero);   /* lib init ok */
+     ps3_hle_register_ctx(0x9C056962u, "netSocket",              hle_net_socket);
++    ps3_hle_register_ctx(0x13EFE7F5u, "getsockname",            hle_net_getsockname);
++    ps3_hle_register_ctx(0x8AF3825Eu, "inet_pton",              hle_net_inet_pton);
++    ps3_hle_register_ctx(0x27DEDA93u, "sceNpTrophySetSoundLevel", hle_net_zero);
+     ps3_hle_register_ctx(0xB0A59804u, "netBind",                hle_net_zero);
+     ps3_hle_register_ctx(0x88F03575u, "netSetSockOpt",          hle_net_zero);
+     ps3_hle_register_ctx(0x9647570Bu, "netSendTo",              hle_net_sendto);
+@@ -911,6 +1431,14 @@ extern "C" void ppu_sysprx_register(void)
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_all"), "sys_lwcond_signal_all", sys_lwcond_signal_all);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_to"),  "sys_lwcond_signal_to",  sys_lwcond_signal_to);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_wait"),       "sys_lwcond_wait",       sys_lwcond_wait);
@@ -31551,7 +31737,7 @@ index d857f308..891cf4d8 100644
  
      /* Thread id + memory manager (high-frequency boot imports). The flat VM
       * means map/unmap/free are no-ops: the memory already exists everywhere. */
-@@ -919,7 +1398,7 @@ extern "C" void ppu_sysprx_register(void)
+@@ -919,7 +1447,7 @@ extern "C" void ppu_sysprx_register(void)
      ps3_hle_register_ctx(ps3_compute_nid("sys_ppu_thread_exit"),        "sys_ppu_thread_exit",        hle_ppu_thread_exit);
      ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_allocate_memory"), "sys_mmapper_allocate_memory", sys_mmapper_allocate_memory);
      ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_allocate_memory_from_container"), "sys_mmapper_allocate_memory_from_container", sys_mmapper_allocate_memory_from_container);

@@ -461,6 +461,13 @@ extern "C" {
     void cellMusicDecode2GetInfo(void);
     void cellMusicDecode2GetSelectionContext(void);
     void cellMusicDecode2SetSelectionContext(void);
+    void cellMusicDecodeInitialize2(void);
+    void cellMusicDecodeFinalize2(void);
+    void cellMusicDecodeSelectContents2(void);
+    void cellMusicDecodeSetDecodeCommand2(void);
+    void cellMusicDecodeGetSelectionContext2(void);
+    void cellMusicDecodeSetSelectionContext2(void);
+    void cellMusicDecodeRead2(void);
     void cellMusicExportInit(void);
     void cellMusicExportEnd(void);
     void cellMusicExportStart(void);
@@ -1673,6 +1680,13 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x4181D81Au, "cellMusicDecode2GetInfo", (void*)cellMusicDecode2GetInfo);
     ps3_hle_register(0xF76CCDA8u, "cellMusicDecode2GetSelectionContext", (void*)cellMusicDecode2GetSelectionContext);
     ps3_hle_register(0xFBD08D86u, "cellMusicDecode2SetSelectionContext", (void*)cellMusicDecode2SetSelectionContext);
+    ps3_hle_register(0xF80E31E5u, "cellMusicDecodeInitialize2", (void*)cellMusicDecodeInitialize2);
+    ps3_hle_register(0x4AEF2877u, "cellMusicDecodeFinalize2", (void*)cellMusicDecodeFinalize2);
+    ps3_hle_register(0xC22563C4u, "cellMusicDecodeSelectContents2", (void*)cellMusicDecodeSelectContents2);
+    ps3_hle_register(0x2EF701ECu, "cellMusicDecodeSetDecodeCommand2", (void*)cellMusicDecodeSetDecodeCommand2);
+    ps3_hle_register(0xF91639F9u, "cellMusicDecodeGetSelectionContext2", (void*)cellMusicDecodeGetSelectionContext2);
+    ps3_hle_register(0x491D6BA5u, "cellMusicDecodeSetSelectionContext2", (void*)cellMusicDecodeSetSelectionContext2);
+    ps3_hle_register(0xB2D054DFu, "cellMusicDecodeRead2", (void*)cellMusicDecodeRead2);
     ps3_hle_register(0xD5334803u, "cellMusicExportInit", (void*)cellMusicExportInit);
     ps3_hle_register(0x0B9662CAu, "cellMusicExportEnd", (void*)cellMusicExportEnd);
     ps3_hle_register(0x75A2F283u, "cellMusicExportStart", (void*)cellMusicExportStart);

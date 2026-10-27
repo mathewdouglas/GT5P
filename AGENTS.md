@@ -917,7 +917,11 @@ steps, `grim2` cache created) and GT5 draws its own (still empty) panel.
 GT5 now defaults to `PS3_USER_MEM_ACCOUNT=1` (lv2 free-memory accounting),
 `PS3_PAGE_FAULT=2` (faults reach GT5's pager with flat mmapper blocks) and
 `PS3_MMAPPER_LV2_AREA=1`; `PS3_MMAPPER_SHM=1` still corrupts the heap.
-Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 9 first.
+Since Phase 10 GT5 reaches its **main menu** (music-decode imports fixed);
+the menu runs below 1 fps with garbled buttons because a sound DSP context
+and menu objects share heap memory (cause open). Unattended runs press Cross
+on a timer (`PAD_HOLD`). Read [docs/progress-gt5.md](docs/progress-gt5.md)
+Phase 10 first.
 
 ## What is tied to v02.00
 

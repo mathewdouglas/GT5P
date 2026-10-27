@@ -4,6 +4,104 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 10 — Past the install to the main menu (2026-10-28)
+
+**Result.** From a fresh install, with Cross pressed at each prompt, GT5 shows
+its install screen ("Installing data...", progress bar, time left), then
+"Installation complete", Adjust Display Area, creates its save
+(`BCUS98114-GAME`) and reaches the **main menu**. The menu shows the copyright
+text, the "5" logo, the cursor and four buttons. Booting again from the
+installed state goes straight to the menu. All 16,446 installed `PDIPFS`
+files are byte-identical to RPCS3's install.
+
+**Correction to Phase 9's "Open, next" item 1.** The "stall" after
+`installed00.dat` was the confirmation prompt (its text drew once it had faded
+in), waiting for Cross. Main and the workers were idle because the title was
+waiting for input. Unattended runs press Cross on a timer:
+`PAD_HOLD` = `20000-20300:CROSS,30000-30300:CROSS,...` (GT5 prints no
+`[milestone]` lines).
+
+**Fixed: the black screen after the save.** `n3FKY` loads module 0x53, creates
+a memory container and calls `cellMusicDecodeInitialize2` (from
+`func_00A5AA60`, a script native at `0x00822078`). It then polls a result slot
+every 2 ms (`func_00A59EBC`/`0x00A59F98`, no timeout) until the callback posts
+the initialise result. ps3recomp's music-decode stubs used names no title
+imports (`cellMusicDecode2Init` and so on), so the import was unresolved, the
+call returned 0, and the callback never came. GT5 imports seven:
+`Initialize2, Finalize2, SelectContents2, SetDecodeCommand2,
+Get/SetSelectionContext2, Read2`. They now model a console with no custom
+soundtrack. `Initialize2` and `Finalize2` succeed and post their result
+through `cellSysutilQueueGuestCallbackArgs` (delivered at the title's
+`cellSysutilCheckCallback`). Select, decode command and selection context
+post `0x8002C103` (no active content), and `Read2` returns it.
+`CELL_MUSIC_DECODE2_CB=0` withholds the callbacks. `src/gen/ppu_hle_nids.cpp`
+is regenerated (`gen_hle_nids.py --all`; the only change is these seven).
+RPCS3 shows the same call (`LR 0x00A5AC20`), after which GT5 starts a thread
+and continues.
+
+Also resolved (offline network model, `ppu_sysprx.cpp`): `getsockname`
+(AF_INET 0.0.0.0:0), `inet_pton` (dotted quads) and
+`sceNpTrophySetSoundLevel` (0). Unresolved, each returned its first argument.
+They did not change the menu. Still unresolved: three `cellUsbd` functions
+and `sys_prx_get_module_list`.
+
+**Open: the menu runs at 0.1-0.4 fps, its buttons are garbled and the
+background scene is missing.** The cause found so far is memory corruption,
+not rendering:
+
+- The sampler (`GT5P_SAMPLE=6`) shows three threads at about 100%:
+  - sound thread `gFKsE` (guest tid 27), spinning in `func_00D1B930`. That is
+    a wait for SPU job progress: the minimum of eight u16 counters at
+    `+0x42..+0x4E` must reach a target;
+  - the job-chain thread, entirely in SPU image `jFDFFAAC1` `0x7318`;
+  - an SPU lane busy-waiting in `spu_rdch`.
+- `jFDFFAAC1` `0x7318` is a level meter: it sums samples `r21` times, then
+  takes a square root. A probe at `0x72E4` showed `r21 = 0x4FFF0084` and
+  `r23 = 0x42088000`. Both are guest addresses where a count belongs, so each
+  job loops about 1.3 billion times. The struct is in local store at
+  `0x90B0`.
+- `SPU_DMA_RANGE=4FFF2700-4FFF2900`: a sound SPU job (image 14) GETs and PUTs
+  16 KB at EA `0x4FFF2780` (local store `0x8800`, which contains `0x90B0`).
+  The same span holds `0x4FFF27D4` (= `0x4FFF0084`, the only copy in memory,
+  `GT5P_FIND`) and `0x4FFF27E0`.
+- Main's recurring `bctr to NULL` (`func_00524768`, a recursive list walk:
+  `node->next` at +4, then vtable +0xC) reaches node `0x4FFF27E0`.
+  `PPU_NULL_BT=1` gives the chain `0x001748A0` → `0x005218B8` → `0x0052AB94` →
+  `0x0052625C` (object `0x42088000`) → `0x005464F8` → `0x00545DB0`.
+
+So a sound DSP context and main's menu objects share the same memory in
+GT5's heap at the top of its `0x40000000` area (1 MB block `0x4FF00000`).
+Either the heap hands the memory out twice or one side holds a stale pointer.
+The cause is not found.
+
+Ruled out:
+- Mmapper blocks mapped over one another (new `[mmapper] OVERLAP` check; none
+  seen).
+- Stale data in newly mapped blocks: zeroing each block's first mapping (all
+  blocks, or 1 MB blocks only) left the same values and null calls. The code
+  was removed.
+- Bad installed data: every file read matches RPCS3.
+
+**Intermittent early stall.** About half the boots from the installed state
+stop during loading. Each stops at a different file in `PDIPFS/K/`, before
+the music-decode call, with the screen black or on the GT logo. This happened
+with and without every change in this phase; the cause is not investigated.
+The thread-29 null calls (`func_00985D7C`, `func_0098C458`) are still seen.
+
+**New diagnostics:**
+- `PPU_NULL_BT=1`: guest stack with the first 8 `bctr to NULL` reports.
+- `[mmapper] OVERLAP`: logged for legacy blocks mapped over a mapped block.
+- `GT5P_FIND`: now scans 0x10000000-0x70000000 and prints the word at −0x20.
+
+**Next:**
+
+1. Find who allocates the 16 KB DSP context at `0x4FFF2780` and who allocates
+   the list node at `0x4FFF27E0`. Use `PPU_WWATCH` on `0x4FFF27E0` from boot
+   (first writer), and trace allocations on GT5's heap object.
+2. The intermittent early stall.
+3. The menu's garbled textures and missing background, once the corruption
+   is fixed.
+
 ## Phase 9 — Memory accounting and pager faults: the install runs to its end (2026-10-28)
 
 **Result.** With the new defaults the first-boot install matches RPCS3 for

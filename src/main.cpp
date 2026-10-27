@@ -395,7 +395,7 @@ static DWORD WINAPI main_stack_dump(LPVOID secs)
     if (const char* fv = getenv("GT5P_FIND")) {
         uint32_t want = (uint32_t)strtoul(fv, nullptr, 0);
         static const uint32_t ranges[][2] = {
-            {0x00010000u, 0x02000000u}, {0x20000000u, 0x40000000u}, {0xD0000000u, 0xD0200000u}};
+            {0x00010000u, 0x02000000u}, {0x10000000u, 0x70000000u}, {0xD0000000u, 0xD0200000u}};
         int hits = 0;
         for (auto& r : ranges) {
             for (uint32_t pg = r[0]; pg < r[1] && hits < 16; pg += 0x10000u) {
@@ -404,7 +404,8 @@ static DWORD WINAPI main_stack_dump(LPVOID secs)
                 for (uint32_t a = pg; a < pg + 0x10000u && hits < 16; a += 4) {
                     uint32_t w; memcpy(&w, vm_base + a, 4);
                     if (_byteswap_ulong(w) == want) {
-                        fprintf(stderr, "[find] %08X at %08X\n", want, a);
+                        fprintf(stderr, "[find] %08X at %08X (word at -0x20: %08X)\n", want, a,
+                                a >= 0x20 ? vm_read32(a - 0x20) : 0);
                         hits++;
                     }
                 }
