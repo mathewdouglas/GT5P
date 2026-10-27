@@ -4,6 +4,74 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 11 — The heap corruption: doubled job completions (2026-10-28)
+
+**Fixed: sound DSP state written over the menu's heap objects.** Main's
+recurring `bctr to NULL` (`func_00524768`) and thread 29's null calls are
+gone, and the level-meter job no longer reads pointers as sample counts.
+The menu still runs at about 0.4 fps with garbled buttons and no background;
+that is a separate render stall (below).
+
+Chain of cause:
+
+- A `PPU_WWATCH` from boot on `0x4FFF27C0` and `SPU_DMA_RANGE` showed two
+  sound SPU jobs:
+  - image 14 (`jFDFFAAC1`) GETs and PUTs `0x8A10` bytes at `0x4FFF2790`
+    (copy loop at `0x3918`/`0x3964`, size fixed in code);
+  - image 11 (`jD58063CD`) does the same with 16 KB at `0x4FFF2780`.
+- These jobs ran from early boot. Main later built menu objects at
+  `0x4FFF27C0`+ (`0x00544F54`).
+- The sound init (`func_009EA9F0` → `009D7A6C`/`9D7CA4`/`9D7DE0`) sizes each
+  module's buffers as `align16(query) + 0x10`, with
+  `query = func_009D61AC(module, table, 0, 0x102 or 0x104)`. A probe showed
+  the 0x102 query returning 0, so the buffers were 16 bytes apart.
+- The query (`func_009D60B8` → `func_009DE758`) runs a one-job SPURS job chain
+  (`soc-job`, `0x40040000`). It reads the reply from the completion event's
+  `data3` (`lwz r31, 0xbc(r1)` after syscall 130); `data2` is the job index.
+- Each module job answers with its own `throw_event` on port 16 (code 80, to
+  queue 4; `SPURS_PORT_DBG=1` shows images 11-14 doing so). ps3recomp's
+  job-chain walker also sends a stand-in completion (`jc_signal_done`, on for
+  GT5 by `spurs_synth_job_done`), with `data3 = 0` for every command except
+  `0x105`/`0x106`. It sends one per job, one at the chain's END, and one when
+  the walker thread exits.
+- So every query produced its real answer plus up to two zero answers. The
+  zeros were consumed by the *next* waits: modules got zero-sized state
+  buffers, and their jobs wrote 16-35 KB of state over whatever the heap
+  placed there.
+- `SPURS_NO_SYNTH_DONE=1` (no stand-ins at all) also cleared the null calls.
+- Not the cause: the AC3 module (image 13, `jF523F26F`) really answers 0 to
+  `0x102`. Its dispatch handles `0x100`, `0x104` (`0x83C0`), `0x3100`,
+  `0x3101` and `0x3300` and returns 0 for anything else.
+
+Fix (ps3recomp `cellSpurs.c`, `spu_channels.c`): `SPURS_SYNTH_SKIP_SENT`,
+default on (`=0` restores the old behaviour). The walker counts user events
+delivered on its thread (`g_spu_user_events_sent`, incremented when
+`g_spu_user_event_hook` takes an interrupt-mailbox write). It sends no
+stand-in for a job, a pass's END, or the chain's exit when the job, or that
+pass's jobs, signalled for themselves. Jobs that never signal still get
+stand-ins.
+
+**Open: the menu's render stall (0.4 fps).**
+
+- The sound thread `gFKsE` waits in `func_00D1B930` for SPU progress counters
+  at `0x01AC0CC0` (`0x24 0x24 0x04`, target `0x24`: the third lags).
+- The stall dump shows render workload `wid=4`, lane `spu=0`, inside job
+  image `b0196FF40` at `pc 0x4600` (`int=1 evmask=2`), the `spu_rdch`
+  busy-wait the sampler showed. Its last MFC transfer read 4 bytes from the
+  RSX label at `0x03000480`, while the FIFO is empty (`get == put`).
+- Likely the SPU render job waits for an RSX label or ring position that our
+  RSX never advances. Next: find what `0x4600` waits for and who should write
+  `0x03000480`.
+
+The garbled menu buttons and missing background did not change with this fix.
+
+**Also this phase:**
+
+- The intermittent early stall (about half of the installed-state boots)
+  remains.
+- Thread 32's poll for the music-decode result (Phase 10) and the null calls
+  are not seen again.
+
 ## Phase 10 — Past the install to the main menu (2026-10-28)
 
 **Result.** From a fresh install, with Cross pressed at each prompt, GT5 shows
