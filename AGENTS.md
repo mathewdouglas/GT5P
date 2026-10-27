@@ -925,10 +925,12 @@ SPU display lists; `GCM_PARK_PUTWIN`): the menu runs at 30 fps with its 3D
 background. Phase 13 fixed its garbled buttons and badge: a 256x1 target
 was sized as the window and swallowed the UI texture pool
 (`RSX_RT_SMALL_CLIP`). Phase 14 added FFmpeg (copy or fetch
-`third_party/ffmpeg`): movies decode, but stay black until ps3recomp gains
-SPURS Taskset2 (GT5 converts YUV to ARGB on SPURS tasks). Test GT5 with
-`scripts/test/gt5boot.ps1` (milestone-timed presses, `-Fresh` for a first
-boot). Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 14 first.
+`third_party/ffmpeg`), and Phase 15 made the movies play: ps3recomp has
+SPURS Taskset2, and the movie's YUV-to-ARGB task ELF is lifted
+(`lift_spu_jobs.py` lifts task ELFs captured into `analysis/spu/taskdump`).
+Test GT5 with `scripts/test/gt5boot.ps1` (milestone-timed presses, `-Fresh`
+for a first boot, `-Movie` for the opening movie). Read
+[docs/progress-gt5.md](docs/progress-gt5.md) Phase 15 first.
 
 ## What is tied to v02.00
 

@@ -4,6 +4,50 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 15 — Movies play: SPURS Taskset2 and the lifted converter task (2026-10-28)
+
+**Result.** The opening movie plays: the Polyphony Digital logo over the
+Earth, then the film (user-confirmed). The menu follows. In a 30 s movie run,
+all 1,428 converter tasks ran to completion (`async image=52 RETURNED`).
+The frame rate held 60 during loading and 30 on the menu.
+
+**ps3recomp (`cellSpurs.c`).** The Taskset2 API is now implemented on top of
+the version-1 task path (the version-2 taskset starts with the version-1
+layout):
+
+- `_cellSpursTasksetAttribute2Initialize` and
+  `_cellSpursTaskAttribute2Initialize` fill in the SDK defaults.
+- `cellSpursCreateTaskset2` and `cellSpursDestroyTaskset2`.
+- `cellSpursCreateTask2` takes the context and LS pattern from the version-2
+  attribute.
+- `cellSpursJoinTask2` waits until the task's enabled bit clears. It logs
+  if a task is still running after 5 s.
+
+`gen_hle_nids.py` registered all six NIDs.
+
+**Two fixes in the shared task path, each with a switch.**
+
+- `SPURS_TASK_MISS_EXIT` (on): a task whose image has no lifted code counts
+  as exited at once, so a join cannot wait for ever and the task id can be
+  reused.
+- `SPURS_TASK_MARK_EARLY` (on, `spu_workload.c`): a task counts as running
+  from dispatch. Before this, another task's exit could start it a second
+  time before its own thread began.
+
+**The converter task.**
+
+- `SPU_DUMP_MISS=analysis/spu/taskdump` captured it:
+  `spujob_CDCD962FAC770DB9_17400.bin`, an ELF linked at LS `0x3000`, entry
+  `0x3050`.
+- `scripts/lift_spu_jobs.py` now lifts task ELFs from `analysis/spu/taskdump`
+  (`task_elf_flat`): their segments are laid out flat at their addresses,
+  lifted at that base, and registered at `e_entry`. The converter is 109
+  functions with no TODO lines.
+- The re-lift reproduced the other 50 images and the registry unchanged.
+
+To capture another task ELF, run with `SPU_DUMP_MISS=analysis/spu/taskdump`
+and re-run the lift.
+
 ## Phase 14 — FFmpeg added; movies still black (missing SPURS Taskset2) (2026-10-28)
 
 **Result.** The build decodes GT5's movies with FFmpeg: the H.264 video

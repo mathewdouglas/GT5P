@@ -704,6 +704,12 @@ extern "C" {
     void cellSpursCreateTaskWithAttribute(void);
     void _cellSpursTasksetAttributeInitialize(void);
     void cellSpursJoinTask(void);
+    void _cellSpursTasksetAttribute2Initialize(void);
+    void cellSpursCreateTaskset2(void);
+    void cellSpursDestroyTaskset2(void);
+    void _cellSpursTaskAttribute2Initialize(void);
+    void cellSpursCreateTask2(void);
+    void cellSpursJoinTask2(void);
     void cellSpursSendSignal(void);
     void cellSpursTaskAttributeInitialize(void);
     void cellSpursAddWorkload(void);
@@ -1923,6 +1929,12 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x1D46FEDFu, "cellSpursCreateTaskWithAttribute", (void*)cellSpursCreateTaskWithAttribute);
     ps3_hle_register(0x16394A4Eu, "_cellSpursTasksetAttributeInitialize", (void*)_cellSpursTasksetAttributeInitialize);
     ps3_hle_register(0xCBAB1042u, "cellSpursJoinTask", (void*)cellSpursJoinTask);
+    ps3_hle_register(0xC2ACDF43u, "_cellSpursTasksetAttribute2Initialize", (void*)_cellSpursTasksetAttribute2Initialize);
+    ps3_hle_register(0x4A6465E3u, "cellSpursCreateTaskset2", (void*)cellSpursCreateTaskset2);
+    ps3_hle_register(0x1EBCF459u, "cellSpursDestroyTaskset2", (void*)cellSpursDestroyTaskset2);
+    ps3_hle_register(0x8ADADF65u, "_cellSpursTaskAttribute2Initialize", (void*)_cellSpursTaskAttribute2Initialize);
+    ps3_hle_register(0xE14CA62Du, "cellSpursCreateTask2", (void*)cellSpursCreateTask2);
+    ps3_hle_register(0xA7A94892u, "cellSpursJoinTask2", (void*)cellSpursJoinTask2);
     ps3_hle_register(0x8CB5DE93u, "cellSpursSendSignal", (void*)cellSpursSendSignal);
     ps3_hle_register(0x58C0B1FDu, "cellSpursTaskAttributeInitialize", (void*)cellSpursTaskAttributeInitialize);
     ps3_hle_register(0x69726AA2u, "cellSpursAddWorkload", (void*)cellSpursAddWorkload);

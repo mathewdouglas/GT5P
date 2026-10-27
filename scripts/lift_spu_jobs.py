@@ -29,6 +29,7 @@ from dis import read
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT.parent / "ps3recomp" / "tools"
 DUMPS = ROOT / "analysis" / "spu" / "dump"
+TASKS = ROOT / "analysis" / "spu" / "taskdump"   # SPURS task ELFs (see main)
 OUT = ROOT / "generated" / "spu_lifted"
 REG = target.path("spu_registry")
 
@@ -72,6 +73,26 @@ def run(*args):
         print(r.stdout[-2000:], r.stderr[-2000:], sep="\n", file=sys.stderr)
         raise SystemExit(f"failed: {' '.join(map(str, args))}")
     return r.stdout
+
+
+def task_elf_flat(raw):
+    """(entry, flat image, base) of a 32-bit big-endian SPU ELF: its PT_LOAD
+    segments placed at their addresses, from the lowest one up, zero-filled to
+    each segment's memory size."""
+    import struct
+    entry, phoff = struct.unpack(">II", raw[0x18:0x20])
+    phentsize, phnum = struct.unpack(">HH", raw[0x2A:0x2E])
+    segs = []
+    for i in range(phnum):
+        o = phoff + i * phentsize
+        ptype, off, va, _pa, fsz, msz = struct.unpack(">IIIIII", raw[o:o + 24])
+        if ptype == 1 and msz:
+            segs.append((va, raw[off:off + fsz], msz))
+    base = min(va for va, _, _ in segs)
+    flat = bytearray(max(va + msz for va, _, msz in segs) - base)
+    for va, data, _ in segs:
+        flat[va - base:va - base + len(data)] = data
+    return entry, bytes(flat), base
 
 
 def lift(blob, prefix, outdir, base=0, extra=None):
@@ -337,6 +358,42 @@ def main():    # --chain: apply chain_forward to the job images already generate
                  f"    spu_begin_image({img});\n"
                  f"    {prefix}_spu_recomp_register();\n"
                  f"    spu_overlay_register_region(0x{ea:08X}u, {size}u, {img});")
+
+    # SPURS task ELFs (cellSpursCreateTask/CreateTask2), captured like the jobs
+    # with SPU_DUMP_MISS=analysis/spu/taskdump; GT5's movie YUV-to-ARGB
+    # converter is one. Unlike a job, a task is an ELF linked for a local-store
+    # address (0x3000, above the taskset policy's area): its loadable segments
+    # are laid out flat at their addresses, lifted at that base, and the entry
+    # registered is the ELF's e_entry. The fingerprint is the runtime's, from
+    # the file name, over the ELF bytes the runtime saw.
+    ntasks = 0
+    for blob in sorted(TASKS.glob("spujob_*.bin")):
+        m = NAME_RE.match(blob.name)
+        raw = blob.read_bytes()
+        if not m or raw[:4] != b"\x7fELF":
+            continue
+        fp = m.group(1)
+        entry, flat, base = task_elf_flat(raw)
+        img = 2 + len(jobs) + len(target.TARGET.get("wws_job_bodies", [])) + ntasks
+        ntasks += 1
+        flat_path = ROOT / "analysis" / "spu" / f"task_{fp[:8]}.bin"
+        flat_path.write_bytes(flat)
+        prefix, outdir = f"gt5p_t{fp[:8]}", OUT / f"t{fp[:8]}"
+        outdir.mkdir(parents=True, exist_ok=True)
+        seeds = {entry}
+        if PIC_TABLES:
+            seeds |= pic_tables(flat, base)
+        n = lift(flat_path, prefix, outdir, base=base, extra=",".join(map(hex, sorted(seeds))))
+        total += n
+        print(f"  task ELF {blob.name}: {n} functions at LS 0x{base:X}, entry 0x{entry:X}"
+              f" -> {outdir.relative_to(ROOT)}")
+        externs += (f"\nextern void {prefix}_spu_func_{entry:08X}(spu_context*);"
+                    f"\nextern void {prefix}_spu_recomp_register(void);")
+        regs += (f"\n\n    /* task ELF {blob.name}, entry LS 0x{entry:X} */\n"
+                 f"    spu_begin_image({img});\n"
+                 f"    {prefix}_spu_recomp_register();\n"
+                 f"    spu_workload_register_img(0x{fp}ULL, {prefix}_spu_func_{entry:08X}, {img},\n"
+                 f"                              \"t{fp[:8]}\");")
 
     REG.write_text(TEMPLATE.format(externs=externs, regs=regs,
                                    pm_ea=f"0x{WWS_JOB_PM_EA:08X}",
