@@ -815,6 +815,9 @@ int main(int argc, char* argv[])
      * which the runtime's old timer refused. PS3_TIMER_ONESHOT=0 for it. */
     if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_TIMER_ONESHOT"))
         _putenv_s("PS3_TIMER_ONESHOT", "1");
+    /* Not defaulted yet: PS3_MMAPPER_LV2_AREA=1 (RPCS3's memory layout) and
+     * PS3_MMAPPER_SHM=1 (real shared-memory blocks) both crashed earlier than
+     * without them (docs/progress-gt5.md, Phase 7). */
 
     /* SPU render lanes on cores of their own (strict pinning): 1.14 times
      * faster lanes, Ferrari at a median 28.2 fps against 24.8 free, and no

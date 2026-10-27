@@ -4,6 +4,79 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 7 — Computed-goto labels: past the warning to the GT5 logo (2026-10-27)
+
+**Fixed: the black screen after the warning.**
+
+- The script VM's state machine `func_00B52140` uses GCC computed goto. Its
+  label addresses (`0x00B5248C`, `0x00B52524`, `0x00B526D8`, `0x00B521AC`)
+  exist only as raw words in the TOC.
+- The `bctr` through them was lifted as `ps3_indirect_tail`. The runtime
+  found no lifted entry ("[ppu] indirect tail to 0x00B521AC: no lifted
+  entry") and returned without the epilogue, so the caller `func_00B52768`
+  got `r26 = 0` back. That `r26` is its `this`, and the NULL-object loop of
+  Phases 5-6 followed.
+- Found with per-call `r26` checks in the lifted caller.
+- New required pre-lift step: `scripts/code_labels.py --write`. It finds the
+  TOC bases from the `.opd` descriptors and seeds every word within ±32 KB of
+  a TOC that points into code and is not a descriptor entry. That is 359
+  labels for 01.04, merged into `config/extra_seeds_bcus98114_v104.json`;
+  the lift now has 84,813 functions.
+- Ruled out first: guest C++ exceptions. A log at the four libgcc
+  `__builtin_eh_return` exits never fired. Note for later: those exits are
+  lifted as a plain `return`, so a real guest throw would not reach its
+  landing pad.
+
+**Result:** from a clean first boot, our file accesses match RPCS3's for 699
+operations. That covers the `PDIPFS` cache rebuild and the SQLite system
+database `/dev_hdd1/game249.db`. The screens go warning, black, then the
+**GRAN TURISMO 5 logo** (fades in about 30 s after launch), which then stays.
+
+It stops after `PDIPFS/9/DC/DS`; RPCS3 goes on to `9/KW/PC`. The main thread
+makes three `bctr to NULL` calls from `func_0052xxxx`: methods on objects in
+the game's 512 MB area whose first word is garbage (`0x5A4E01C1`, not a
+vtable). The failing function varies from run to run.
+
+**Leading hypothesis: memory blocks.** liblv2's `sys_mmapper_map_memory`,
+`_unmap_memory` and `_free_memory` are no-ops in the runtime
+(`ppu_sysprx.cpp`):
+
+- a block remapped elsewhere arrives empty;
+- a new block mapped where an old one was shows stale data;
+- RPCS3's first boot cycles about 1,950 blocks (64 KB and 1 MB).
+
+The game imports exactly these four functions.
+
+**Built, opt-in, not working yet:**
+
+- `PS3_MMAPPER_SHM=1`: real block semantics. A block's contents follow it,
+  unmap saves and decommits, free releases, and `search_and_map` takes part.
+  With the old layout the run crashed in endless recursion on a garbage
+  vcall, `this=0x2000C790`. GT5 carves liblv2 blocks with
+  `search_and_map(0x20000000)`, and our first game area is also at
+  `0x20000000`, so mapping zeroes live game data.
+- `PS3_MMAPPER_LV2_AREA=1`: RPCS3's layout. liblv2's area is reserved at
+  `0x20000000` and the `sys_memory_allocate` window moves to `0x10000000`,
+  so GT5's areas land at `0x30000000`, `0x40000000` and `0x60000000`, as in
+  RPCS3 (verified). With both switches the game exited about 16 s in:
+  thread 32 read guest `0x1_00000000` (computed from -1 + 1) in
+  `func_00CCF5E8`, called from `func_00CF2F6C`/`func_00B08F18`.
+- With the layout switch alone and the old allocator rules (sys_vm window
+  held back, 512 MB area at `0x70000000`) it regressed to 332 matching
+  operations. Areas across `0x80000000` look unsafe; that is not
+  investigated.
+
+**Next:**
+
+1. Run with both switches and find the call that returns -1 before the
+   crash.
+2. Check that `search_and_map` honours `start_addr` inside the liblv2 area.
+3. The pager: implement lv2 327 (page-fault notification) and 57 (recover),
+   using the event layout from Phase 6.
+
+Defaults are unchanged for Prologue. GT5 runs the label fix only, its
+best-measured state.
+
 ## Phase 6 — The 01.04 executable; system cache and address areas (2026-10-27)
 
 **Retarget.** The port now lifts the 01.04 update executable. It was

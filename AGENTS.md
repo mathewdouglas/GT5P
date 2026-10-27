@@ -907,8 +907,9 @@ Build with `scripts\build.cmd -DGT5P_TARGET=BCUS98114-v104`.
 
 `gamedata/dev_hdd0/game/BCUS98114` must hold the package's 1,330 `PDIPFS`
 files. They are copied from RPCS3's install; the list is
-`scratch/rpcs3/pkg_files.txt`. Read [docs/progress-gt5.md](docs/progress-gt5.md)
-Phase 6 first.
+`scratch/rpcs3/pkg_files.txt`. Since Phase 7 GT5 reaches its **logo** after the warning. Required
+pre-lift step: `scripts/code_labels.py --write` (computed-goto labels).
+Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 7 first.
 
 ## What is tied to v02.00
 
