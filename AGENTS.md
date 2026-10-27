@@ -920,9 +920,11 @@ GT5 now defaults to `PS3_USER_MEM_ACCOUNT=1` (lv2 free-memory accounting),
 Since Phase 10 GT5 reaches its **main menu** (music-decode imports fixed).
 Phase 11 fixed the heap corruption (doubled SPURS job completions,
 `SPURS_SYNTH_SKIP_SENT`); the menu still runs below 1 fps because a render
-SPU job waits on an RSX label. Unattended runs press Cross on a timer
-(`PAD_HOLD`). Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 11
-first.
+SPU job waits on an RSX label. Phase 12 fixed that (the FIFO walker dropped
+SPU display lists; `GCM_PARK_PUTWIN`): the menu runs at 30 fps with its 3D
+background; its buttons are still garbled. Test GT5 with
+`scripts	est\gt5boot.ps1` (milestone-timed presses, `-Fresh` for a first
+boot). Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 12 first.
 
 ## What is tied to v02.00
 

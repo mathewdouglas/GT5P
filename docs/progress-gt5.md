@@ -4,6 +4,95 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 12 — The menu at full speed; milestone-driven GT5 tests (2026-10-28)
+
+**Result.** The main menu holds a steady 30 fps (151 frames per 5 s over 90 s
+idle; the preceding loading runs at 60) and draws its 3D background: a pit
+crew in front of the Indianapolis grandstand. The menu buttons and the
+top-right badge are still striped and garbled. Before this phase the menu
+slid from 60 fps to about 0.4 within 15 s of loading and drew no background.
+
+**Fixed: SPU display lists dropped by the FIFO walker.**
+
+- The render thread (`gFKsE`, guest tid 27; it issues the flips) waits each
+  frame (`func_00D30DA8` → `func_00D320A8`, timeout `0x4C4B40` = 5 s) on the
+  object at `0x01AE7E80`. The user handler (`0x00D33E8C`) signals that object
+  for user command 0. User commands come from the command stream
+  (`GCM_SET_USER_COMMAND`, method `0xEB00`; one per frame, near the start of
+  each 4 KB PPU segment at io `0x10020`/`0x11020`/...).
+- `GCM_FLIPSUM=1` showed the slow frames with about 6,100-6,600 words and no
+  user command. Normal menu frames have about 17,600 words and one.
+- Each slow frame followed `FIFO resync (jump-park)`. The walker had found
+  an SPU display list parked at its write head (io `0x00A5xxxx` or
+  `0x0133xxxx`), judged it to be in the same ring as `put` (io `0x10080`),
+  and jumped to `put`, dropping the rest of the frame.
+- `gcm_io_same_ring` treats one contiguous run of mapped IO pages as one
+  ring. GT5 maps its main memory to IO in one contiguous run, so every SPU
+  list counted as the PPU's ring (Prologue's lists are at `0x095xxxxx`).
+- Fix (ps3recomp `cellGcmSys.c`): `GCM_PARK_RESYNC` mode 2 also requires the
+  park to lie within 64 KB of the range `put` has occupied
+  (`GCM_PARK_PUTWIN`, default on; `=0` restores the old test). Resyncs fell
+  from one per frame to 2-3 per run, and those are the `stuck-get` watchdog,
+  which is still open.
+
+**Also changed in ps3recomp:**
+
+- **User commands are queued** (`GCM_USER_QUEUE`, default on; `=0` keeps
+  the single slot, which let a later command overwrite an undelivered one).
+  It did not change GT5's frame rate, but the overwrite was real.
+- **Diagnostics:**
+  - `GCM_FLIPSUM=1`: command words and user commands per flip.
+  - `GCM_FTRACE_SLOW=<n>`: start `GCM_FTRACE` at the first flip of 1,000+
+    words with no user command.
+  - `GCM_PUMP_DBG=1`: now also counts user commands by value.
+  - Timeline events: `U` for user commands raised and delivered.
+
+**Corrections to the investigation:**
+
+- `GCM_FLIPCB_ONTICK=1` (flip handler only at the tick) made no difference:
+  the render thread waits for the user handler, not the flip handler.
+- Lane re-entry (`SPURS_LANE_STAY=1`) made no difference.
+- Not PSN: GT5 is told it is offline (`sceNpManagerGetStatus`), as under
+  RPCS3.
+- The broken movie link (below) did not cause the slowdown either: the
+  opening movie plays while the game is still at 60 fps.
+
+**Local setup: the GT5 dump moved** to `D:\Games\ROMS\PS3\...`
+(`AGENTS.local.md` updated). `input/pkg/USRDIR/MOVIE` was a link into the old
+location; it is now a junction to the new one. `GT.VOL` is a hard link and
+was unaffected. Without the link GT5 found none of its 16 `MOVIE/*.pam`
+files. The movies now open, but this build has no FFmpeg
+(`third_party/ffmpeg` is missing from this tree), so `cellVdec` returns black
+pictures.
+
+**Milestone-driven GT5 tests:**
+
+- GT5 reads hashed `PDIPFS` paths, so it had no `.gpb` milestones and the
+  timed Cross presses also landed on the menu.
+- ps3recomp cellPad now accepts named milestones from other libraries
+  (`pad_milestone_mark`) and file milestones from
+  `PAD_MILESTONE_FILES=<name>,...`. Milestones added:
+  - `SaveData` / `LoadData` (cellSaveData);
+  - `MusicDecode` (`cellMusicDecodeInitialize2`; GT5 calls it as the menu
+    loads, on every boot).
+- `scripts/test/milestone.ps1`: `$GT5BootHold` presses Cross from 8 s after
+  `installed00.dat` (the first named file of every boot), every 5 s up to
+  300 s. Each press is skipped once `MusicDecode` has been seen, so nothing
+  is pressed on the menu.
+- `scripts/test/gt5boot.ps1 -Tag t [-Settle 60] [-Gap 10] [-Fresh]
+  [-FreshSave]`: boots to the menu, idles with window shots, and prints
+  frames per 5 s.
+- `-Fresh` runs `scripts/test/gt5_reset.py` first. It restores the
+  first-boot install state; `--save` also deletes the save.
+
+**Open, next:**
+
+1. The garbled menu buttons and badge (texture decode or layout).
+2. The `stuck-get` resyncs (2-3 per run, each a frame dip).
+3. FFmpeg for this tree (movies decode to black).
+4. The intermittent early stall during loading (about half of
+   installed-state boots).
+
 ## Phase 11 — The heap corruption: doubled job completions (2026-10-28)
 
 **Fixed: sound DSP state written over the menu's heap objects.** Main's

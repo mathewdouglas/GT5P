@@ -122,3 +122,21 @@ $DaytonaStartHold = "@QuickArcadeRoot+5000-5300:CROSS"
 $FerrariHold = "$ToDealers,@DealerSelectRoot+5000-5100:DOWN," +
     "@DealerSelectRoot+6500-6600:RIGHT,@DealerSelectRoot+8000-8100:RIGHT,@DealerSelectRoot+9500-9600:RIGHT," +
     "@DealerSelectRoot+11000-11100:RIGHT,@DealerSelectRoot+13000-13300:CROSS"
+
+# Gran Turismo 5 (BCUS98114) reads hashed PDIPFS paths, so it has no .gpb
+# milestones. Its run scripts set PAD_MILESTONE_FILES=installed00.dat (the
+# first named file of every boot) and use two runtime milestones: "SaveData"
+# (cellSaveData finished a save) and "MusicDecode" (cellMusicDecodeInitialize2,
+# called as the main menu loads, on every boot).
+# A first boot shows the install prompt, then "Installation complete", then
+# Adjust Display Area, each taking Cross; an installed boot shows none of them.
+# $GT5BootHold presses Cross 8 s after installed00.dat and every 5 s after,
+# up to 300 s (the install takes about three minutes), each press skipped once
+# the menu is loading -- so nothing is pressed on the menu itself. On an
+# installed boot the presses fall on the logo/opening movie, which ignore them.
+function Get-GT5Boot([int]$From = 8000, [int]$To = 300000, [int]$Every = 5000) {
+    $s = @()
+    for ($t = $From; $t -le $To; $t += $Every) { $s += "@installed00.dat+$t-$($t+300)!MusicDecode:CROSS" }
+    $s -join ","
+}
+$GT5BootHold = Get-GT5Boot

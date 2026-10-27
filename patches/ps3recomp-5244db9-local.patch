@@ -5149,7 +5149,7 @@ index 49e13905..3f759a9a 100644
  /* Internal: feed a key event from the host input system */
  void cellKb_keyEvent(u32 port, u16 keycode, int pressed);
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c119..5a16b60a 100644
+index f2b4c119..3f6a8ffc 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -52,6 +52,7 @@
@@ -5184,7 +5184,7 @@ index f2b4c119..5a16b60a 100644
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,13 +158,239 @@ static int pad_host_window_focused(void)
+@@ -140,13 +158,275 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
@@ -5214,33 +5214,69 @@ index f2b4c119..5a16b60a 100644
 + * on): the base name of every file the title stats or opens, every time. */
 +void (*g_pad_screen_hook)(const char*) = NULL;
 +
-+void pad_milestone_seen(const char* path)
++/* Record a milestone by name (first sighting only) and print it. */
++void pad_milestone_mark(const char* name)
 +{
 +    static int on = -1;
 +    if (on < 0) { const char* e = getenv("PAD_MILESTONES"); on = (e && *e == '0') ? 0 : 1; }
-+    if (!path) return;
-+    const char* b = strrchr(path, '/'); b = b ? b + 1 : path;
-+    if (g_pad_milestone_hook) g_pad_milestone_hook(b);
-+    if (g_pad_screen_hook) g_pad_screen_hook(b);
-+    if (!on) return;
-+    size_t len = strlen(b);
-+    if (len < 5 || len >= sizeof s_ms[0].name || strcmp(b + len - 4, ".gpb")) return;
++    if (!on || !name) return;
++    size_t len = strlen(name);
++    if (!len || len >= sizeof s_ms[0].name) return;
 +    while (InterlockedCompareExchange(&s_ms_lock, 1, 0)) Sleep(0);
 +    ULONGLONG now = GetTickCount64();
 +    if (!s_ms_base) s_ms_base = now;
 +    int found = 0;
 +    for (LONG i = 0; i < s_ms_n; i++)
-+        if (!strncmp(s_ms[i].name, b, len - 4) && s_ms[i].name[len - 4] == 0) { found = 1; break; }
++        if (!strcmp(s_ms[i].name, name)) { found = 1; break; }
 +    if (!found && s_ms_n < PAD_MS_MAX) {
-+        memcpy(s_ms[s_ms_n].name, b, len - 4); s_ms[s_ms_n].name[len - 4] = 0;
++        memcpy(s_ms[s_ms_n].name, name, len); s_ms[s_ms_n].name[len] = 0;
 +        s_ms[s_ms_n].at = now;
 +        InterlockedIncrement(&s_ms_n);
 +        ULONGLONG p0 = s_pad_t0;
-+        printf("[milestone] %.*s at %llu ms (pad clock %lld ms)%c", (int)(len - 4), b,
++        printf("[milestone] %s at %llu ms (pad clock %lld ms)%c", name,
 +               (unsigned long long)(now - s_ms_base), p0 ? (long long)(now - p0) : -1LL, 10);
 +        fflush(stdout);
 +    }
 +    InterlockedExchange(&s_ms_lock, 0);
++}
++
++/* PAD_MILESTONE_FILES=<name>[,<name>...]: these file names (exact basename,
++ * as opened or stat'ed) are milestones too, named as written. For a title
++ * with no .gpb screen scripts: Gran Turismo 5 reads hashed PDIPFS paths, and
++ * installed00.dat is the first named file of its boot. */
++static int pad_milestone_file_listed(const char* b)
++{
++    static char list[512]; static int init = 0;
++    if (!init) { const char* e = getenv("PAD_MILESTONE_FILES");
++                 if (e) { strncpy(list, e, sizeof list - 1); list[sizeof list - 1] = 0; }
++                 init = 1; }
++    if (!list[0]) return 0;
++    size_t bl = strlen(b);
++    for (const char* p = list; *p; ) {
++        const char* c = strchr(p, ',');
++        size_t n = c ? (size_t)(c - p) : strlen(p);
++        if (n == bl && !strncmp(p, b, n)) return 1;
++        if (!c) break;
++        p = c + 1;
++    }
++    return 0;
++}
++
++void pad_milestone_seen(const char* path)
++{
++    if (!path) return;
++    const char* b = strrchr(path, '/'); b = b ? b + 1 : path;
++    if (g_pad_milestone_hook) g_pad_milestone_hook(b);
++    if (g_pad_screen_hook) g_pad_screen_hook(b);
++    size_t len = strlen(b);
++    if (len >= 5 && !strcmp(b + len - 4, ".gpb")) {
++        char name[sizeof s_ms[0].name];
++        if (len - 4 >= sizeof name) return;
++        memcpy(name, b, len - 4); name[len - 4] = 0;
++        pad_milestone_mark(name);
++    } else if (pad_milestone_file_listed(b)) {
++        pad_milestone_mark(b);
++    }
 +}
 +
 +/* When the named milestone was first seen, or 0. */
@@ -5427,7 +5463,7 @@ index f2b4c119..5a16b60a 100644
      if (!pad_host_window_focused()) {
          /* Release everything on focus loss, or a key held while alt-tabbing
           * would stay down forever. */
-@@ -157,19 +401,7 @@ static void pad_poll_keyboard(void)
+@@ -157,19 +437,7 @@ static void pad_poll_keyboard(void)
          return;
      }
  
@@ -5448,7 +5484,7 @@ index f2b4c119..5a16b60a 100644
  
      hs->buttons   = btns;
      hs->connected = 1;
-@@ -390,6 +622,294 @@ static void pad_shutdown_backend(void)
+@@ -390,6 +658,294 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -5743,7 +5779,7 @@ index f2b4c119..5a16b60a 100644
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -407,7 +927,6 @@ static void pad_shutdown_backend(void)
+@@ -407,7 +963,6 @@ static void pad_shutdown_backend(void)
   * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
   * a real DualShock 3's own report rate), so no game can tell the difference,
   * including one sampling for button-press edges. */
@@ -5751,7 +5787,7 @@ index f2b4c119..5a16b60a 100644
  
  static unsigned long long pad_now_ms(void)
  {
-@@ -421,13 +940,44 @@ static unsigned long long pad_now_ms(void)
+@@ -421,13 +976,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -5799,7 +5835,7 @@ index f2b4c119..5a16b60a 100644
      s_last_ms = now;
      /* A real pad streams reports at roughly this rate whether or not anything
       * changed, and libpad buffers them; a fresh sweep is a fresh report for
-@@ -435,12 +985,77 @@ static void pad_poll_backend(void)
+@@ -435,12 +1021,77 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT
@@ -5880,10 +5916,10 @@ index f2b4c119..5a16b60a 100644
  }
  
 diff --git a/libs/misc/cellMusicDecode2.c b/libs/misc/cellMusicDecode2.c
-index 2bbff7fc..a45daadf 100644
+index 2bbff7fc..929d65c0 100644
 --- a/libs/misc/cellMusicDecode2.c
 +++ b/libs/misc/cellMusicDecode2.c
-@@ -74,3 +74,93 @@ s32 cellMusicDecode2SetSelectionContext(const void* ctx)
+@@ -74,3 +74,96 @@ s32 cellMusicDecode2SetSelectionContext(const void* ctx)
      if (!s_initialized2) return (s32)CELL_MUSIC_DECODE2_ERROR_NOT_INITIALIZED;
      return (s32)CELL_MUSIC_DECODE2_ERROR_NOT_SUPPORTED;
  }
@@ -5931,6 +5967,9 @@ index 2bbff7fc..a45daadf 100644
 +           mode, container, spuPriority, func, userData, speed, bufSize);
 +    if (!func) return (s32)0x8002C101u;   /* PARAM */
 +    s_music2_cb = func; s_music2_user = userData; s_music2_init = 1;
++    /* Test-script milestone (cellPad.c): Gran Turismo 5 does this as its
++     * main menu loads, on every boot. */
++    { extern void pad_milestone_mark(const char*); pad_milestone_mark("MusicDecode"); }
 +    music2_post(MUSIC2_EVENT_INITIALIZE_RESULT, CELL_OK);
 +    return CELL_OK;
 +}
@@ -8037,6 +8076,143 @@ index 071b9ecd..74fc6923 100644
      return CELL_OK;
  }
  
+diff --git a/libs/system/cellSaveData.c b/libs/system/cellSaveData.c
+index 79ea8cab..dd45729b 100644
+--- a/libs/system/cellSaveData.c
++++ b/libs/system/cellSaveData.c
+@@ -515,50 +515,50 @@ static u32 savedata_content_type(const char* name)
+     return CELL_SAVEDATA_FILETYPE_NORMALFILE;
+ }
+ 
+-/* Which files were written as SECUREFILE. A real save records them in
+- * PARAM.PFD; ours keeps one name per line there, and the file stays hidden
+- * from the guest's list (savedata_system_file). Without it every file came
+- * back as NORMALFILE, and a title that looks for its secure payload in the
+- * stat list (The Simpsons Arcade Game) called its own fresh save corrupt. */
+-static void pfd_path(const char* save_path, char* out, size_t n)
+-{
+-    snprintf(out, n, "%s/PARAM.PFD", save_path);
+-#ifdef _WIN32
+-    for (char* p = out; *p; p++) if (*p == '/') *p = '\\';
+-#endif
+-}
+-
+-static int pfd_has(const char* save_path, const char* name)
+-{
+-    char path[1024], line[64];
+-    pfd_path(save_path, path, sizeof(path));
+-    FILE* fp = fopen(path, "rb");
+-    if (!fp) return 0;
+-    int found = 0;
+-    while (!found && fgets(line, sizeof(line), fp)) {
+-        line[strcspn(line, "\r\n")] = 0;
+-        found = !strcmp(line, name);
+-    }
+-    fclose(fp);
+-    return found;
+-}
+-
+-static void pfd_add(const char* save_path, const char* name)
+-{
+-    if (pfd_has(save_path, name)) return;
+-    char path[1024];
+-    pfd_path(save_path, path, sizeof(path));
+-    FILE* fp = fopen(path, "ab");
+-    if (fp) { fprintf(fp, "%s\n", name); fclose(fp); }
+-}
+-
+-static u32 savedata_file_type(const char* save_path, const char* name)
+-{
+-    u32 t = savedata_content_type(name);
+-    return t == CELL_SAVEDATA_FILETYPE_NORMALFILE && pfd_has(save_path, name)
+-         ? CELL_SAVEDATA_FILETYPE_SECUREFILE : t;
+-}
+-
++/* Which files were written as SECUREFILE. A real save records them in
++ * PARAM.PFD; ours keeps one name per line there, and the file stays hidden
++ * from the guest's list (savedata_system_file). Without it every file came
++ * back as NORMALFILE, and a title that looks for its secure payload in the
++ * stat list (The Simpsons Arcade Game) called its own fresh save corrupt. */
++static void pfd_path(const char* save_path, char* out, size_t n)
++{
++    snprintf(out, n, "%s/PARAM.PFD", save_path);
++#ifdef _WIN32
++    for (char* p = out; *p; p++) if (*p == '/') *p = '\\';
++#endif
++}
++
++static int pfd_has(const char* save_path, const char* name)
++{
++    char path[1024], line[64];
++    pfd_path(save_path, path, sizeof(path));
++    FILE* fp = fopen(path, "rb");
++    if (!fp) return 0;
++    int found = 0;
++    while (!found && fgets(line, sizeof(line), fp)) {
++        line[strcspn(line, "\r\n")] = 0;
++        found = !strcmp(line, name);
++    }
++    fclose(fp);
++    return found;
++}
++
++static void pfd_add(const char* save_path, const char* name)
++{
++    if (pfd_has(save_path, name)) return;
++    char path[1024];
++    pfd_path(save_path, path, sizeof(path));
++    FILE* fp = fopen(path, "ab");
++    if (fp) { fprintf(fp, "%s\n", name); fclose(fp); }
++}
++
++static u32 savedata_file_type(const char* save_path, const char* name)
++{
++    u32 t = savedata_content_type(name);
++    return t == CELL_SAVEDATA_FILETYPE_NORMALFILE && pfd_has(save_path, name)
++         ? CELL_SAVEDATA_FILETYPE_SECUREFILE : t;
++}
++
+ /* Enumerate files in a save directory. Returns count, fills fileList up to max. */
+ static u32 enumerate_save_files(const char* save_path,
+                                  CellSaveDataFileStat* fileList, u32 max)
+@@ -579,7 +579,7 @@ static u32 enumerate_save_files(const char* save_path,
+                 continue;
+             if (count < max && fileList) {
+                 memset(&fileList[count], 0, sizeof(CellSaveDataFileStat));
+-                fileList[count].fileType = savedata_file_type(save_path, fd.cFileName);
++                fileList[count].fileType = savedata_file_type(save_path, fd.cFileName);
+                 strncpy(fileList[count].fileName, fd.cFileName,
+                         CELL_SAVEDATA_FILENAME_SIZE - 1);
+                 ULARGE_INTEGER sz;
+@@ -616,7 +616,7 @@ static u32 enumerate_save_files(const char* save_path,
+ #endif
+             if (count < max && fileList) {
+                 memset(&fileList[count], 0, sizeof(CellSaveDataFileStat));
+-                fileList[count].fileType = savedata_file_type(save_path, de->d_name);
++                fileList[count].fileType = savedata_file_type(save_path, de->d_name);
+                 strncpy(fileList[count].fileName, de->d_name,
+                         CELL_SAVEDATA_FILENAME_SIZE - 1);
+                 fileList[count].st_size = (u64)st.st_size;
+@@ -721,8 +721,8 @@ static s32 process_file_op(const char* save_path, CellSaveDataFileSet* set)
+         size_t wrote = fwrite(set->fileBuf, 1, write_size, fp);
+         int failed = wrote != write_size;
+         if (fclose(fp) != 0) failed = 1;
+-        if (!failed && set->fileType == CELL_SAVEDATA_FILETYPE_SECUREFILE)
+-            pfd_add(save_path, name);
++        if (!failed && set->fileType == CELL_SAVEDATA_FILETYPE_SECUREFILE)
++            pfd_add(save_path, name);
+         return failed ? CELL_SAVEDATA_ERROR_ACCESS_ERROR : (s32)wrote;
+     }
+ 
+@@ -935,6 +935,8 @@ static s32 savedata_execute(const char* dirName, int is_save,
+ 
+     printf("[cellSaveData] %s complete for '%s'\n",
+            is_save ? "SAVE" : "LOAD", dirName);
++    /* Test-script milestones (cellPad.c): "SaveData" / "LoadData". */
++    { extern void pad_milestone_mark(const char*); pad_milestone_mark(is_save ? "SaveData" : "LoadData"); }
+     return CELL_OK;
+ }
+ 
 diff --git a/libs/system/cellSysutil.c b/libs/system/cellSysutil.c
 index 252c3e8c..9b57316c 100644
 --- a/libs/system/cellSysutil.c
@@ -8076,7 +8252,7 @@ index 252c3e8c..9b57316c 100644
  
  s32 cellSysCacheClear(void)
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb04646..ddd1a327 100644
+index cdb04646..9e138c4c 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,6 +14,7 @@
@@ -8095,7 +8271,44 @@ index cdb04646..ddd1a327 100644
  
  #ifdef _WIN32
  #include <windows.h>
-@@ -685,6 +687,13 @@ void cellGcm_request_tick(void)
+@@ -71,6 +73,13 @@ static u64 get_timestamp_ns(void)
+ static int  s_gcm_initialized = 0;
+ static u32  s_flip_mode   = CELL_GCM_DISPLAY_VSYNC;
+ static u32  s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
++/* GCM_FLIPSUM=1: at each SetPrepareFlip, the command words the walker
++ * decoded and the user commands it raised since the previous one. */
++static volatile unsigned long g_gcm_flipsum_words, g_gcm_flipsum_user;
++/* GCM_FTRACE window (the walker's trace below); GCM_FTRACE_SLOW arms it. */
++static long long ft_at = -2, ft_n = 1;
++void gcm_ftrace_arm(unsigned long long at, long long n) { ft_at = (long long)at; ft_n = n;
++    fprintf(stderr, "[ft] armed at flip %llu for %lld flips\n", at, n); }
+ 
+ /* Count of guest flip requests (SetFlipCommand / SetPrepareFlip). The present
+  * loop uses this as the frame boundary: presenting only when a flip arrived
+@@ -249,6 +258,22 @@ static volatile LONG s_user_command = 0;
+ static volatile LONG64 s_user_pending = 0;
+ #define GCM_USER_PENDING_STORE(value) InterlockedExchange64(&s_user_pending, (LONG64)(value))
+ #define GCM_USER_PENDING_TAKE() ((u64)InterlockedExchange64(&s_user_pending, 0))
++/* GCM_USER_QUEUE (default on; =0 the single slot above): user commands the
++ * FIFO raises are queued and the pump delivers each, in order. One slot let
++ * a later command overwrite an undelivered one: Gran Turismo 5 raises
++ * command 1 (run a queued callback) and command 0 (frame done) close
++ * together, and its render thread waits up to 5 s for every lost 0 -- the
++ * menu ran at 0.4 fps. */
++#define GCM_USER_Q 64
++static SRWLOCK s_user_q_lock = SRWLOCK_INIT;
++static u32 s_user_q[GCM_USER_Q];
++static unsigned s_user_q_n;
++static int gcm_user_queue_on(void)
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("GCM_USER_QUEUE"); v = !(e && *e == '0'); }
++    return v;
++}
+ #else
+ #include <stdatomic.h>
+ static atomic_uint s_user_command = 0;
+@@ -685,6 +710,13 @@ void cellGcm_request_tick(void)
   * pending notifications untouched when another pump is active. */
  void ppu_gcm_pump(void)
  {
@@ -8109,7 +8322,7 @@ index cdb04646..ddd1a327 100644
      if (!GCM_PUMP_TRY_ENTER()) return;
      long p = (long)GCM_PENDING_TAKE();
      u64 user = GCM_USER_PENDING_TAKE();
-@@ -692,7 +701,7 @@ void ppu_gcm_pump(void)
+@@ -692,7 +724,7 @@ void ppu_gcm_pump(void)
      { static int d = -1; static unsigned nv, nf, calls;
        if (d < 0) d = getenv("GCM_PUMP_DBG") ? 1 : 0;
        if (d) { calls++; if (p & 1) nv++; if (p & 2) nf++;
@@ -8118,7 +8331,7 @@ index cdb04646..ddd1a327 100644
                     fprintf(stderr, "[gcm-pump] calls=%u vblank=%u flip=%u vcount=%u%c",
                             calls, nv, nf, s_vblank_count, 10); } }
      if ((p & 1) && s_vblank_handler_opd && g_ps3_guest_caller) {
-@@ -700,6 +709,15 @@ void ppu_gcm_pump(void)
+@@ -700,6 +732,15 @@ void ppu_gcm_pump(void)
          g_ps3_guest_caller(s_vblank_handler_opd, (uint64_t)s_vblank_count,
                             0, 0, 0, 0, 0, 0, 0);
      }
@@ -8134,7 +8347,33 @@ index cdb04646..ddd1a327 100644
      if (p & 2) {
          s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
          if (s_flip_handler_opd && g_ps3_guest_caller) {
-@@ -754,6 +772,20 @@ static u32 gcm_io2ea(u32 io)
+@@ -707,6 +748,25 @@ void ppu_gcm_pump(void)
+             g_ps3_guest_caller(s_flip_handler_opd, 1, 0, 0, 0, 0, 0, 0, 0);
+         }
+     }
++#ifdef _WIN32
++    if (user && gcm_user_queue_on()) {
++        u32 q[GCM_USER_Q]; unsigned n;
++        AcquireSRWLockExclusive(&s_user_q_lock);
++        n = s_user_q_n; memcpy(q, s_user_q, n * sizeof q[0]); s_user_q_n = 0;
++        ReleaseSRWLockExclusive(&s_user_q_lock);
++        { static int d = -1; static unsigned long cnt[4], tot;
++          if (d < 0) d = getenv("GCM_PUMP_DBG") ? 1 : 0;
++          if (d) { for (unsigned i = 0; i < n; i++) { cnt[q[i] < 3 ? q[i] : 3]++; tot++; }
++                   if (n && (tot % 50) < n)
++                       fprintf(stderr, "[gcm-pump] user cmds delivered: 0=%lu 1=%lu 2=%lu other=%lu (vcount=%u)\n",
++                               cnt[0], cnt[1], cnt[2], cnt[3], s_vblank_count); } }
++        for (unsigned i = 0; i < n; i++) ps3_tl('U', q[i], 1);   /* PS3_TIMELINE: user command delivered */
++        for (unsigned i = 0; i < n; i++)
++            if (s_user_handler_opd && g_ps3_guest_caller)
++                g_ps3_guest_caller(s_user_handler_opd, (uint64_t)q[i], 0, 0, 0, 0, 0, 0, 0);
++        user = 0;
++    }
++#endif
+     if (user) {
+         u32 cmd = (u32)user;
+         if (s_user_handler_opd && g_ps3_guest_caller)
+@@ -754,6 +814,20 @@ static u32 gcm_io2ea(u32 io)
      return ((u32)ea_page << 20) | (io & 0xFFFFFu);
  }
  
@@ -8155,7 +8394,7 @@ index cdb04646..ddd1a327 100644
  /* RSX get pointer (IO offset) + one-deep CALL return slot. The FIFO-wrap
   * recycle path teleports these when it resets a ring without a JUMP command. */
  unsigned long long ps3_ms_now(void)
-@@ -852,6 +884,15 @@ static void nv3089_blit(void)
+@@ -852,6 +926,15 @@ static void nv3089_blit(void)
      u32 in_pitch = s_nv3089.in_fmt & 0xFFFF;
      u32 dst_pitch = s_gcm2d.pitch >> 16;
      if (!out_w || !out_h || !in_pitch || !dst_pitch) return;
@@ -8171,7 +8410,7 @@ index cdb04646..ddd1a327 100644
      /* NV3089_GATE=<file>: log every blit's geometry while <file> exists, so a
       * capture covers the scene of interest instead of the first N since boot. */
      { static const char* gate = (const char*)-1; static unsigned poll; static int open_gate;
-@@ -1012,6 +1053,7 @@ static void nv3089_blit(void)
+@@ -1012,6 +1095,7 @@ static void nv3089_blit(void)
                 out_w, out_h, f, src, in_pitch, dst, dst_pitch, out_x, out_y); } }
  }
  
@@ -8179,7 +8418,7 @@ index cdb04646..ddd1a327 100644
  static void gcm_2d_method(u32 subch, u32 method, u32 data)
  {
      /* GCM2D_TRACE=1: histogram of (subchannel, method) actually seen. The
-@@ -1083,6 +1125,17 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
+@@ -1083,6 +1167,17 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
                    printf("[GCM2D] inline write dst=0x%08X (off=0x%X dma=0x%X pt=%u,%u pitch=%u) = 0x%08X\n",
                           base + py * dst_pitch + px * 4, s_gcm2d.dst_offset,
                           s_gcm2d.dst_dma, px, py, dst_pitch, data); }
@@ -8197,7 +8436,7 @@ index cdb04646..ddd1a327 100644
              vm_write32(base + py * dst_pitch + px * 4, data);
              return;
          }
-@@ -1232,12 +1285,74 @@ void gcm_forget_spu_blocks(void)
+@@ -1232,12 +1327,74 @@ void gcm_forget_spu_blocks(void)
      s_spu_blk_w = 0;
  }
  
@@ -8275,7 +8514,7 @@ index cdb04646..ddd1a327 100644
  
      /* Coalesce with the previous block when an SPU emits one buffer in several
       * transfers -- otherwise only the last fragment is remembered and the
-@@ -1279,6 +1394,28 @@ static u32 gcm_spu_block_for_put(u32 put)
+@@ -1279,6 +1436,28 @@ static u32 gcm_spu_block_for_put(u32 put)
   *
   * Dropping DRAWS on a resync is survivable: a frame is lost. Dropping a FENCE
   * is not, it deadlocks the title. Sweep the skipped range first. */
@@ -8304,7 +8543,7 @@ index cdb04646..ddd1a327 100644
  static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
  {
      static int n = 0;
-@@ -1399,6 +1536,7 @@ static void gcm_ref_publish_one(void)
+@@ -1399,6 +1578,7 @@ static void gcm_ref_publish_one(void)
   * poll-path below. TryAcquire on the poll path avoids re-entrancy (the walker
   * itself performs guest reads) and never blocks a spinning game thread. */
  static SRWLOCK s_gcm_fifo_lock = SRWLOCK_INIT;
@@ -8312,7 +8551,7 @@ index cdb04646..ddd1a327 100644
  static void gcm_rsx_process_fifo_unlocked(void);
  
  /* Kick event: a game thread whose fence wait finds the queue DRY signals the
-@@ -1459,6 +1597,36 @@ void cellGcm_ref_on_poll(void)
+@@ -1459,6 +1639,36 @@ void cellGcm_ref_on_poll(void)
          SetEvent(s_gcm_kick_ev);       /* dry: ask the present thread to walk */
  }
  
@@ -8349,7 +8588,7 @@ index cdb04646..ddd1a327 100644
  void cellGcm_rsx_process_fifo(void)
  {
      AcquireSRWLockExclusive(&s_gcm_fifo_lock);
-@@ -1468,6 +1636,23 @@ void cellGcm_rsx_process_fifo(void)
+@@ -1468,6 +1678,23 @@ void cellGcm_rsx_process_fifo(void)
  
  static void gcm_rsx_process_fifo_unlocked(void)
  {
@@ -8373,7 +8612,7 @@ index cdb04646..ddd1a327 100644
      { static unsigned _n = 0; static unsigned long long _t0 = 0;
        extern unsigned long long ps3_ms_now(void);
        _n++;
-@@ -1531,9 +1716,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1531,9 +1758,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
      if (getenv("GCM_DRAINDBG")) {
          static int n = 0;
          if (n++ % 60 == 0)
@@ -8386,7 +8625,7 @@ index cdb04646..ddd1a327 100644
      }
  
      /* GCM_SCANREF=1 (one-shot): list every NV406E_SET_REFERENCE actually
-@@ -1613,7 +1799,47 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1613,7 +1841,48 @@ static void gcm_rsx_process_fifo_unlocked(void)
          s_tr_off[s_tr_i % GCM_TRACE_N] = s_fifo_getoff;
          s_tr_w[s_tr_i % GCM_TRACE_N] = w;
          s_tr_i++;
@@ -8418,10 +8657,11 @@ index cdb04646..ddd1a327 100644
 +                      fprintf(stderr, "%c", 10); memset(hl, 0, sizeof hl); memset(he, 0, sizeof he); } } }
 +        }
          u32 type = w >> 29;
++        g_gcm_flipsum_words++;
 +        /* GCM_FTRACE=<flip>[,<n>]: every command header the walker decodes
 +         * from FIFO flip word <flip> for n flips (default 1), with its IO
 +         * offset: which segments a frame is made of and where it ends. */
-+        { static long long ft_at = -2, ft_n = 1; extern unsigned long long g_gcm_ft_flips;
++        { extern unsigned long long g_gcm_ft_flips;
 +          unsigned long long ft_flips = g_gcm_ft_flips;
 +          if (ft_at == -2) { const char* e = getenv("GCM_FTRACE"); ft_at = e ? atoll(e) : -1;
 +                             const char* c = e ? strchr(e, ',') : NULL; if (c) ft_n = atoll(c + 1); }
@@ -8434,7 +8674,7 @@ index cdb04646..ddd1a327 100644
  
          if ((w & 0xFFFF0000u) == 0xFEAD0000u) {
              /* lv1 driver flip: statically-linked libgcm cellGcmSetFlip writes
-@@ -1653,12 +1879,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1653,12 +1922,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
               * "Command Buffer Overflow" forever. Past the threshold keep
               * draining -- the intermediate presents are frames we are too far
               * behind to show anyway. No-op for a title that is keeping up. */
@@ -8492,7 +8732,7 @@ index cdb04646..ddd1a327 100644
          if (type == 1) {                       /* JUMP: 0x20000000 | offset */
              { static int _rd = -1; if (_rd < 0) _rd = getenv("GCM_RECDBG") ? 1 : 0;
                if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
-@@ -1672,14 +1940,68 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1672,14 +1983,82 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * times in one Twisted Metal run, which is the drain burning the
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
@@ -8520,7 +8760,21 @@ index cdb04646..ddd1a327 100644
 +                   * ring the park is in (as before). */
 +                  { static int mode = -1;
 +                    if (mode < 0) { const char* e = getenv("GCM_PARK_RESYNC"); mode = e ? atoi(e) : 2; }
-+                    if (put != s_fifo_getoff && (mode == 1 || (mode == 2 && gcm_io_same_ring(s_fifo_getoff, put)))) {
++                    /* GCM_PARK_PUTWIN (default on; =0 off): "the same ring"
++                     * also requires the park to lie within 64 KB of where
++                     * `put` has been. Gran Turismo 5 maps its main memory to
++                     * IO in one contiguous run, so its SPU display lists
++                     * (io 0x00A5xxxx, 0x0133xxxx) looked like the PPU's ring
++                     * (io 0x10000-0x14000): each list parked at its write head
++                     * was dropped, with the frame's user command, and the
++                     * render thread waited 5 s for every frame. */
++                    static int putwin = -1; static u32 put_lo = 0xFFFFFFFFu, put_hi = 0;
++                    if (putwin < 0) { const char* e = getenv("GCM_PARK_PUTWIN"); putwin = !(e && *e == '0'); }
++                    if (put < put_lo) put_lo = put;
++                    if (put > put_hi) put_hi = put;
++                    const int in_put_ring = gcm_io_same_ring(s_fifo_getoff, put) &&
++                        (!putwin || (s_fifo_getoff + 0x10000u >= put_lo && s_fifo_getoff <= put_hi + 0x10000u));
++                    if (put != s_fifo_getoff && (mode == 1 || (mode == 2 && in_put_ring))) {
 +                        gcm_fifo_dump_around(s_fifo_getoff);
 +                        gcm_fifo_resync_why("jump-park", &s_fifo_getoff, put);
 +                    } else if (put != s_fifo_getoff && mode == 2) {
@@ -8564,7 +8818,7 @@ index cdb04646..ddd1a327 100644
                    break;
                }
                s_fifo_getoff = tgt; }
-@@ -1688,6 +2010,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1688,6 +2067,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          if ((w & 3) == 2) {                    /* CALL: offset | 2 */
              { u32 tgt = w & 0x1FFFFFFCu;
                if (!gcm_io2ea(tgt)) { gcm_fifo_bad_branch("CALL", tgt, w); gcm_fifo_resync_why("unmapped-CALL", &s_fifo_getoff, put); break; }
@@ -8572,7 +8826,7 @@ index cdb04646..ddd1a327 100644
                s_fifo_calloff = s_fifo_getoff + 4;
                s_fifo_getoff  = tgt; }
              continue;
-@@ -1699,6 +2022,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1699,6 +2079,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
          }
          if (type == 0 || type == 2) {          /* method (incrementing / NI) */
              u32 count  = (w >> 18) & 0x7FF;
@@ -8583,7 +8837,7 @@ index cdb04646..ddd1a327 100644
              u32 method = w & 0x1FFCu;
              u32 subch  = (w >> 13) & 7;
              /* TCONST_FIFO=1: how the title actually streams vertex constants.
-@@ -1743,7 +2070,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1743,7 +2127,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      { static int sn = 0; if (getenv("GCM_RECDBG") && sn++ < 12)
                          fprintf(stderr, "[SEMA] m=0x%02X v=0x%08X off=0x%X\n", m, v, s_sema_offset); }
                      if (m == 0x64u)      s_sema_offset = v;
@@ -8614,7 +8868,7 @@ index cdb04646..ddd1a327 100644
                      else if (m == 0x68u && vm_read32(la) != v) {
              /* GCM_SEMA_ACQUIRE=1 makes ACQUIRE actually block, which is what
               * the hardware does. Off by default: a title whose label nothing
-@@ -1758,6 +2107,49 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1758,6 +2164,49 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
@@ -8664,7 +8918,7 @@ index cdb04646..ddd1a327 100644
              for (u32 i = 0; i < count; i++) {
                  u32 dea = gcm_io2ea(s_fifo_getoff + 4 + i * 4);
                  if (!dea) break;
-@@ -1775,7 +2167,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1775,7 +2224,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
                                m, vm_read32(dea)); }
                  if (subch == 7 && m == 0x0B00u) {
                      extern void rsx_raise_user_cmd(u32 arg);
@@ -8684,7 +8938,7 @@ index cdb04646..ddd1a327 100644
                      continue;
                  }
                  /* GCM_SUBCH1_3D=1: treat subchannel 1 as the 3D object too.
-@@ -1878,6 +2281,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1878,6 +2338,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  } else if (mfull == 0xE920u || mfull == 0xE924u) {
                      cellGcmSetFlipCommand(vm_read32(dea) & 7u);
                  } else if (subch == 0 || (subch == 1 && !s1_2d)) {
@@ -8692,7 +8946,7 @@ index cdb04646..ddd1a327 100644
                      rsx_process_method(&s_state, m, vm_read32(dea));
                      /* NV406E_SET_REFERENCE: queue the fence value for PACED
                       * publication (gcm_ref_publish below) instead of letting a
-@@ -1887,17 +2291,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1887,17 +2348,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -8731,7 +8985,7 @@ index cdb04646..ddd1a327 100644
              }
              s_fifo_getoff += 4 + count * 4;
              continue;
-@@ -1948,8 +2371,38 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1948,8 +2428,38 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -8770,7 +9024,7 @@ index cdb04646..ddd1a327 100644
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
  
-@@ -1957,6 +2410,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1957,6 +2467,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
       * value stays observable to equality-waiters. The wrap recycle path polls
       * the drained EA. */
@@ -8782,7 +9036,7 @@ index cdb04646..ddd1a327 100644
      if (getenv("GCM_DRAINDBG")) {
          static int n2 = 0;
          if (n2++ % 60 == 0)
-@@ -2189,6 +2647,7 @@ u32 cellGcm_display_buffer_count(void)
+@@ -2189,6 +2704,7 @@ u32 cellGcm_display_buffer_count(void)
  
  static s32 gcm_flip_request(u32 bufferId, int in_fifo)
  {
@@ -8790,7 +9044,7 @@ index cdb04646..ddd1a327 100644
      /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
       * which answers "did it ever flip?" and not "is it still flipping, and how
       * fast?" -- the question that matters when a title stops appearing on
-@@ -2331,6 +2790,26 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
+@@ -2331,6 +2847,26 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
  s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
  {
      (void)ctx;  /* command buffer context -- not used in HLE */
@@ -8817,15 +9071,26 @@ index cdb04646..ddd1a327 100644
  
      if (bufferId >= CELL_GCM_MAX_DISPLAY_BUFFER_NUM)
          return CELL_GCM_ERROR_INVALID_VALUE;
-@@ -2339,6 +2818,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2339,6 +2875,18 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
          return CELL_GCM_ERROR_INVALID_VALUE;
  
      printf("[cellGcmSys] SetPrepareFlip(bufferId=%u)\n", bufferId);
++    { static int fs = -1; if (fs < 0) fs = getenv("GCM_FLIPSUM") ? 1 : 0;
++      /* GCM_FTRACE_SLOW=<n>: arm GCM_FTRACE for n flips at the first flip
++       * whose stream raised no user command (implies GCM_FLIPSUM's counts). */
++      static long long slow = -2;
++      if (slow == -2) { const char* e = getenv("GCM_FTRACE_SLOW"); slow = e ? atoll(e) : -1; }
++      if (slow > 0 && g_gcm_flipsum_words >= 1000 && g_gcm_flipsum_user == 0) {
++          extern void gcm_ftrace_arm(unsigned long long at, long long n);
++          gcm_ftrace_arm(g_gcm_ft_flips, slow); slow = -1;
++      }
++      if (fs) fprintf(stderr, "[flipsum] words=%lu user=%lu\n", g_gcm_flipsum_words, g_gcm_flipsum_user);
++      g_gcm_flipsum_words = 0; g_gcm_flipsum_user = 0; }
 +    { extern unsigned long long g_gcm_ft_flips; g_gcm_ft_flips++; }
  
      s_current_display_buffer_id = bufferId;
      s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
-@@ -2352,6 +2832,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2352,6 +2900,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
      if (s_flip_handler_opd && g_ps3_guest_caller && !gcm_flipcb_on_tick_only())
          g_ps3_guest_caller(s_flip_handler_opd, 0, 0, 0, 0, 0, 0, 0, 0);
  
@@ -8840,7 +9105,7 @@ index cdb04646..ddd1a327 100644
      return CELL_OK;
  }
  
-@@ -2662,6 +3150,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2662,6 +3218,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -8857,6 +9122,24 @@ index cdb04646..ddd1a327 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
+@@ -3299,7 +3865,17 @@ void cellGcmSetUserCommand(u32 cmd)
+  * Like the driver cause register, multiple pending commands coalesce. */
+ void cellGcmQueueUserCommand(u32 cmd)
+ {
++    g_gcm_flipsum_user++;
++    ps3_tl('U', cmd, 0);   /* PS3_TIMELINE: the FIFO raised a user command */
+     GCM_USER_STORE(cmd);
++#ifdef _WIN32
++    if (gcm_user_queue_on()) {
++        AcquireSRWLockExclusive(&s_user_q_lock);
++        if (s_user_q_n < GCM_USER_Q) s_user_q[s_user_q_n++] = cmd;
++        else { static int w = 0; if (w++ < 4) fprintf(stderr, "[cellGcmSys] user command queue full, 0x%X dropped\n", cmd); }
++        ReleaseSRWLockExclusive(&s_user_q_lock);
++    }
++#endif
+     GCM_USER_PENDING_STORE((1ULL << 32) | cmd);
+ }
+ 
 diff --git a/libs/video/cellGcmSys.h b/libs/video/cellGcmSys.h
 index 96846675..6c38015c 100644
 --- a/libs/video/cellGcmSys.h
