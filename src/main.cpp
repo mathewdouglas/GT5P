@@ -821,13 +821,28 @@ int main(int argc, char* argv[])
      * (docs/progress-gt5.md, Phase 3). PS3_LWCOND_REAL=0 for the poll. */
     if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_LWCOND_REAL"))
         _putenv_s("PS3_LWCOND_REAL", "1");
+    /* GT5's pager sizes and balances its physical pages from the free user
+     * memory lv2 reports; a fixed answer left its heap unable to grow and the
+     * install spinning in its compaction loop (docs/progress-gt5.md, Phase
+     * 9). PS3_USER_MEM_ACCOUNT=0 for the fixed answer. */
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_USER_MEM_ACCOUNT"))
+        _putenv_s("PS3_USER_MEM_ACCOUNT", "1");
     /* GT5's timer threads arm lv2 one-shots (period 0, absolute base time),
      * which the runtime's old timer refused. PS3_TIMER_ONESHOT=0 for it. */
     if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_TIMER_ONESHOT"))
         _putenv_s("PS3_TIMER_ONESHOT", "1");
-    /* Not defaulted yet: PS3_MMAPPER_LV2_AREA=1 (RPCS3's memory layout) and
-     * PS3_MMAPPER_SHM=1 (real shared-memory blocks) both crashed earlier than
-     * without them (docs/progress-gt5.md, Phase 7). */
+    /* GT5's pager trades its 1 MB reservations for 64 KB pages as page faults
+     * arrive; with faults never reported it held them all, free memory sat
+     * at 0 and its heap refused to grow. PS3_PAGE_FAULT=2 reports faults on
+     * its areas with flat (legacy) blocks, in RPCS3's layout
+     * (PS3_MMAPPER_LV2_AREA=1): the install then runs to its end, as in
+     * RPCS3 (docs/progress-gt5.md, Phase 9). Set either to 0 for the old
+     * behaviour. PS3_MMAPPER_SHM=1 (real shared-memory blocks) still
+     * corrupts the heap and stays off. */
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_PAGE_FAULT"))
+        _putenv_s("PS3_PAGE_FAULT", "2");
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_MMAPPER_LV2_AREA"))
+        _putenv_s("PS3_MMAPPER_LV2_AREA", "1");
 
     /* SPU render lanes on cores of their own (strict pinning): 1.14 times
      * faster lanes, Ferrari at a median 28.2 fps against 24.8 free, and no

@@ -22527,10 +22527,10 @@ index acbaf126..0c80b8d2 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index e73a1512..7d7cc54a 100644
+index e73a1512..24981a5e 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -1,3870 +1,4472 @@
+@@ -1,3870 +1,4492 @@
 -/*
 - * ps3recomp - PPU runtime loader
 - *
@@ -25772,6 +25772,9 @@ index e73a1512..7d7cc54a 100644
 +#include "ppu_recomp.h"
 +#include "ps3emu/milestone.h"   /* ps3_ms / ps3_msf -- boot milestone log */     /* ppu_context, func decls, ppu_recomp_register */
 +#include "../memory/vm.h"   /* vm_commit -- sys_mmapper_search_and_map maps for real */
++extern "C" int  ps3_user_mem_accounting(void);              /* sys_memory.c */
++extern "C" void ps3_user_mem_info(uint32_t* total, uint32_t* avail);
++extern "C" int  ps3_mmapper_is_mapped(uint32_t addr);       /* ppu_sysprx.cpp */
 +#include "../platform/win32_compat.h"      /* Win32 types, interlocked ops, Sleep/QPC on POSIX */
 +#include "../platform/win32_backtrace.h"   /* RtlCaptureStackBackTrace / GetModuleHandleA on POSIX */
 +#ifndef _WIN32
@@ -29069,8 +29072,12 @@ index e73a1512..7d7cc54a 100644
 +{
 +    static int v = -1;
 +    if (v < 0) {
++        /* PS3_PAGE_FAULT=2: notify the pager with legacy (flat) mmapper
++         * blocks too. Nothing moves then, so the pager's page-outs and
++         * page-ins leave the data in place, but its physical page budget
++         * sees faults and releases its reservations as on the console. */
 +        const char* e = getenv("PS3_PAGE_FAULT"); const char* m = getenv("PS3_MMAPPER_SHM");
-+        v = (e && *e == '1' && m && *m == '1');
++        v = (e && *e == '2') || (e && *e == '1' && m && *m == '1');
 +    }
 +    return v;
 +}
@@ -29082,6 +29089,7 @@ index e73a1512..7d7cc54a 100644
 +    for (long k = 0; k < s_pf_areas; k++)
 +        if (addr >= s_pf_lo[k] && addr < s_pf_hi[k]) queue = s_pf_queue[k];
 +    if (!queue) return 0;
++    if (ps3_mmapper_is_mapped(addr)) return 0;   /* a legacy block's first touch */
 +    ppu_context* ctx = g_active_ctx;
 +    if (!ctx || !ctx->thread_id || ctx->thread_id >= sizeof(s_pf_wait) / sizeof(s_pf_wait[0])) return 0;
 +    uint32_t tid = (uint32_t)ctx->thread_id;
@@ -29094,9 +29102,12 @@ index e73a1512..7d7cc54a 100644
 +    s_pf_in = 1;
 +    int rc = sys_event_queue_push_by_id(queue, 0xFFFE000000000000ull, addr, (uint64_t)tid, 2);
 +    long n = InterlockedIncrement(&s_pf_count);
-+    if (n <= 16 || (n % 500) == 0)
-+        fprintf(stderr, "[pager] fault #%ld at 0x%08X (%s) by tid %u -> %s\n", n, addr,
-+                write ? "write" : "read", tid, rc == 0 ? "queued" : "queue refused");
++    /* PS3_PAGE_FAULT_LOG=<n>: how many faults to log (default 16). */
++    static long cap = -1;
++    if (cap < 0) { const char* e = getenv("PS3_PAGE_FAULT_LOG"); cap = e ? atol(e) : 16; }
++    if (n <= cap || (n % 500) == 0)
++        fprintf(stderr, "[pager] fault #%ld at 0x%08X (%s) by tid %u lr=0x%08X -> %s\n", n, addr,
++                write ? "write" : "read", tid, (uint32_t)ctx->lr, rc == 0 ? "queued" : "queue refused");
 +    DWORD w = WAIT_FAILED;
 +    if (rc == 0) {
 +        static DWORD ms = 0;
@@ -29247,7 +29258,16 @@ index e73a1512..7d7cc54a 100644
 +    case 352: {   /* sys_memory_get_user_memory_size(sys_memory_info_t* info)
 +                   * info = { u32 total_user_memory; u32 available_user_memory } */
 +        uint32_t info = (uint32_t)ctx->gpr[3];
-+        if (info) { vm_write32(info + 0, 0x10000000u);   /* 256 MB total */
++        if (info && ps3_user_mem_accounting()) {   /* sys_memory.c */
++            uint32_t total, avail;
++            ps3_user_mem_info(&total, &avail);
++            vm_write32(info + 0, total);
++            vm_write32(info + 4, avail);
++            if (getenv("PS3_MEMTRACE"))
++                fprintf(stderr, "[mem] user_memory_size total=0x%X avail=0x%X tid=%u lr=0x%08X\n",
++                        total, avail, (unsigned)ctx->thread_id, (uint32_t)ctx->lr);
++        } else if (info) {
++                    vm_write32(info + 0, 0x10000000u);   /* 256 MB total */
 +                    vm_write32(info + 4, 0x0C000000u); } /* 192 MB available */
 +        ctx->gpr[3] = 0;
 +        return;
@@ -30872,7 +30892,7 @@ index e73a1512..7d7cc54a 100644
 +}
 +
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index d857f308..d006e6dc 100644
+index d857f308..891cf4d8 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
 @@ -16,6 +16,9 @@
@@ -31304,7 +31324,7 @@ index d857f308..d006e6dc 100644
  /* sys_ppu_thread_get_id(vm::ptr<u64> id) -> *id = calling thread's real id.
   * The old fixed "1" broke every am-I-the-designated-thread check in
   * multithreaded titles (LBP's job system routes work by thread identity, so
-@@ -397,21 +698,156 @@ static void sys_ppu_thread_get_id(ppu_context* ctx)
+@@ -397,26 +698,196 @@ static void sys_ppu_thread_get_id(ppu_context* ctx)
   * search_and_map just needs a non-zero id to track. */
  /* id -> size so sys_mmapper_search_and_map (lv2 337) can lay blocks out
   * without overlap. Ids are dense from 0x1000. */
@@ -31318,7 +31338,7 @@ index d857f308..d006e6dc 100644
 + * blocks through its heaps on a first boot (64 KB and 1 MB), and its objects
 + * then read stale words as vtables. Opt-in while unproven: PS3_MMAPPER_SHM=1
 + * (GT5 Phase 7 crashed earlier with it; see docs/progress-gt5.md there). */
-+struct MmBlock { uint32_t size; uint32_t mapped_at; uint8_t* saved; };
++struct MmBlock { uint32_t size; uint32_t mapped_at; uint8_t* saved; uint32_t charged; };
 +static std::unordered_map<uint32_t, MmBlock>* s_mm_blocks;
 +static SRWLOCK s_mm_lock = SRWLOCK_INIT;
  static uint32_t s_mmapper_next_id = 0x1000;
@@ -31341,14 +31361,26 @@ index d857f308..d006e6dc 100644
 +    return sz;
  }
  
- static uint32_t mmapper_new_id(uint32_t size)
+-static uint32_t mmapper_new_id(uint32_t size)
++/* PS3_USER_MEM_ACCOUNT=1 (sys_memory.c): blocks count against user memory
++ * while allocated, and in legacy mode (no PS3_MMAPPER_SHM) the table still
++ * records where each block is mapped, so unmap can hand back its id and free
++ * can drop it. Without that, legacy unmap left the caller's id unwritten
++ * (Gran Turismo 5 then mapped and freed id -1) and no block was ever freed:
++ * a million entries leaked in one GT5 install run. */
++extern "C" int  ps3_user_mem_accounting(void);
++extern "C" void ps3_user_mem_charge(long long delta);
++
++static uint32_t mmapper_new_id(uint32_t size, int charge)
  {
 +    AcquireSRWLockExclusive(&s_mm_lock);
 +    if (!s_mm_blocks) s_mm_blocks = new std::unordered_map<uint32_t, MmBlock>();
      uint32_t id = s_mmapper_next_id++;
 -    if (id - 0x1000u < 256) s_mm_sizes[id - 0x1000u] = size;
-+    (*s_mm_blocks)[id] = MmBlock{ size, 0, nullptr };
++    uint32_t charged = (charge && ps3_user_mem_accounting()) ? size : 0;
++    (*s_mm_blocks)[id] = MmBlock{ size, 0, nullptr, charged };
 +    ReleaseSRWLockExclusive(&s_mm_lock);
++    if (charged) ps3_user_mem_charge(charged);
      return id;
  }
  
@@ -31362,13 +31394,30 @@ index d857f308..d006e6dc 100644
 +    b->mapped_at = addr;
 +}
 +
++/* 1 when a block is mapped over addr. Legacy blocks are committed only when
++ * first touched, so a fault there is not a page fault for the title's pager
++ * (ps3_pager_fault, PS3_PAGE_FAULT=2). Needs the legacy mapping table,
++ * which PS3_USER_MEM_ACCOUNT=1 keeps. */
++extern "C" int ps3_mmapper_is_mapped(uint32_t addr)
++{
++    int hit = 0;
++    AcquireSRWLockShared(&s_mm_lock);
++    if (s_mm_blocks) for (auto& kv : *s_mm_blocks) {
++        const MmBlock& b = kv.second;
++        if (b.mapped_at && addr >= b.mapped_at && addr - b.mapped_at < b.size) { hit = 1; break; }
++    }
++    ReleaseSRWLockShared(&s_mm_lock);
++    return hit;
++}
++
 +extern "C" void ps3_mmapper_on_map(uint32_t mem_id, uint32_t addr)
 +{
-+    if (mm_legacy()) return;
++    if (mm_legacy() && !ps3_user_mem_accounting()) return;
 +    AcquireSRWLockExclusive(&s_mm_lock);
 +    MmBlock* b = nullptr;
 +    if (s_mm_blocks) { auto it = s_mm_blocks->find(mem_id); if (it != s_mm_blocks->end()) b = &it->second; }
-+    if (b && b->size) mm_map_locked(b, addr);
++    if (b && b->size && mm_legacy()) b->mapped_at = addr;   /* contents stay put */
++    else if (b && b->size) mm_map_locked(b, addr);
 +    ReleaseSRWLockExclusive(&s_mm_lock);
 +}
 +
@@ -31420,12 +31469,13 @@ index d857f308..d006e6dc 100644
 +static void sys_mmapper_unmap_memory(ppu_context* ctx)
 +{
 +    uint32_t addr = (uint32_t)ctx->gpr[3], id_ptr = (uint32_t)ctx->gpr[4];
-+    if (mm_legacy()) { ctx->gpr[3] = 0; return; }
++    if (mm_legacy() && !ps3_user_mem_accounting()) { ctx->gpr[3] = 0; return; }
 +    uint32_t id = 0;
 +    AcquireSRWLockExclusive(&s_mm_lock);
 +    if (s_mm_blocks) for (auto& kv : *s_mm_blocks) {
 +        MmBlock& b = kv.second;
 +        if (b.mapped_at != addr || !b.size) continue;
++        if (mm_legacy()) { b.mapped_at = 0; id = kv.first; break; }   /* contents stay put */
 +        b.saved = (uint8_t*)malloc(b.size);
 +        if (b.saved) memcpy(b.saved, vm_base + addr, b.size);
 +        memset(vm_base + addr, 0, b.size);
@@ -31439,6 +31489,7 @@ index d857f308..d006e6dc 100644
 +    ReleaseSRWLockExclusive(&s_mm_lock);
 +    if (getenv("PS3_MEMTRACE"))
 +        fprintf(stderr, "[mmapper] unmap_memory(addr=0x%08X) -> id 0x%X\n", addr, id);
++    if (!id && mm_legacy()) { ctx->gpr[3] = 0; return; }   /* not a block we track: as before */
 +    if (!id) { ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x80010002; return; }   /* EINVAL */
 +    if (id_ptr) vm_write32(id_ptr, id);
 +    ctx->gpr[3] = 0;
@@ -31448,24 +31499,44 @@ index d857f308..d006e6dc 100644
 +static void sys_mmapper_free_memory(ppu_context* ctx)
 +{
 +    uint32_t id = (uint32_t)ctx->gpr[3];
-+    if (mm_legacy()) { ctx->gpr[3] = 0; return; }
++    if (mm_legacy() && !ps3_user_mem_accounting()) { ctx->gpr[3] = 0; return; }
 +    int32_t rc = 0;
++    uint32_t refund = 0;
 +    AcquireSRWLockExclusive(&s_mm_lock);
 +    if (!s_mm_blocks || !s_mm_blocks->count(id)) {
-+        rc = (int32_t)0x80010005;                                  /* ESRCH */
++        rc = mm_legacy() ? 0 : (int32_t)0x80010005;                /* ESRCH */
 +    } else {
 +        MmBlock& b = (*s_mm_blocks)[id];
-+        if (b.mapped_at) rc = (int32_t)0x8001000A;                 /* EBUSY */
-+        else { free(b.saved); s_mm_blocks->erase(id); }
++        if (b.mapped_at && !mm_legacy()) rc = (int32_t)0x8001000A; /* EBUSY */
++        else { refund = b.charged; free(b.saved); s_mm_blocks->erase(id); }
 +    }
 +    ReleaseSRWLockExclusive(&s_mm_lock);
++    if (refund) ps3_user_mem_charge(-(long long)refund);
++    if (getenv("PS3_MEMTRACE"))
++        fprintf(stderr, "[mmapper] free_memory(id=0x%X) -> 0x%X refund=0x%X tid=%u\n",
++                id, (uint32_t)rc, refund, (unsigned)ctx->thread_id);
 +    ctx->gpr[3] = (uint64_t)(int64_t)rc;
 +}
 +
  static void sys_mmapper_allocate_memory(ppu_context* ctx)
  {
      uint32_t size       = (uint32_t)ctx->gpr[3];
-@@ -911,6 +1347,14 @@ extern "C" void ppu_sysprx_register(void)
+     uint32_t mem_id_ptr = (uint32_t)ctx->gpr[5];
+-    uint32_t id         = mmapper_new_id(size);
++    uint32_t id         = mmapper_new_id(size, 1);
+     if (getenv("PS3_MEMTRACE"))
+         fprintf(stderr, "[mmapper] allocate_memory(size=0x%X flags=0x%llX id_ptr=0x%X) -> id 0x%X\n",
+                 size, (unsigned long long)ctx->gpr[4], mem_id_ptr, id);
+@@ -430,7 +901,7 @@ static void sys_mmapper_allocate_memory_from_container(ppu_context* ctx)
+ {
+     uint32_t size = (uint32_t)ctx->gpr[3];
+     uint32_t mem_id_ptr = (uint32_t)ctx->gpr[6];
+-    uint32_t id = mmapper_new_id(size);
++    uint32_t id = mmapper_new_id(size, 0);   /* the container was charged */
+     if (getenv("PS3_MEMTRACE"))
+         fprintf(stderr, "[mmapper] alloc_from_container(size=0x%X cid=0x%X flags=0x%llX id_ptr=0x%X) -> id 0x%X\n",
+                 size, (uint32_t)ctx->gpr[4], (unsigned long long)ctx->gpr[5], mem_id_ptr, id);
+@@ -911,6 +1382,14 @@ extern "C" void ppu_sysprx_register(void)
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_all"), "sys_lwcond_signal_all", sys_lwcond_signal_all);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_signal_to"),  "sys_lwcond_signal_to",  sys_lwcond_signal_to);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwcond_wait"),       "sys_lwcond_wait",       sys_lwcond_wait);
@@ -31480,7 +31551,7 @@ index d857f308..d006e6dc 100644
  
      /* Thread id + memory manager (high-frequency boot imports). The flat VM
       * means map/unmap/free are no-ops: the memory already exists everywhere. */
-@@ -919,7 +1363,7 @@ extern "C" void ppu_sysprx_register(void)
+@@ -919,7 +1398,7 @@ extern "C" void ppu_sysprx_register(void)
      ps3_hle_register_ctx(ps3_compute_nid("sys_ppu_thread_exit"),        "sys_ppu_thread_exit",        hle_ppu_thread_exit);
      ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_allocate_memory"), "sys_mmapper_allocate_memory", sys_mmapper_allocate_memory);
      ps3_hle_register_ctx(ps3_compute_nid("sys_mmapper_allocate_memory_from_container"), "sys_mmapper_allocate_memory_from_container", sys_mmapper_allocate_memory_from_container);
@@ -35461,7 +35532,7 @@ index 45235ea6..8b664d8b 100644
      return CELL_OK;
  }
 diff --git a/runtime/syscalls/sys_memory.c b/runtime/syscalls/sys_memory.c
-index bfbaac50..dfc7a934 100644
+index bfbaac50..196bb488 100644
 --- a/runtime/syscalls/sys_memory.c
 +++ b/runtime/syscalls/sys_memory.c
 @@ -5,6 +5,7 @@
@@ -35472,7 +35543,7 @@ index bfbaac50..dfc7a934 100644
  
  /* ---------------------------------------------------------------------------
   * Globals
-@@ -24,8 +25,18 @@ uint32_t g_sys_mem_bump_ptr = 0;
+@@ -24,11 +25,58 @@ uint32_t g_sys_mem_bump_ptr = 0;
   * 0x40000000+ matches where the real lv2 places these allocations (verified
   * against an RPCS3 boot log of Yakuza: Dead Souls); the window is outside
   * the pre-committed main region, so pages are committed on demand. */
@@ -35492,6 +35563,102 @@ index bfbaac50..dfc7a934 100644
 +uint32_t ps3_sys_memory_window_base(void) { return SYS_MEM_ALLOC_BASE; }
  
  static uint32_t s_total_allocated = 0;
+ 
++/* PS3_USER_MEM_ACCOUNT=1: sys_memory_get_user_memory_size reports what is
++ * really in use, as lv2 does: total minus the loaded image (base) minus every
++ * sys_memory block, memory container and mmapper block still allocated. The
++ * fixed answer (192 MB free, whatever the title held) broke Gran Turismo 5's
++ * pager, which sizes its physical page budget from the free figure and polls
++ * it while it balances; its heap then refused to grow and the install spun in
++ * its compaction loop. PS3_USER_MEM_TOTAL and PS3_USER_MEM_BASE override the
++ * defaults (213 MB, and 0x1AF0000: RPCS3's first GT5 answer, 0xB860000 free,
++ * less the 0x1B0000 the title had allocated by then). */
++static long long s_user_charged = 0;
++
++int ps3_user_mem_accounting(void)
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("PS3_USER_MEM_ACCOUNT"); v = (e && *e == '1'); }
++    return v;
++}
++
++void ps3_user_mem_charge(long long delta)
++{
++    __atomic_add_fetch(&s_user_charged, delta, __ATOMIC_SEQ_CST);
++}
++
++void ps3_user_mem_info(uint32_t* total, uint32_t* avail)
++{
++    static uint32_t t = 0, base = 0;
++    if (!t) {
++        const char* e = getenv("PS3_USER_MEM_TOTAL");
++        const char* b = getenv("PS3_USER_MEM_BASE");
++        base = b ? (uint32_t)strtoul(b, NULL, 0) : 0x1AF0000u;
++        t = e ? (uint32_t)strtoul(e, NULL, 0) : SYS_MEM_USER_TOTAL;
++    }
++    long long used = (long long)base + __atomic_load_n(&s_user_charged, __ATOMIC_SEQ_CST);
++    *total = t;
++    *avail = used >= (long long)t ? 0u : (uint32_t)(t - used);
++}
++
+ /* Guest threads are real host threads; serialize the bump allocator. */
+ #ifdef _WIN32
+ static SRWLOCK s_bump_lock = SRWLOCK_INIT;
+@@ -108,6 +156,7 @@ int64_t sys_memory_allocate(ppu_context* ctx)
+     uint32_t alloc_addr = g_sys_mem_bump_ptr;
+     g_sys_mem_bump_ptr += size;
+     s_total_allocated += size;
++    ps3_user_mem_charge(size);
+ 
+     sys_mem_alloc_info* a = &g_sys_mem_allocs[slot];
+     a->active       = 1;       /* claim the slot before unlocking */
+@@ -146,6 +195,7 @@ int64_t sys_memory_free(ppu_context* ctx)
+     for (int i = 0; i < SYS_MEMORY_ALLOC_MAX; i++) {
+         if (g_sys_mem_allocs[i].active && g_sys_mem_allocs[i].addr == addr) {
+             s_total_allocated -= g_sys_mem_allocs[i].size;
++            ps3_user_mem_charge(-(long long)g_sys_mem_allocs[i].size);
+             g_sys_mem_allocs[i].active = 0;
+             return CELL_OK;
+         }
+@@ -167,6 +217,7 @@ int64_t sys_memory_get_user_memory_size(ppu_context* ctx)
+     if (out_addr != 0) {
+         uint32_t total = SYS_MEM_USER_TOTAL;
+         uint32_t avail = total - s_total_allocated;
++        if (ps3_user_mem_accounting()) ps3_user_mem_info(&total, &avail);
+         write_be32(out_addr + 0, total);
+         write_be32(out_addr + 4, avail);
+     }
+@@ -239,6 +290,7 @@ int64_t sys_memory_container_create(ppu_context* ctx)
+     c->active     = 1;
+     c->total_size = size;
+     c->used_size  = 0;
++    ps3_user_mem_charge(size);
+ 
+     uint32_t container_id = (uint32_t)(slot + 1);
+     if (id_out_addr != 0) {
+@@ -265,6 +317,7 @@ int64_t sys_memory_container_destroy(ppu_context* ctx)
+         return (int64_t)(int32_t)CELL_ESRCH;
+ 
+     c->active = 0;
++    ps3_user_mem_charge(-(long long)c->total_size);
+     return CELL_OK;
+ }
+ 
+diff --git a/runtime/syscalls/sys_memory.h b/runtime/syscalls/sys_memory.h
+index 7ae67ac9..327e4628 100644
+--- a/runtime/syscalls/sys_memory.h
++++ b/runtime/syscalls/sys_memory.h
+@@ -68,6 +68,11 @@ int64_t sys_mmapper_free_address(ppu_context* ctx);
+ int64_t sys_mmapper_allocate_shared_memory(ppu_context* ctx);
+ int64_t sys_mmapper_map_shared_memory(ppu_context* ctx);
+ 
++/* User memory accounting (PS3_USER_MEM_ACCOUNT=1, sys_memory.c). */
++int  ps3_user_mem_accounting(void);
++void ps3_user_mem_charge(long long delta);
++void ps3_user_mem_info(uint32_t* total, uint32_t* avail);
++
+ /* Registration */
+ void sys_memory_init(lv2_syscall_table* tbl);
  
 diff --git a/runtime/syscalls/sys_mutex.c b/runtime/syscalls/sys_mutex.c
 index 2e760ea5..7788f6ff 100644

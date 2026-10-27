@@ -910,10 +910,14 @@ files. They are copied from RPCS3's install; the list is
 `scratch/rpcs3/pkg_files.txt`. Since Phase 7 GT5 reaches its **logo** after the warning. Required
 pre-lift step: `scripts/code_labels.py --write` (computed-goto labels).
 Since Phase 8 the first-boot SQLite database works (cellFs open-mode fix) and
-the install runs past `9/DC/DS`. GT5's pager is implemented, opt-in
-(`PS3_PAGE_FAULT=1`, with `PS3_MMAPPER_SHM=1`). Skipping the install by
-seeding RPCS3's finished one is noted there for later.
-Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 8 first.
+the install runs past `9/DC/DS`. Skipping the install by seeding RPCS3's
+finished one is noted there for later.
+Since Phase 9 the install runs to its end as in RPCS3 (746 of 747 file
+steps, `grim2` cache created) and GT5 draws its own (still empty) panel.
+GT5 now defaults to `PS3_USER_MEM_ACCOUNT=1` (lv2 free-memory accounting),
+`PS3_PAGE_FAULT=2` (faults reach GT5's pager with flat mmapper blocks) and
+`PS3_MMAPPER_LV2_AREA=1`; `PS3_MMAPPER_SHM=1` still corrupts the heap.
+Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 9 first.
 
 ## What is tied to v02.00
 

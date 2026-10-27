@@ -4,6 +4,119 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 9 — Memory accounting and pager faults: the install runs to its end (2026-10-28)
+
+**Result.** With the new defaults the first-boot install matches RPCS3 for
+746 of 747 file steps (`scratch fsdiff`; the one gap is a `mkdir` of a folder
+the reset tree already has). It creates `/dev_hdd1/grim2` (cache, file,
+`grim007.db`) and reaches `stat installed00.dat`, where RPCS3 goes on to scan
+`PDIPFS_bdmark`. From about 10 s in, GT5 draws its own panel (a dark box with
+a title bar) in place of the logo; the panel has no text or contents yet.
+Two of two runs behaved identically. Every run before this stopped somewhere
+between `9/6L/LZ` and `car/S/1`, at a different file each time.
+
+**Stop 1: the install spun in GT5's page compaction.** The install driver
+`n3FKY` asked for 16 KB (`func_00C011B4` → `func_00C277B0`, aligned 0x80).
+`func_00C276CC` retries a failed allocation for ever, running the compaction
+tick (`func_00C485EC` → `func_00C4B22C`) between tries. That routine
+reallocates every in-use 64 KB page of the heap into a fresh block: unmap,
+map at a scratch slot, copy, free, allocate, copy back, map. Thread dumps
+showed the same caller chain minutes apart with the loop index changing.
+`cdis.py`'s TOC annotation is wrong for this code: the live `r2` is
+`0x01919684`, and with it the allocator is `func_00C4B0D8` on the pager
+object `0x01AB9ED8`.
+
+- The allocation failed because of GT5's physical page budget, which it
+  takes from `sys_memory_get_user_memory_size` (polled from `0x00C4C3DC`;
+  `func_00C49988` reserves free − 1 MB). Ours answered a constant 192 MB
+  free. RPCS3 answers total 0xD500000 and a free figure that moves between
+  0xB860000 and about 7 MB as blocks come and go.
+- Our legacy `sys_mmapper_unmap_memory` never wrote the block id back. GT5
+  pre-stores −1, so the compaction then mapped and freed id −1. No block was
+  ever freed either: one run made 1,075,580 `allocate_memory` calls.
+
+Fix, `PS3_USER_MEM_ACCOUNT=1` (ps3recomp `sys_memory.c`, `ppu_sysprx.cpp`,
+`ppu_loader.cpp`), default for GT5 (`=0` restores the old behaviour):
+
+- Syscall 352 answers total (213 MB, `PS3_USER_MEM_TOTAL`) − base
+  (0x1AF0000, `PS3_USER_MEM_BASE`) − everything allocated. Allocated means
+  `sys_memory` blocks, memory containers and mmapper blocks; a block from a
+  container is not charged twice. The base is RPCS3's first answer for GT5
+  (0xB860000 free) less the 0x1B0000 GT5 had allocated by then. Our first
+  answer is 0xB910000.
+- With accounting on, legacy blocks record where they are mapped, unmap
+  writes the real id, and free drops the block and refunds it.
+- `PS3_MEMTRACE=1` also logs each free-memory answer (`[mem]`) and each
+  `free_memory`.
+
+**Stop 2: a leaked C library lock.** With accounting alone, the install got
+as far as `car/S/1` in two of four runs and then deadlocked: `n3FKY` waited
+for lwmutex `0x01AE8260`, owned by main, while main waited for `n3FKY`.
+
+- `0x01AE8250` is lock 1 of the C library's lock table: count at +0, owner
+  at +8, lwmutex at +0x10. It guards the `atexit` table at `0x01AED410`.
+- A write watch (`PPU_WWATCH=01AE8250 PPU_WWATCH_FRAMES`) showed main taking
+  it 28 times in a row through `func_00D41260`. The callers were static
+  initialisers registering destructors.
+- `func_00D41260`'s error path (`0x00D4137C`, taken when `func_00D411D0`
+  cannot grow the table) returns without unlocking. Growth failed because
+  the pager heap's `realloc` (`func_00C4BE44`) returned null once free memory
+  reached 0.
+
+Free memory reached 0 because GT5's pager never saw a page fault:
+
+- In RPCS3, main reserves 1 MB blocks, the pager thread `MpAnk` answers
+  faults in its 0x60000000 area with 64 KB pages, and the reservations are
+  freed: 156 by main and 300 by `n3FKY`. All 605 of RPCS3's faults are in
+  that area.
+- Ours committed every fault silently, so GT5 kept all its reservations and
+  free memory sat at 0 for thousands of polls.
+
+Fix, `PS3_PAGE_FAULT=2` plus `PS3_MMAPPER_LV2_AREA=1`, both default for GT5
+(`=0` for either restores the old behaviour):
+
+- Faults on the title's notified areas reach its pager with legacy blocks
+  too. A fault on an address a block is mapped over is just that block's
+  first touch (legacy blocks commit lazily) and is not reported
+  (`ps3_mmapper_is_mapped`). Without that check the pager got faults for its
+  own heap and 14 of them timed out.
+- The lv2 layout is needed as well: with the old layout the pager answered
+  its faults but freed no reservations, and the run ended in the same
+  deadlock at `car/S/1`.
+- With both, 157 of the 1 MB reservations are freed, free memory holds near
+  0x8720000, and 98 of 99 faults are answered. The exception is
+  `0x3BE50004`, read by thread 29 (`9qstY`) after its null calls (below).
+
+**Full pager mode (`PS3_MMAPPER_SHM=1 PS3_PAGE_FAULT=1`) still fails.** It
+reached the same 1 MB conversion, but 2 of 3 runs crashed in the pager
+object's lock (`LR 0x00C44F70`, `r3 0x01AB9ED8`) after null virtual calls on
+zeroed objects at `0x3000CC68` and `0x300C8D24`. Those pages were mapped once
+and never unmapped, so the mmapper did not wipe them; the cause is open.
+
+**Other findings.**
+- The request handshake between install worker `ksF3` and I/O helper `kFeqP`
+  (`func_00C07AE4`: signal the event at `+0x1AA8`, wait on `+0x1B98`; event
+  = lwmutex, lwcond at `+0x18`, waiting `+0x28`, signalled `+0x29`) stalled
+  in 2 of the 14 runs before the fix. An `lwcond` trace of a completed
+  exchange showed every signal reaching its waiter. The cause is not found.
+- `GT5P_PEEK` in `main.cpp` parses with base 0: give it a `0x` prefix.
+- New runtime switches: `PS3_PAGE_FAULT_LOG=<n>` (faults logged, default
+  16; lines now carry the guest `lr`).
+
+**Open, next:**
+
+1. After `installed00.dat` main waits on an event of the object at
+   `0x4FE72018` (`func_005DE308`, from `0x00773310`), and `n3FKY` threads
+   32-34 wait idle for work on the same object (`0x006386A8` ← `0x0065B944`).
+   RPCS3's next step is scanning `PDIPFS_bdmark`.
+2. Thread 29 (`9qstY`) calls through null descriptors in `func_00985D7C+0x470`
+   and `func_0098C458+0x840` (`r3=0xFFFF`), then reads unmapped
+   `0x3BE50004`.
+3. Main's `bctr to NULL` in `func_00524768+0x1F1` (Phase 8) still happens
+   in every run.
+4. The panel draws without text.
+5. Seeding RPCS3's finished install (Phase 8) is still a separate option.
+
 ## Phase 8 — SQLite fixed (file open modes); the pager implemented (2026-10-27)
 
 **Fixed: the install stopping after `PDIPFS/9/DC/DS`.** It was not memory.
