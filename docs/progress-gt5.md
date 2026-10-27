@@ -4,6 +4,46 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 13 — Menu buttons and badge fixed (2026-10-28)
+
+**Result.** The main menu draws its UI correctly: the four mode icons, the
+help, settings and record buttons, and the top-right badge ("12:00", level
+18). Still a steady 30 fps (151 frames per 5 s idle).
+
+**Cause.** The UI art sat inside a render target's address range, so the
+backend sampled the target instead of the texture.
+
+- `RT_TEXDBG=100` showed every UI texture in the pool at `0x0590xxxx`-
+  `0x0597xxxx` (DXT5 and ARGB, 12x68 to 192x120) resolving as
+  `-> target`, at a scale and origin inside the target at `0x058F1680`.
+- The menu draws a 256x1 colour ramp into `0x058F1680` (surface clip 256x1,
+  viewport 256x1, pitch 1024; it feeds the badge's gradient). The backend
+  treated clips under 16 on a side as unset (`current_rt_off`), so the
+  record carried size 0x0. `off_rt_get` then made a window-sized (1280x720)
+  target, which the viewport cap could not shrink: that cap only applies to
+  a known size.
+- 720 rows at pitch 1024 run to `0x059A5680`, past the whole texture pool.
+  `off_rt_find_in` matched each texture as a corner of that target. The
+  target held one drawn row, so the stretched labels and 9-slice frames
+  came out as horizontal stripes.
+
+**Fix (ps3recomp `rsx_d3d12_backend.c`).** Clips of 1 to 15 on a side are
+real sizes (`RSX_RT_SMALL_CLIP`, default on; `=0` restores the old rule).
+
+**Ruled out first, by measurement:**
+
+- Unsupported formats: `RSX_TEXREJ=1` rejected only a 1024x2048 depth
+  texture on unit 13.
+- Linear-texture pitch: `TEXFMTDBG` (now prints CONTROL3's pitch) showed the
+  UI textures tightly packed (156x76 DXT5, pitch 624).
+- A stale texture cache: `TEX_NOCACHE=1` was still garbled.
+- Bad texture data: `RSX_TEXDUMP=05928380` decoded offline to a clean
+  button shadow.
+
+`RSX_CAP` with `RSX_CAP_AFTER` works for GT5 (milestone `MusicDecode`).
+Quote the value: unquoted, PowerShell splits it at the comma and the
+capture never arms.
+
 ## Phase 12 — The menu at full speed; milestone-driven GT5 tests (2026-10-28)
 
 **Result.** The main menu holds a steady 30 fps (151 frames per 5 s over 90 s
