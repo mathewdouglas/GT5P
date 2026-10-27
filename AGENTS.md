@@ -924,9 +924,11 @@ SPU job waits on an RSX label. Phase 12 fixed that (the FIFO walker dropped
 SPU display lists; `GCM_PARK_PUTWIN`): the menu runs at 30 fps with its 3D
 background. Phase 13 fixed its garbled buttons and badge: a 256x1 target
 was sized as the window and swallowed the UI texture pool
-(`RSX_RT_SMALL_CLIP`). Test GT5 with
+(`RSX_RT_SMALL_CLIP`). Phase 14 added FFmpeg (copy or fetch
+`third_party/ffmpeg`): movies decode, but stay black until ps3recomp gains
+SPURS Taskset2 (GT5 converts YUV to ARGB on SPURS tasks). Test GT5 with
 `scripts/test/gt5boot.ps1` (milestone-timed presses, `-Fresh` for a first
-boot). Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 13 first.
+boot). Read [docs/progress-gt5.md](docs/progress-gt5.md) Phase 14 first.
 
 ## What is tied to v02.00
 

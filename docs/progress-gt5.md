@@ -4,6 +4,61 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 14 — FFmpeg added; movies still black (missing SPURS Taskset2) (2026-10-28)
+
+**Result.** The build decodes GT5's movies with FFmpeg: the H.264 video
+(1920x1080, 29.97 fps) and both audio streams. The picture stays black,
+because GT5 converts each decoded picture to ARGB on SPURS tasks that
+ps3recomp does not implement.
+
+**FFmpeg.** CMake and `scripts/get_ffmpeg.ps1` were already in place; only
+`third_party/ffmpeg` (gitignored) was missing. GT5P's copy is the same pinned
+LGPL build (avcodec 61, avutil 59) and was copied across. Rebuilding copies
+the DLLs beside `build/gt5.exe`. The log shows `[cellVdec] Open(codec 1) ...
+decoding with FFmpeg`. Over 25 s, `VDEC_TRACE`/`DMUX_TRACE`/`ADEC_TRACE`
+showed about 900 video access units decoded into about 670 pictures, and
+PCM from the audio decoder.
+
+**Why the picture is black.**
+
+- Each movie frame is one quad sampling a 1920x1080 ARGB texture in main
+  memory (`RSX_CAP`). The texture is one slot of a ring 0x870000 apart
+  (`0x42E1E280`, `0x4368E280`, `0x43EFE280`, ...). It changes every second
+  flip, matching the video rate (`GCM_FTRACE`).
+- That texture is all zeros (`RSX_TEXDUMP`). The pictures themselves arrive:
+  the movie thread "PDI" (`func_009B61F8`) calls `cellVdecGetPicture` with
+  format 3 (YUV420 planar) into staging slots (`0x4476E280`, `0x44A98280`).
+- `func_009B24EC` then writes four 0x80-byte commands to the array named by
+  TOC slot `0x01913410`. Seen live: command 8, slice, source = the YUV
+  staging slot, destination = a ring slot, 1920x1080 in and out. It then
+  calls `cellSpursCreateTask2` with the task ELF at `0x01704280` (a word at
+  +4 of each worker object; TOC slot `0x01913414`, stride 0x140), and
+  `cellSpursJoinTask2` on each.
+- The log has `[hle] unresolved NID` for `0xE14CA62D` (`cellSpursCreateTask2`)
+  and `0xA7A94892` (`cellSpursJoinTask2`), and also for `0x4A6465E3`
+  (`cellSpursCreateTaskset2`), `0xC2ACDF43`
+  (`_cellSpursTasksetAttribute2Initialize`) and `0x8ADADF65`
+  (`_cellSpursTaskAttribute2Initialize`). No task runs, and GT5 draws the
+  empty ring slot.
+- Ruled out by measurement: `cellVpost` is never called (`HLE_BT_NID`); no
+  SPU DMA touches 0x42000000-0x45400000 (`SPU_DMA_RANGE`, which does catch
+  the audio mixer's writes); the frame's FIFO has no blit or copy methods;
+  the PPU runs no conversion (`GT5P_SAMPLE`).
+
+**To make movies play.** Implement the Taskset2 API in ps3recomp: create and
+join, with the join waiting for the task to exit. Then capture the task ELF
+with `SPU_DUMP_MISS` and lift it into `spu_registry`. The version-1 task path
+(`cellSpursCreateTask`) carries assumptions from YDKJ and LBP: an r3 marker
+read from the context, and a single global "current" taskset. Its
+`cellSpursJoinTask` does not wait.
+
+**Tools added.**
+
+- `scripts/test/gt5boot.ps1 -Movie`: no presses; shots from
+  `installed00.dat`, covering the opening movie of an installed boot.
+- `RSX_TEXDUMP_SKIP=<n>`: skip the first n matching draws.
+- `RSX_TEXDUMP_SIZE=<w>x<h>:<fmt hex>`: also match the format byte.
+
 ## Phase 13 — Menu buttons and badge fixed (2026-10-28)
 
 **Result.** The main menu draws its UI correctly: the four mode icons, the

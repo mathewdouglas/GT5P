@@ -4,9 +4,11 @@
 #   scripts\test\gt5boot.ps1 -Tag t [-Settle 60] [-Gap 10] [-Fresh] [-FreshSave] NAME=VALUE ...
 #   -Fresh: first-boot install state (scripts\test\gt5_reset.py), so the
 #   install prompts run; -FreshSave also removes the save (GT5 creates it).
+#   -Movie: no presses; shots start at installed00.dat instead of the menu,
+#   so they cover the logos and the opening movie of an installed boot.
 #   -> scratch\pv\<t>.out/.err, <t>.menu<N>.png
 [CmdletBinding(PositionalBinding = $false)]
-param([string]$Tag = "gt5", [int]$Settle = 60, [int]$Gap = 10, [switch]$Fresh, [switch]$FreshSave,
+param([string]$Tag = "gt5", [int]$Settle = 60, [int]$Gap = 10, [switch]$Fresh, [switch]$FreshSave, [switch]$Movie,
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot\milestone.ps1"
 Add-Type -AssemblyName System.Drawing
@@ -21,6 +23,7 @@ $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $dir = "$root\scratch\pv"; New-Item -ItemType Directory -Force $dir | Out-Null
 $set = @{ GT5P_NO_SETTINGS = "1"; FS_HIDE = "grim/file/contents"; PS3_VERBOSE = "0"; GT5P_PROFVIEW = "0";
           PAD_MILESTONE_FILES = "installed00.dat"; PAD_HOLD = $GT5BootHold }
+if ($Movie) { $set.Remove("PAD_HOLD") }
 foreach ($v in $Vars) { if (-not $v) { continue }; $k, $val = "$v" -split "=", 2; $set[$k] = $val }
 function Stop-GT5 { Get-Process gt5 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
 try {
@@ -35,10 +38,11 @@ $p = Start-Process -FilePath "$root\build\gt5.exe" -WorkingDirectory $root -Pass
 foreach ($k in $set.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
 $tl = New-LogTail "$dir\$Tag.out"
 $limit = if ($Fresh -or $FreshSave) { 600 } else { 240 }
-$tm = Wait-Milestone $p $tl "MusicDecode" $limit
-if ($tm -lt 0) { "menu not reached (log: $dir\$Tag.out)" }
+$ms = if ($Movie) { "installed00.dat" } else { "MusicDecode" }
+$tm = Wait-Milestone $p $tl $ms $limit
+if ($tm -lt 0) { "$ms not reached (log: $dir\$Tag.out)" }
 else {
-    "menu loading at $tm s"
+    "$ms at $tm s"
     $sw = [Diagnostics.Stopwatch]::StartNew(); $i = 0
     while ($sw.Elapsed.TotalSeconds -lt $Settle) {
         Start-Sleep -Seconds $Gap; $i++
