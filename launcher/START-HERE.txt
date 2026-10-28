@@ -1,0 +1,30 @@
+GT5P Recomp - player setup
+
+1. Extract the ENTIRE release ZIP to a folder. Do not run it inside the ZIP.
+2. Run GT5P.exe. Select your extracted GT5P disc dump or its PS3_GAME folder.
+   Supported: BCUS98158, US disc, v03.00. Other builds and ISO files are not
+   supported by this release.
+3. If EMAIN.ELF is not already available, select your installed RPCS3 when
+   offered, or select a decrypted EMAIN.ELF made from your own EMAIN.SELF.
+   RPCS3/firmware/keys are not included. Decryption uses a temporary copy and
+   does not modify the original dump.
+4. Use GT5P.exe for every launch. Setup is remembered. The internal
+   runtime/gt5p.exe is the game engine, not the player launch entry point.
+
+The initial preset is 720p with 2x MSAA. Press F1 for game settings.
+Do not move/delete the selected dump while using the port.
+
+Settings, saves, shaders and logs are under:
+  %LOCALAPPDATA%\GT5PRecomp
+  logs\play.out and logs\play.err contain startup diagnostics.
+
+Run GT5P.exe --setup to change the dump folder.
+Run GT5P.exe --open-data to open saves/settings/logs in Explorer.
+GT5P.exe --check validates setup without launching the game or opening dialogs.
+
+For an update, close the game, then extract the new ZIP into its own folder.
+User data is retained. If an update targets a different game executable,
+setup will request the matching game file again.
+
+No game data, saves, firmware, keys or RPCS3 are supplied in this download.
+The shader cache starts empty. First visits may compile shaders.

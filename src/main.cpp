@@ -882,7 +882,14 @@ int main(int argc, char* argv[])
          * from it (/dev_hdd0/game/<id>/...). */
         {
             char sfo[512];
-            snprintf(sfo, sizeof sfo, "%s/%sPARAM.SFO", vfs, game_dir);
+            /* The player launcher supplies an absolute GT5P_GAME_DIR while
+             * PS3_VFS_ROOT points at writable user data on another drive.
+             * Match cellFs's absolute-mapping handling for this direct read. */
+            const bool absolute_game_dir = game_dir[0] == '/' || game_dir[0] == '\\' ||
+                (game_dir[0] && game_dir[1] == ':' &&
+                 (game_dir[2] == '/' || game_dir[2] == '\\'));
+            if (absolute_game_dir) snprintf(sfo, sizeof sfo, "%sPARAM.SFO", game_dir);
+            else snprintf(sfo, sizeof sfo, "%s/%sPARAM.SFO", vfs, game_dir);
             cellGame_init_from_paramsfo(sfo);
         }
     }
