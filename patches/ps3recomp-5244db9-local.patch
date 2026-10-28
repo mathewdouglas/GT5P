@@ -41298,10 +41298,25 @@ index 4f820630..a8af25dd 100644
      fprintf(stderr, "[pm-flow] HUNG-RUN PARTIAL: %u transfers, live pc=0x%05X "
              "LS12A0=%02X%02X LS12C0=%02X%02X LS12F0=%02X%02X%02X%02X LS1300=%02X%02X:",
 diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
-index bcb1df42..0eb721a8 100644
+index bcb1df42..3d16c5c3 100644
 --- a/runtime/syscalls/lv2_register.c
 +++ b/runtime/syscalls/lv2_register.c
-@@ -1606,8 +1606,20 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
+@@ -1452,10 +1452,11 @@ static int64_t sys_spu_thread_write_spu_mb_handler(ppu_context* ctx)
+          * real fix is resident SPU threads, or a printf port that resolves
+          * to its thread; this is the floor until one of those exists. */
+         static int warned = 0;
+-        if (warned++ < 8) {
++        if (warned++ < 8 || (warned & (warned - 1)) == 0) {
+             fprintf(stderr, "[SPU] write_spu_mb: thread 0x%X not found -- "
+-                            "dropping the word and reporting CELL_OK, as the "
+-                            "unimplemented stub did\n", tid);
++                            "dropping the word 0x%X (lr=0x%08X, #%d) and reporting "
++                            "CELL_OK, as the unimplemented stub did\n",
++                    tid, val, (uint32_t)ctx->lr, warned);
+             fflush(stderr);
+         }
+         ctx->gpr[3] = CELL_OK;
+@@ -1606,8 +1607,20 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
      unsigned code = value >> 24;
      /* No lv2 group: SPU code under SPURS. Only its user events route, through
       * the ports cellSpursAttachLv2EventQueue bound; the rest stays as it was. */
@@ -41324,7 +41339,7 @@ index bcb1df42..0eb721a8 100644
          if (code < 128) { static int n; if (n++ < 16)
              fprintf(stderr, "[spu-evt] SPURS user event on unbound port %u dropped (img=%d value=0x%08X)\n",
                      code & 63, spu->image_id, value); }
-@@ -1637,7 +1649,7 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
+@@ -1637,7 +1650,7 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
          unsigned port = code & 63;
          uint32_t queue = 0;
          if (!spu->spu_group_id) {
@@ -41333,7 +41348,7 @@ index bcb1df42..0eb721a8 100644
          } else {
              AcquireSRWLockShared(&s_spu_port_lock);
              spu_group_t* group = spu_find_group(spu->spu_group_id);
-@@ -2269,6 +2281,7 @@ static int64_t sys_process_get_sdk_version_handler(ppu_context* ctx)
+@@ -2269,6 +2282,7 @@ static int64_t sys_process_get_sdk_version_handler(ppu_context* ctx)
   * EINVAL; main memory, the sys_memory window and RSX local memory are
   * reservation-capable; PPU stacks and sys_vm regions are not, and answer
   * EPERM; anything outside those is EINVAL. */
@@ -41341,7 +41356,7 @@ index bcb1df42..0eb721a8 100644
  static int64_t sys_process_is_spu_lock_line_reservation_address(ppu_context* ctx)
  {
      uint32_t addr  = (uint32_t)ctx->gpr[3];
-@@ -2279,7 +2292,8 @@ static int64_t sys_process_is_spu_lock_line_reservation_address(ppu_context* ctx
+@@ -2279,7 +2293,8 @@ static int64_t sys_process_is_spu_lock_line_reservation_address(ppu_context* ctx
          rc = (int64_t)(int32_t)CELL_EINVAL;
      } else if (addr >= VM_MAIN_MEM_BASE && addr < VM_MAIN_MEM_BASE + VM_MAIN_MEM_SIZE) {
          rc = 0;                                   /* main memory */

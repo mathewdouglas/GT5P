@@ -1046,8 +1046,12 @@ int main(int argc, char* argv[])
     ppu_install_thread_trampoline();
     if (!getenv("GT5P_NO_GUEST_CALLER")) g_ps3_guest_caller = gt5p_guest_caller;
     /* Whether the runtime invents a completion event for each SPURS job. This
-     * build's jobs send their own (config/targets.json). */
-    spurs_set_synth_job_done(GT5P_SPURS_SYNTH_DONE);
+     * build's jobs send their own (config/targets.json). GT5's stand-ins
+     * reached its SPU printf queue and sound query queue on every sound pass,
+     * and the music stopped after a second: GT5P_SPURS_SYNTH_DONE=1|0
+     * overrides the build's setting. */
+    { const char* e = getenv("GT5P_SPURS_SYNTH_DONE");
+      spurs_set_synth_job_done(e ? (e[0] != '0') : GT5P_SPURS_SYNTH_DONE); }
     gt5p_spu_register_all();   /* after the ELF load: fingerprints the loaded image */
     gt5p_audio_select_native(); /* before any SPU job or lookup cache can run */
 

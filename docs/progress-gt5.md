@@ -4,6 +4,36 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 17 — Game audio plays: no stand-in job completions (2026-10-28)
+
+**Status.** Menu music and sounds play: port 0 went from 100% to 0% silent
+blocks (`AUDIO_RATE=1`, 30 s on the menu with Right/Left presses). Movie
+audio is unchanged (port 1, 0% silent).
+
+**Cause.** The runtime's job-chain walker sent a stand-in completion event
+(`jc_signal_done`) after every pass of the sound chain `soc-job`
+(`0x40040000`), to every queue attached to SPURS:
+
+- queue 4 (dynamic port 16), which the sound engine reads its module replies
+  from;
+- queue 3 (port 1), the SPU printf service. Its thread (loop at
+  `0x009E04D0`: receive, handler `0x00D49DB8`, then
+  `sys_spu_thread_write_spu_mb(data1, reply)`) took `data1 = 0x40040000` as
+  an SPU thread id. Over 16,000 of those mailbox writes were dropped in 40 s.
+
+With them, the music stream decoded for about one second (175 blocks: the
+AC3 job read `0x4FFA8000` only then) and stopped for good. Phase 16's
+"mixer outputs zeros" was this: the mixer had nothing new to mix.
+
+**Fix.** `spurs_synth_job_done` is now `false` for `BCUS98114-v104`, as for
+GT5P's disc build. Every GT5 sound module job sends its own completion
+(Phase 11). `GT5P_SPURS_SYNTH_DONE=1|0` overrides it at run time
+(`src/main.cpp`); `SPURS_NO_SYNTH_DONE=1` still forces it off. The v02.00
+target (`BCUS98114`) is untested and keeps `true`.
+
+**Also.** The runtime's dropped-mailbox warning now prints the word, the
+caller's `lr` and a count (at powers of two after the first 8).
+
 ## Phase 16 — Game audio silent: narrowed to the sgx mixer's input (2026-10-28)
 
 **Status.** Movie audio plays. The sound engine (sgx) outputs only zeros:

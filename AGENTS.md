@@ -928,9 +928,11 @@ was sized as the window and swallowed the UI texture pool
 `third_party/ffmpeg`), and Phase 15 made the movies play: ps3recomp has
 SPURS Taskset2, and the movie's YUV-to-ARGB task ELF is lifted
 (`lift_spu_jobs.py` lifts task ELFs captured into `analysis/spu/taskdump`).
+Phase 17 made the game's own sound play: the runtime's stand-in SPURS job
+completions are off for GT5 (`spurs_synth_job_done`, `GT5P_SPURS_SYNTH_DONE`).
 Test GT5 with `scripts/test/gt5boot.ps1` (milestone-timed presses, `-Fresh`
 for a first boot, `-Movie` for the opening movie). Read
-[docs/progress-gt5.md](docs/progress-gt5.md) Phase 15 first.
+[docs/progress-gt5.md](docs/progress-gt5.md) Phase 17 first.
 
 ## What is tied to v02.00
 

@@ -72,7 +72,7 @@
     "spu_registry": "src/gen/spu_workloads_bcus98114_v104.c",
     "boot_from": "bdvd",
     "hdd_title": false,
-    "spurs_synth_job_done": true,
+    "spurs_synth_job_done": false,
     "gcm_ctrl_base": "0x03000000",
     "gt5p_allocwatch": false
   }
