@@ -4,6 +4,54 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 21 — The race runs; a faster route there (2026-10-28)
+
+**Status.** Arcade → High Speed Ring → race, at 30 fps on the grid screen
+and 40-60 fps racing. Open: the road is blue/purple and noisy, the kerbs
+are rainbow-coloured and some barriers are noisy (below).
+
+**The race load hung the GPU.** Every run reached the race loading screen
+and then crawled at 1-2 fps for minutes, the bar near full. The first race
+frame drew with `DEVICE_HUNG` (0x887A0006); the backend kept replaying
+against a removed device, 700-950 ms a frame. The debug layer reported
+nothing. DRED (new, `RSX_DRED=1`) put the fault in a `CopyTextureRegion`
+reading a freed resource; logging each copy's source line per list named
+the copy that fills a new offscreen render target from guest memory. That
+frame evicts 17 of the 16 target slots, four resources each, into the
+64-entry deferred-release list; it overflowed and released the rest while
+the open command list still used them. The list now grows
+(`RSX_RT_GRAVE_GROW=0`: the old fixed 64). Same frame, same fault in all
+three runs before; none after.
+
+**New diagnostics (ps3recomp):**
+
+- `RSX_DRED=1`: DRED auto-breadcrumbs and page faults. On a removal the
+  report lists each unfinished command list's ops around the last one the
+  GPU completed, the source line of that copy (copies log their line per
+  list, since this driver kept no marker strings) and the faulting VA.
+  Draws set a marker too (record, fragment program, target).
+- `PAD_FILE_LOG=1`: `[file] <path> at <ms>` on the first open or stat of
+  every guest path, on the milestone clock.
+- `PAD_MILESTONE_FILES` takes `<label>=<path tail>` entries: GT5's PDIPFS
+  base names are two characters, so screens are named by path tail.
+
+**Route (`scripts/test`).** GT5 has no `.gpb` screen scripts, so the route
+pressed every 15 s from MusicDecode. A `PAD_FILE_LOG` run matched each
+screen's first file with window shots: Arcade `9/HV/GE`, track list
+`9/7B/M3`, car list `9/9U/4I`, transmission `5B/PF`, race load `5K/E1`,
+race start `55/04` (difficulty and colour read nothing new). Every step
+after the icon bar is Cross on the default, so the route presses Cross
+every 3 s until the screen wanted:
+
+| `gt5boot.ps1 -Route` | Reaches | After the menu |
+| --- | --- | --- |
+| `carlist` | car list | 19 s (was 52 s) |
+| `grid` | race loading, then the grid screen | 28 s to RaceLoad (was 110 s) |
+| `race` | racing (Start on the grid screen) | 59 s |
+
+The script prints each milestone with its time; `-ShotsFrom` picks where
+shots start (grid: RaceLoad, race: RaceStart).
+
 ## Phase 20 — No more car-list freezes: MFC slots leaked (2026-10-28)
 
 **Status.** Arcade → car list → pick a car → colour → transmission → race

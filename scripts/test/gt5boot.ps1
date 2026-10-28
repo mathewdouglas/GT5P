@@ -6,9 +6,16 @@
 #   install prompts run; -FreshSave also removes the save (GT5 creates it).
 #   -Movie: no presses; shots start at installed00.dat instead of the menu,
 #   so they cover the logos and the opening movie of an installed boot.
+#   -Route carlist|grid|race: drive on to the car list ($GT5CarListHold), the
+#   race's grid screen ($GT5GridHold) or into the race ($GT5RaceHold); a
+#   PAD_HOLD=... argument still overrides.
+#   -ShotsFrom <milestone>: start the shots there instead (grid: RaceLoad,
+#   race: RaceStart).
+#   Each screen milestone reached is printed with its time after the menu.
 #   -> scratch\pv\<t>.out/.err, <t>.menu<N>.png
 [CmdletBinding(PositionalBinding = $false)]
 param([string]$Tag = "gt5", [int]$Settle = 60, [int]$Gap = 10, [switch]$Fresh, [switch]$FreshSave, [switch]$Movie,
+      [ValidateSet("menu", "carlist", "grid", "race")][string]$Route = "menu", [string]$ShotsFrom = "",
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot\milestone.ps1"
 Add-Type -AssemblyName System.Drawing
@@ -22,7 +29,10 @@ public class WinShot { [DllImport("user32.dll")] public static extern bool Print
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $dir = "$root\scratch\pv"; New-Item -ItemType Directory -Force $dir | Out-Null
 $set = @{ GT5P_NO_SETTINGS = "1"; FS_HIDE = "grim/file/contents"; PS3_VERBOSE = "0"; GT5P_PROFVIEW = "0";
-          PAD_MILESTONE_FILES = "installed00.dat"; PAD_HOLD = $GT5BootHold }
+          PAD_MILESTONE_FILES = $GT5MilestoneFiles; PAD_HOLD = $GT5BootHold }
+if ($Route -eq "carlist") { $set.PAD_HOLD = $GT5CarListHold }
+if ($Route -eq "grid") { $set.PAD_HOLD = $GT5GridHold; if (-not $ShotsFrom) { $ShotsFrom = "RaceLoad" } }
+if ($Route -eq "race") { $set.PAD_HOLD = $GT5RaceHold; if (-not $ShotsFrom) { $ShotsFrom = "RaceStart" } }
 if ($Movie) { $set.Remove("PAD_HOLD") }
 foreach ($v in $Vars) { if (-not $v) { continue }; $k, $val = "$v" -split "=", 2; $set[$k] = $val }
 function Stop-GT5 { Get-Process gt5 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
@@ -41,8 +51,9 @@ $limit = if ($Fresh -or $FreshSave) { 600 } else { 240 }
 $ms = if ($Movie) { "installed00.dat" } else { "MusicDecode" }
 $tm = Wait-Milestone $p $tl $ms $limit
 if ($tm -lt 0) { "$ms not reached (log: $dir\$Tag.out)" }
+elseif ($ShotsFrom -and ($t2 = Wait-Milestone $p $tl $ShotsFrom $limit) -lt 0) { "$ShotsFrom not reached (log: $dir\$Tag.out)" }
 else {
-    "$ms at $tm s"
+    "$ms at $tm s"; if ($ShotsFrom) { "$ShotsFrom $t2 s after that" }
     $sw = [Diagnostics.Stopwatch]::StartNew(); $i = 0
     while ($sw.Elapsed.TotalSeconds -lt $Settle) {
         Start-Sleep -Seconds $Gap; $i++
@@ -56,6 +67,13 @@ else {
     }
 }
 } finally { Stop-GT5 }
+# Screen milestones, in seconds after the menu (MusicDecode).
+$mt = @{}; Select-String -Path "$dir\$Tag.out" -Pattern '^\[milestone\] (\S+) at (\d+) ms' |
+    ForEach-Object { $mt[$_.Matches[0].Groups[1].Value] = [int]$_.Matches[0].Groups[2].Value }
+if ($mt.MusicDecode) {
+    ($mt.GetEnumerator() | Where-Object { $_.Value -gt $mt.MusicDecode } | Sort-Object Value |
+        ForEach-Object { "{0} +{1:N1}" -f $_.Key, (($_.Value - $mt.MusicDecode) / 1000) }) -join ", "
+}
 # Frames per 5 s from the present thread, oldest first.
 $f = Select-String -Path "$dir\$Tag.err" -Pattern 'present-thread\] 5 s: (\d+) frames' |
      ForEach-Object { $_.Matches[0].Groups[1].Value }

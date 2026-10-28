@@ -141,10 +141,34 @@ function Get-GT5Boot([int]$From = 8000, [int]$To = 300000, [int]$Every = 5000) {
 }
 $GT5BootHold = Get-GT5Boot
 
-# Arcade > Single Race > Beginner > High Speed Ring > car list (Phase 18).
-# The menu's icon bar shows for about 8 s after MusicDecode, then hides during
-# the idle camera (a press then only brings it back), so Right goes at +5 s.
-# Then Cross four times: Arcade, Single Race, Beginner, the first track.
-# Screen loads vary by up to 8 s: presses 15 s apart. The list is up by +65 s.
-$GT5CarListHold = "$GT5BootHold,@MusicDecode+5000-5100:RIGHT,@MusicDecode+7000-7200:CROSS," +
-    "@MusicDecode+22000-22200:CROSS,@MusicDecode+37000-37200:CROSS,@MusicDecode+52000-52200:CROSS"
+# Screen milestones for GT5 (PAD_FILE_LOG=1 run, 2026-10-28): the first file
+# each screen reads, as "<label>=<PDIPFS path tail>" (cellPad matches the tail
+# of the full path, since PDIPFS base names are two characters). The
+# difficulty and colour screens read no new file. gt5boot.ps1 always sets these.
+$GT5MilestoneFiles = "installed00.dat,Arcade=9/HV/GE,TrackList=9/7B/M3,CarList=9/9U/4I," +
+    "Transmission=5B/PF,RaceLoad=5K/E1,RaceStart=55/04"
+
+# Arcade > Single Race > Beginner > High Speed Ring > car list > colour >
+# transmission > race. The menu's icon bar shows for about 8 s after
+# MusicDecode, then hides during the idle camera (a press then only brings it
+# back), so Right goes at +5 s and the first Cross at +7 s.
+# Every step after the icon bar is Cross
+# on the default choice (Single Race, Beginner, High Speed Ring, the first
+# car, its first colour, AT), so Cross every 3 s from +7 s until the race load
+# starts walks the screens as fast as they take input: about 40 s from the
+# menu, against 110 s for the old fixed 15 s steps. A Cross that falls in a
+# screen's fade-in is ignored and the next one takes it.
+# Get-GT5Route <milestone> stops pressing once that screen has been reached.
+function Get-GT5Route([string]$Stop, [int]$Every = 3000, [int]$Until = 150000) {
+    $s = @("$GT5BootHold", "@MusicDecode+5000-5100:RIGHT")
+    for ($t = 7000; $t -le $Until; $t += $Every) { $s += "@MusicDecode+$t-$($t+200)!$($Stop):CROSS" }
+    $s -join ","
+}
+$GT5CarListHold = Get-GT5Route "CarList"
+$GT5GridHold = Get-GT5Route "RaceLoad"
+# On into the race: the grid screen (track preview and starting grid) comes
+# up 20-25 s after RaceLoad with Start selected, so Cross every 3 s from
+# +15 s until the race's first files are read (RaceStart, about 2.5 s after
+# the press that takes). The car then idles: nothing holds the throttle.
+$GT5RaceHold = "$GT5GridHold," + ((0..20 | ForEach-Object { $t = 15000 + 3000 * $_
+    "@RaceLoad+$t-$($t+200)!RaceStart:CROSS" }) -join ",")
