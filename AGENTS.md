@@ -932,11 +932,12 @@ Phase 17 made the game's own sound play: the runtime's stand-in SPURS job
 completions are off for GT5 (`spurs_synth_job_done`, `GT5P_SPURS_SYNTH_DONE`). Phase 18 fixed the Arcade
 car-list crash (job bodies linked at 0x4000, `lift_spu_jobs.py` `link_base`;
 span-aware drain lookup). Phase 19 painted the cars (half-float border cube
-textures) and cut car-list freezes (`spu_sn_defer`); picking a car still
-freezes. `$GT5CarListHold` in `milestone.ps1` drives to the car list.
+textures) and cut car-list freezes (`spu_sn_defer`). Phase 20 fixed the rest
+(MFC slots leaked by one-shot SPU jobs): a race now loads. `$GT5CarListHold`
+in `milestone.ps1` drives to the car list.
 Test GT5 with `scripts/test/gt5boot.ps1` (milestone-timed presses, `-Fresh`
 for a first boot, `-Movie` for the opening movie). Read
-[docs/progress-gt5.md](docs/progress-gt5.md) Phase 19 first.
+[docs/progress-gt5.md](docs/progress-gt5.md) Phase 20 first.
 
 ## What is tied to v02.00
 

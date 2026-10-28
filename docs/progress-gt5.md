@@ -4,6 +4,43 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 20 — No more car-list freezes: MFC slots leaked (2026-10-28)
+
+**Status.** Arcade → car list → pick a car → colour → transmission → race
+loading, with no freeze in 8 runs (4 idling on the car list, 4 picking a
+car). The user watched one load into the High Speed Ring race. The car list
+runs at about 45 fps (225 frames per 5 s, from about 40).
+
+**Cause.** Every SPU context needs an MFC engine (DMA queue and tag state),
+held in a 32-slot table (`spu_channels.c`). Only the lifted SPU thread path
+released its slot. One-shot job contexts (`spu_run_lifted_job_abi`,
+`spurs_job.c`) are stack locals, often on new threads, so each run took a
+fresh slot. GT5's movie converter task runs every frame, so the table filled
+on every boot (`more than 32 contexts hold an MFC engine`). Every context
+after that shared one fallback engine: a list one of them parked on a
+stall-and-notify left its tag busy for all the others, and a render lane
+then waited for ever on that tag (job manager load state 3, helper
+`0x22C0`, mask 2). That was the "idle loop" freeze shape of Phase 19.
+
+**Fix (ps3recomp):**
+
+- Job contexts release their slot when they end
+  (`spu_mfc_release_job`; `SPU_MFC_RELEASE_JOBS=0`: old).
+- The table holds 128 (`SPU_MFC_SLOTS=<n>` caps it), and `mfc_for` keeps a
+  per-thread cache in front of the scan, invalidated by a generation count
+  on every release.
+
+The Phase 19 stall-notify deferral (`spu_sn_defer`) stays on; untested
+without it now.
+
+**Test harness:** `PAD_HOLD` held 64 timed presses, and `$GT5BootHold` alone
+is 59, so presses added after the car-list route were dropped silently: the
+earlier "pick a car" runs never picked one. It now holds 256 and says so
+when more are given.
+
+**Next:** the loading dip (about 2 s of 65-80 ms frames entering the car
+list), and the race.
+
 ## Phase 19 — Cars painted; fewer car-list freezes (2026-10-28)
 
 **Black cars: fixed.** The cars drew glossy black: reflections, no paint.

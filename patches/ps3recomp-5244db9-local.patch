@@ -5197,7 +5197,7 @@ index 49e13905..3f759a9a 100644
  /* Internal: feed a key event from the host input system */
  void cellKb_keyEvent(u32 port, u16 keycode, int pressed);
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index f2b4c119..3f6a8ffc 100644
+index f2b4c119..90cf7b48 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
 @@ -52,6 +52,7 @@
@@ -5232,7 +5232,7 @@ index f2b4c119..3f6a8ffc 100644
  static int           s_pad_initialized = 0;
  static u32           s_max_connect = 0;
  static u32           s_port_setting[CELL_PAD_MAX_PORT_NUM];
-@@ -140,13 +158,275 @@ static int pad_host_window_focused(void)
+@@ -140,13 +158,276 @@ static int pad_host_window_focused(void)
      return pid == GetCurrentProcessId();
  }
  
@@ -5368,7 +5368,7 @@ index f2b4c119..3f6a8ffc 100644
 +static int pad_script_buttons(void)
 +{
 +    static int parsed = 0, n = 0;
-+    static struct { u32 from, to; u16 btn; char anchor[48], unless[48]; ULONGLONG at; } ev[64];
++    static struct { u32 from, to; u16 btn; char anchor[48], unless[48]; ULONGLONG at; } ev[256];   /* 64 dropped GT5's route presses after its 59 boot presses */
 +    static ULONGLONG t0 = 0;
 +    if (!parsed) {
 +        parsed = 1;
@@ -5380,7 +5380,7 @@ index f2b4c119..3f6a8ffc 100644
 +            { "SQUARE", CELL_PAD_CTRL_SQUARE }, { "TRIANGLE", CELL_PAD_CTRL_TRIANGLE },
 +            { "START", CELL_PAD_CTRL_START }, { "SELECT", CELL_PAD_CTRL_SELECT },
 +        };
-+        while (e && *e && n < 64) {
++        while (e && *e && n < 256) {
 +            unsigned a = 0, b = 0; char key[16] = {0}, anchor[48] = {0}, unless[48] = {0};
 +            int ok = 0;
 +            if (*e == '@') {
@@ -5397,6 +5397,7 @@ index f2b4c119..3f6a8ffc 100644
 +            e = strchr(e, ',');
 +            if (e) e++;
 +        }
++        if (e && *e) fprintf(stderr, "[cellPad] PAD_HOLD: more than 256 timed presses; the rest are ignored%c", 10);
 +        if (n) { t0 = GetTickCount64(); s_pad_t0 = t0;
 +                 printf("[cellPad] PAD_HOLD: %d timed presses%c", n, 10); fflush(stdout); }
 +    }
@@ -5511,7 +5512,7 @@ index f2b4c119..3f6a8ffc 100644
      if (!pad_host_window_focused()) {
          /* Release everything on focus loss, or a key held while alt-tabbing
           * would stay down forever. */
-@@ -157,19 +437,7 @@ static void pad_poll_keyboard(void)
+@@ -157,19 +438,7 @@ static void pad_poll_keyboard(void)
          return;
      }
  
@@ -5532,7 +5533,7 @@ index f2b4c119..3f6a8ffc 100644
  
      hs->buttons   = btns;
      hs->connected = 1;
-@@ -390,6 +658,294 @@ static void pad_shutdown_backend(void)
+@@ -390,6 +659,294 @@ static void pad_shutdown_backend(void)
  
  #endif /* PAD_BACKEND_SDL2 */
  
@@ -5827,7 +5828,7 @@ index f2b4c119..3f6a8ffc 100644
  /* ---------------------------------------------------------------------------
   * Poll dispatcher
   * -----------------------------------------------------------------------*/
-@@ -407,7 +963,6 @@ static void pad_shutdown_backend(void)
+@@ -407,7 +964,6 @@ static void pad_shutdown_backend(void)
   * 4 ms is 250 Hz, well above the 60 Hz a title can actually observe (and above
   * a real DualShock 3's own report rate), so no game can tell the difference,
   * including one sampling for button-press edges. */
@@ -5835,7 +5836,7 @@ index f2b4c119..3f6a8ffc 100644
  
  static unsigned long long pad_now_ms(void)
  {
-@@ -421,13 +976,44 @@ static unsigned long long pad_now_ms(void)
+@@ -421,13 +977,44 @@ static unsigned long long pad_now_ms(void)
  #endif
  }
  
@@ -5883,7 +5884,7 @@ index f2b4c119..3f6a8ffc 100644
      s_last_ms = now;
      /* A real pad streams reports at roughly this rate whether or not anything
       * changed, and libpad buffers them; a fresh sweep is a fresh report for
-@@ -435,12 +1021,77 @@ static void pad_poll_backend(void)
+@@ -435,12 +1022,77 @@ static void pad_poll_backend(void)
      for (int _i = 0; _i < PAD_MAX_HOST_PORTS; _i++) s_data_fresh[_i] = 1;
  
  #if PAD_BACKEND_XINPUT
@@ -32570,7 +32571,7 @@ index 9cc36701..5ca4416a 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d02..d96645bc 100644
+index 0b235d02..4215de7d 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,70 +1,71 @@
@@ -32709,7 +32710,7 @@ index 0b235d02..d96645bc 100644
  /* Called after an SPU atomic commits a 128-byte line, with the lock-line lock
   * released. cellSpurs sets it so a PPU blocked in cellSpursEventFlagWait wakes
   * when a task sets the flag, instead of on its next 2 ms poll. */
-@@ -105,2667 +106,2924 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -105,2667 +106,2956 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -33569,7 +33570,21 @@ index 0b235d02..d96645bc 100644
 + * slot for the life of the title. GT5 Prologue has five job-manager workloads
 + * plus its job and sound contexts, went past 8 on every boot, and the ones
 + * left over shared one engine's tag state. */
-+#define SPU_MAX_CONTEXTS 32
++/* 32 was not enough either: Gran Turismo 5 runs six job-manager workloads of
++ * four or five lanes each, plus sound, task and job contexts, and overflowed
++ * on every boot. Contexts past the table shared the fallback engine, so a list
++ * one of them parked on a stall-and-notify left that tag busy for all the
++ * others -- a render lane then waited for ever on a tag it never used (the
++ * car-list freezes, GT5 Phase 20). SPU_MFC_SLOTS=<n> (up to 128) caps it,
++ * =32 as before. */
++#define SPU_MAX_CONTEXTS 128
++static int spu_mfc_slots(void)
++{
++    static int n = -1;
++    if (n < 0) { const char* e = getenv("SPU_MFC_SLOTS"); n = e ? atoi(e) : SPU_MAX_CONTEXTS;
++                 if (n < 1 || n > SPU_MAX_CONTEXTS) n = SPU_MAX_CONTEXTS; }
++    return n;
++}
 +
 +typedef struct {
 +    spu_context* volatile ctx;
@@ -33578,18 +33593,28 @@ index 0b235d02..d96645bc 100644
 +
 +static spu_mfc_slot s_mfc_slots[SPU_MAX_CONTEXTS];
 +static SRWLOCK      s_mfc_claim_lock = SRWLOCK_INIT;
++/* Bumped on every release: a thread's cached (ctx -> engine) pair is stale
++ * once any slot changes hands, since a context address can be reused. */
++static volatile long s_mfc_gen = 1;
++static SPU_TLS spu_context* t_mfc_ctx;
++static SPU_TLS mfc_engine*  t_mfc_eng;
++static SPU_TLS long         t_mfc_gen;
 +
 +static mfc_engine* mfc_for(spu_context* ctx)
 +{
-+    for (int i = 0; i < SPU_MAX_CONTEXTS; i++)
-+        if (s_mfc_slots[i].ctx == ctx)
++    if (t_mfc_ctx == ctx && t_mfc_gen == s_mfc_gen) return t_mfc_eng;
++    const int nslots = spu_mfc_slots();
++    for (int i = 0; i < nslots; i++)
++        if (s_mfc_slots[i].ctx == ctx) {
++            t_mfc_ctx = ctx; t_mfc_eng = &s_mfc_slots[i].mfc; t_mfc_gen = s_mfc_gen;
 +            return &s_mfc_slots[i].mfc;
++        }
 +
 +    /* No slot yet: take one. The engine is initialized before the slot is
 +     * published, so it is never visible to anyone in a half-reset state. */
 +    mfc_engine* e = NULL;
 +    AcquireSRWLockExclusive(&s_mfc_claim_lock);
-+    for (int i = 0; i < SPU_MAX_CONTEXTS && !e; i++) {
++    for (int i = 0; i < nslots && !e; i++) {
 +        if (s_mfc_slots[i].ctx != NULL) continue;
 +        mfc_engine_init(&s_mfc_slots[i].mfc);
 +        s_mfc_slots[i].ctx = ctx;
@@ -33633,9 +33658,17 @@ index 0b235d02..d96645bc 100644
 +    for (int i = 0; i < SPU_MAX_CONTEXTS; i++) {
 +        if (s_mfc_slots[i].ctx != ctx) continue;
 +        s_mfc_slots[i].ctx = NULL;
++        _InterlockedIncrement(&s_mfc_gen);
 +        break;
 +    }
 +    ReleaseSRWLockExclusive(&s_mfc_claim_lock);
++}
++
++void spu_mfc_release_job(spu_context* ctx)
++{
++    static int on = -1;
++    if (on < 0) { const char* e = getenv("SPU_MFC_RELEASE_JOBS"); on = !(e && *e == '0'); }
++    if (on) spu_mfc_release(ctx);
 +}
 +
 +/* ===========================================================================
@@ -41004,6 +41037,41 @@ index 0266d469..f8205296 100644
  
  /* The single dispatch point every computed branch routes through. If `target`
   * is a registered lifted entry, runs it; otherwise interprets from `target`.
+diff --git a/runtime/spu/spu_lifted_job.h b/runtime/spu/spu_lifted_job.h
+index 58c9082e..b13daeea 100644
+--- a/runtime/spu/spu_lifted_job.h
++++ b/runtime/spu/spu_lifted_job.h
+@@ -20,6 +20,14 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
++/* Give a finished one-shot context's MFC slot back (spu_channels.c). These
++ * contexts are stack locals on short-lived threads, so each run took a
++ * fresh slot and none came back: GT5's per-frame movie task filled the table
++ * and everything after shared one engine (GT5 Phase 20).
++ * SPU_MFC_RELEASE_JOBS=0 keeps them, as before. */
++void spu_mfc_release_job(struct spu_context*);
++
++
+ typedef void (*spu_lifted_entry_fn)(spu_context*);
+ /* Guest RAM base, for decoding a raw SPU thread's argument block. */
+ extern uint8_t* vm_base;
+@@ -105,6 +113,7 @@ static inline int32_t spu_run_interp_job(uint8_t* local_store, uint32_t entry_pc
+      * first, or the coherency walk dereferences this stack frame after it is
+      * gone. See spu_coh_unregister. */
+     spu_coh_unregister(&ctx);
++    spu_mfc_release_job(&ctx);
+     return (int32_t)ctx.stop_code;
+ }
+ 
+@@ -333,6 +342,7 @@ static inline int32_t spu_run_lifted_job_abi(spu_lifted_entry_fn entry,
+      * in the reserver set it is walked by the next PPU store to that line.
+      * GH3's Havok task returning is what first hit it. */
+     spu_coh_unregister(&ctx);
++    spu_mfc_release_job(&ctx);
+     if (local_store) memcpy(local_store, ctx.ls, SPU_LS_SIZE);  /* LS back out */
+     return 0;
+ }
 diff --git a/runtime/spu/spu_raw.c b/runtime/spu/spu_raw.c
 index f6dc8bef..f3a4e344 100644
 --- a/runtime/spu/spu_raw.c
@@ -41095,19 +41163,20 @@ index 2a8dca10..8ef1cbd2 100644
       * descriptor at eaContext+0x10 = {0x40-marker handle, workload EAs}; the
       * async SPU thread reading it later would race the PPU stack. word1 is
 diff --git a/runtime/spu/spurs_job.c b/runtime/spu/spurs_job.c
-index 9e588334..6df80e38 100644
+index 9e588334..acc8c895 100644
 --- a/runtime/spu/spurs_job.c
 +++ b/runtime/spu/spurs_job.c
-@@ -42,6 +42,8 @@
+@@ -42,6 +42,9 @@
  #include <stdio.h>
  #include <stdlib.h>
  #include <string.h>
 +#include <stddef.h>
 +#include <malloc.h>
++void spu_mfc_release_job(struct spu_context*);   /* spu_channels.c */
  
  extern uint8_t* vm_base;
  extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
-@@ -146,6 +148,16 @@ SPURS_JOB_TLS uint32_t g_spurs_job_mbox, g_spurs_job_mbox_intr;
+@@ -146,6 +149,16 @@ SPURS_JOB_TLS uint32_t g_spurs_job_mbox, g_spurs_job_mbox_intr;
  SPURS_JOB_TLS uint32_t g_spurs_job_cmd;
  SPURS_JOB_TLS int g_spurs_job_mbox_valid;
  
@@ -41124,7 +41193,7 @@ index 9e588334..6df80e38 100644
  int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
                        uint32_t job_ea, uint32_t job_desc_size)
  {
-@@ -170,8 +182,40 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -170,8 +183,40 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
          return -1;
      }
  
@@ -41167,7 +41236,7 @@ index 9e588334..6df80e38 100644
  
      /* ---- binary at LS 0 (PIC, so delta 0 keeps the lifted addresses) ---- */
      memcpy(ls, vm_base + ea_bin, size_bin);
-@@ -268,7 +312,8 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -268,7 +313,8 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
       * its DMA and atomic EAs from these words, so when a job spins on a
       * lock-line address that is not backed, this is what to read first. */
      { static int _d = 0;
@@ -41177,7 +41246,7 @@ index 9e588334..6df80e38 100644
            fprintf(stderr, "[spurs-job] desc @0x%08X (%u bytes):", job_ea, dsz);
            for (uint32_t o = 0; o < dsz && o < 128; o += 4) {
                if ((o & 31) == 0) fprintf(stderr, "\n    +%02X:", o);
-@@ -298,7 +343,8 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -298,7 +344,8 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
       * The header's input-DMA-list/io fields are legitimately zero for it. Dump
       * the user data + that command block so the bail path is attributable. */
      uint32_t dump_cmd = 0;
@@ -41187,7 +41256,7 @@ index 9e588334..6df80e38 100644
          uint64_t ud  = g64(job_ea + JH_SIZE);        /* desc+0x30 */
          uint32_t cmd = (uint32_t)ud;                 /* low word = EA */
          fprintf(stderr, "[spurs-job] job 0x%08X userdata: %016llX %016llX %016llX %016llX\n",
-@@ -333,10 +379,8 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -333,10 +380,8 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
      }
  
      /* ---- enter the job -------------------------------------------------- */
@@ -41199,7 +41268,7 @@ index 9e588334..6df80e38 100644
      ctx.gpr[1]._u32[0] = (stack_top - 16u) & ~15u;   /* SPU stack grows down */
      /* Link register: where the job returns when it is done. The job manager
       * would pass an address inside itself; 0 makes the job re-enter its own
-@@ -356,7 +400,22 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -356,7 +401,22 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
       * and trips its parameter guard, which HALTS -- ending the run. So the
       * HALT-ASSERT heqi 0x1650 seen once per jm2 job is NORMAL COMPLETION
       * noise, not a failure: the job's real work finished before the jump. */
@@ -41223,7 +41292,7 @@ index 9e588334..6df80e38 100644
  
      /* Capture the job's outbound mailbox. These are LS POINTERS TO STRINGS for
       * the SPU printf service, NOT query results -- value 0x83C0 from the sound
-@@ -364,14 +423,19 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -364,14 +424,19 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
       * comment here claimed they carried the title's bus counts; they do not,
       * and feeding them into the completion event turned 0x40000000 into a 1 GB
       * allocation request. Kept because the printf service needs them. */
@@ -41246,7 +41315,7 @@ index 9e588334..6df80e38 100644
      { uint32_t _cb = g32(job_ea + 0x4C);
        g_spurs_job_cmd = _cb ? (g32(_cb) >> 16) : 0; }
      { static int s_t = -1; if (s_t < 0) s_t = getenv("SPURS_JOB_MBOX") ? 1 : 0;
-@@ -380,7 +444,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -380,7 +445,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
            fprintf(stderr, "[spurs-job] job 0x%08X posted mbox=0x%08X intr=0x%08X\n",
                    job_ea, g_spurs_job_mbox, g_spurs_job_mbox_intr); }
  
@@ -41255,13 +41324,14 @@ index 9e588334..6df80e38 100644
          fprintf(stderr, "[spurs-job] job 0x%08X exit: status=0x%X stop=0x%X pc=0x%05X\n",
                  job_ea, ctx.status, ctx.stop_code, ctx.pc);
          /* Post-run view of the same command block: the game polls result/status
-@@ -397,7 +461,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -397,7 +462,8 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
          fflush(stderr);
      }
  
 -    spu_coh_unregister(&ctx);   /* stack local: out of the reserver set */
 -    free(ls);
 +    spu_coh_unregister(&ctx);   /* out of the reserver set until the next job */
++    spu_mfc_release_job(&ctx);
 +#undef ctx
      return 0;
  }
