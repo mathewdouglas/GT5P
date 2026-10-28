@@ -128,6 +128,7 @@ extern ps3_guest_caller_fn g_ps3_guest_caller;            /* libs/system/cellSys
 uint64_t ppu_guest_call(uint32_t opd, uint64_t, uint64_t, uint64_t, uint64_t,
                         uint64_t, uint64_t, uint64_t, uint64_t);   /* ppu_loader.cpp */
 void spurs_set_synth_job_done(int on);                             /* cellSpurs.c */
+extern "C" void spu_sn_defer_set_default(int ticks);                 /* spu_drain.c */
 }
 static void gt5p_guest_caller(uint32_t opd, uint64_t a0, uint64_t a1, uint64_t a2,
                               uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6,
@@ -1079,6 +1080,9 @@ int main(int argc, char* argv[])
      * overrides the build's setting. */
     { const char* e = getenv("GT5P_SPURS_SYNTH_DONE");
       spurs_set_synth_job_done(e ? (e[0] != '0') : GT5P_SPURS_SYNTH_DONE); }
+    /* Ticks a DMA-list stall-and-notify interrupt is held off
+     * (config/targets.json spu_sn_defer; SPU_SN_DEFER=<n> overrides). */
+    spu_sn_defer_set_default(GT5P_SPU_SN_DEFER);
     gt5p_spu_register_all();   /* after the ELF load: fingerprints the loaded image */
     gt5p_audio_select_native(); /* before any SPU job or lookup cache can run */
 

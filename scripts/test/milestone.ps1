@@ -140,3 +140,11 @@ function Get-GT5Boot([int]$From = 8000, [int]$To = 300000, [int]$Every = 5000) {
     $s -join ","
 }
 $GT5BootHold = Get-GT5Boot
+
+# Arcade > Single Race > Beginner > High Speed Ring > car list (Phase 18).
+# The menu's icon bar shows for about 8 s after MusicDecode, then hides during
+# the idle camera (a press then only brings it back), so Right goes at +5 s.
+# Then Cross four times: Arcade, Single Race, Beginner, the first track.
+# Screen loads vary by up to 8 s: presses 15 s apart. The list is up by +65 s.
+$GT5CarListHold = "$GT5BootHold,@MusicDecode+5000-5100:RIGHT,@MusicDecode+7000-7200:CROSS," +
+    "@MusicDecode+22000-22200:CROSS,@MusicDecode+37000-37200:CROSS,@MusicDecode+52000-52200:CROSS"

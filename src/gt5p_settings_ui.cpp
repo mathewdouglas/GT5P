@@ -1705,6 +1705,9 @@ DWORD WINAPI ui_thread(LPVOID)
 
 }  // namespace
 
+/* For the stall dump (GT5P_STALL_MEMSNAP=1, gt5p_present.cpp). */
+extern "C" void gt5p_memsnap_write(void) { memsnap_write(); }
+
 /* Start the page unless GT5P_SETTINGS_UI=0. Needs a window, so not headless. */
 extern "C" void gt5p_start_settings_ui(void)
 {

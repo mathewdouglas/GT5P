@@ -73,6 +73,7 @@
     "boot_from": "bdvd",
     "hdd_title": false,
     "spurs_synth_job_done": false,
+    "spu_sn_defer": 4,
     "gcm_ctrl_base": "0x03000000",
     "gt5p_allocwatch": false
   }

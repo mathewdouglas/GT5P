@@ -4,6 +4,56 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 19 — Cars painted; fewer car-list freezes (2026-10-28)
+
+**Black cars: fixed.** The cars drew glossy black: reflections, no paint.
+
+- The paint program (`fp 0x05D90601`) takes diffuse light from unit 11, an
+  8x8 half-float cube (`W16Z16Y16X16`, `0x9A`). The car's cube is built by
+  job body `0x01769000` from lighting coefficients and PUT to `0x4FA46000`
+  (12288 bytes). The background's cube is a static asset at `0x05C00680`.
+- The backend never uploaded `0x9A` textures from memory: only 8-bit and
+  DXT formats were uploaded, and other units got a null view, which samples
+  0. Now uploaded as `R16G16B16A16_FLOAT` (`RSX_TEX_HALF_UPLOAD=0`: old).
+- Both cubes are **border textures** (`SET_TEXTURE_FORMAT` bit 3 clear). Each
+  face is a 16x16 swizzled grid holding the 8x8 image centred, with a
+  one-texel border (rows and columns 3 and 12). The upload copies the image
+  out of each face's grid (`RSX_TEX_BORDER=0`: old reading). Running the job
+  body on the interpreter (`SPU_INTERP_OVL=40`, new) gives the same layout,
+  so this is the game's format, not a lifting fault.
+- The Fiat now draws painted (grey). Its thumbnail is cream, so the tint may
+  still be off; unchecked.
+
+**Car-list freezes.** Measured with `$GT5CarListHold` (new in
+`milestone.ps1`: Right at +5 s, then Cross at +7, +22, +37, +52 s; the
+Arcade screen has a Single Race step before the level picker).
+
+- **FIFO watchdog.** `stuck-get` dropped an SPU list parked at its write
+  head after 8 passes. `gcm_io_same_ring` counts every GT5 SPU list as the
+  PPU's ring (Phase 12), so the park was never treated as a wait, and the
+  lanes then waited for ever on labels in the dropped part. Now it uses the
+  park rule's put window (`GCM_STUCK_PUTWIN=0`: old).
+- **Stall-and-notify race.** The runtime runs DMA lists inline, so the
+  list-stall interrupt can reach the job manager before it has set its load
+  state. The notify is then consumed and the job ring idles for good (render
+  thread `gFKsE` waits at `0x00D1AFC8` for workload 0's job count, two
+  short; the lane spins in the manager's idle loop at `0x2C18`-`0x2CE4`).
+  The interrupt is now held off 4 drain ticks for GT5 (`spu_sn_defer` in
+  `config/targets.json`; `SPU_SN_DEFER=<n>` overrides; the slot is now per
+  host thread). Car list reached: 0 freezes in 4 runs, against 4 in about 13
+  before.
+- **Still open: picking a car** (Cross on the list) freezes in 3 of 4 runs,
+  in two shapes: the idle-loop one above, and workload 6's lanes polling the
+  word the FIFO is parked on while one of its lanes is pruned. Lane pruning
+  off (`SPURS_LANE_PRUNE=0`) and a longer defer (16) did not help (3 of 4).
+- Measuring needs care: a freeze is intermittent, and two runs that never
+  started (empty logs) looked like passes.
+
+**Diagnostics added:** `GT5P_STALL_MEMSNAP=1` (a guest memory snapshot with
+the stall dump), lane lines in the stall dump show the list-stall mask and
+LS `0x12A0`, `RSX_TEX_SIZE_OVR=<hex offset>:<w>x<h>` (bind a texture at
+another size), `CUBEDBG=1` prints raw cube formats.
+
 ## Phase 18 — Arcade car list: crash fixed, car models load (2026-10-28)
 
 **Status.** Arcade → Single Race → Beginner → High Speed Ring → car list no

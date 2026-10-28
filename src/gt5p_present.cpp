@@ -618,6 +618,7 @@ extern "C" void gt5p_debug_snapshot(FILE* out)
     __try { rsx_d3d12_debug_dump_to(out); }
     __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Renderer snapshot unavailable\n"); }
 }
+extern "C" void gt5p_memsnap_write(void);   /* gt5p_settings_ui.cpp */
 static void stall_dump_check(unsigned presents_total)
 {
     static int on = -1;
@@ -665,6 +666,10 @@ static void stall_dump_check(unsigned presents_total)
     spurs_pm_debug_dump();
     cellGcm_debug_dump();
     if (getenv("PPU_WWATCH_TAIL")) ppu_ww_dump_tail();
+    /* GT5P_STALL_MEMSNAP=1: also snapshot guest memory (scratch/memsnap),
+     * to read the job lists and FIFO the freeze is waiting on. */
+    { static int snaps = 0;
+      if (getenv("GT5P_STALL_MEMSNAP") && snaps++ < 1) gt5p_memsnap_write(); }
     fflush(stderr);
     if (saved >= 0) { _dup2(saved, 2); _close(saved); }
     if (fd >= 0) {
