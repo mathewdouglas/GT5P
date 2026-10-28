@@ -52,6 +52,35 @@ every 3 s until the screen wanted:
 The script prints each milestone with its time; `-ShotsFrom` picks where
 shots start (grid: RaceLoad, race: RaceStart).
 
+**The purple road (open).** Measured so far:
+
+- The road is fragment program `0x09B96581` (found by painting candidate
+  programs red with `FP_SHOW`/`FP_TEX_FP`; the barriers are `0x0A779301`,
+  the stands `0x0A777E01`).
+- Its shader blends the sample of unit 0 into the colour by that sample's
+  alpha (a lerp over the asphalt, unit 2). The game binds a 512x512 DXT5
+  normal map (embossed lettering, alpha noise) to unit 0 at `0x0B3E6480`;
+  that is the lilac colour and the noise. The bytes are stable (identical
+  dumps 3000 binds apart) and decode cleanly as DXT5, so the binding and the
+  data agree; the open question is why the program treats that unit as a
+  colour layer. Earlier in the boot the same address was bound as a
+  512x1024 DXT1.
+- Not it: shader cache (cold cache also purple), shader pack and recipes,
+  the Phase 19 border/half-float upload switches, the SRV cache, texture
+  unit decoding (4-bit field), default components of short vertex arrays
+  (tried (0,0,0,1): no change, reverted), the vertex colour (tc0 measured
+  (1,1,1,0.75)) and the light vector (col0 measured, plausible).
+- One run drew the road correctly; a repeat of the same settings did not:
+  the fault is timing-dependent.
+- Tools for this: `FP_IDCOLOR=4` (ID colours for the `FP_TEX_FP` list
+  only; the scene's tone mapping blows flat colours to white, so threshold
+  grids work better: `FP_SHOW` with `(value > column threshold) ? 1 : 0`),
+  `RSX_CAP_VPC_FP=<fp>` (vertex constants of that program's draws; the
+  values read look stale, so treat them with care), `RSX_TEXDUMP` with
+  `RSX_TEXDUMP_SIZE` now matches both, `FPK_FP` prints up to 32 constants.
+  The kerbs' rainbow noise is a separate 1024x128 DXT1 normal map (unit 5
+  of the kerb draws), not yet examined.
+
 ## Phase 20 — No more car-list freezes: MFC slots leaked (2026-10-28)
 
 **Status.** Arcade → car list → pick a car → colour → transmission → race
