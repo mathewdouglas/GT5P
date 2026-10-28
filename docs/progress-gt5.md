@@ -12,6 +12,24 @@ paragraph): asphalt, markings, kerbs, banners and mirror now draw. Still
 to check against that fix: the kerbs' rainbow noise and the noisy barriers
 (the shot after the fix shows neither), the livery of a car in the mirror.
 
+**Loading-logo reflection showed the menu (fixed, 2026-10-29).** The GT
+logo's moving reflection band (program `0x05809341`, logo body
+`0x05807E81`) samples a 256x159 image at a scratch surface (`0x03780000`
+or `0x02880000`, alternating). The game first draws the logo into that
+surface's top-left corner: a 2048-pitch surface, scissor 256x160 and
+viewport rectangle 1088x620, with VIEWPORT_SCALE (960, -540) and OFFSET
+(128, 80), i.e. a full 1920x1080 frame centred on the corner. The backend
+placed primitives by the viewport rectangle and ignored scale and offset
+for x and y. The logo landed mid-rectangle, the scissor removed all of
+it, and the band sampled what the menu's blur chain had left in the
+corner. `RSX_VP_XFORM` (on; `=0` off) places the D3D viewport by scale and
+offset whenever they describe a different rectangle (y flipped); the clip
+is still the rectangle and the scissor. Only these two passes differ in
+the menus and the race (`RSX_VP_XFORM_DBG=1` lists them).
+`VP_VIEWDBG_RT=<offset>` limits `VP_VIEWDBG` to one surface. Found with ID
+colours on the loading screen, `RSX_TEXDUMP_FP` and an `RSX_CAP` of a
+loading frame.
+
 **Speckled car paint: evicted render targets (fixed, 2026-10-29).** Every
 car's paint showed multicoloured per-pixel noise, in the mirror and in the
 main view. The paint program (`0x05E00A01`, found by ID colours read from
