@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <commctrl.h>
@@ -241,7 +242,7 @@ static bool setup(const std::wstring& expected) {
     }
     // Commit a complete configuration atomically; cancel/failure leaves the old one.
     fs::path staged = data/L"setup.new.ini";
-    { std::ofstream f(staged, std::ios::binary|std::ios::trunc); f.put(char(0xff)); f.put(char(0xfe)); }
+    { std::ofstream f(staged, std::ios::binary|std::ios::trunc); f.write("\xff\xfe", 2); }
     setting(staged, L"directory", disc);
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, staged.c_str());
     if (!MoveFileExW(staged.c_str(), (data/L"setup.ini").c_str(), MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
@@ -264,6 +265,17 @@ static void report(const std::wstring& message) {
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
+        int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (!argv) fail(L"Could not read launcher options.");
+        bool force = false, open = false, unknown = false;
+        for (int i = 1; i < argc; ++i) {
+            if (!wcscmp(argv[i], L"--setup")) force = true;
+            else if (!wcscmp(argv[i], L"--check")) quiet = true;
+            else if (!wcscmp(argv[i], L"--open-data")) open = true;
+            else unknown = true;
+        }
+        LocalFree(argv);
+        if (unknown) fail(L"Supported options: --setup, --check, --open-data");
         if (FAILED(com)) fail(L"Windows COM initialization failed.");
         std::array<wchar_t, 32768> module{};
         DWORD n = GetModuleFileNameW(nullptr, module.data(), (DWORD)module.size());
@@ -275,16 +287,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         CoTaskMemFree(local);
         runtime_path(data); runtime_path(install);
         fs::create_directories(data);
-        int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        if (!argv) fail(L"Could not read launcher options.");
-        bool force = false, open = false;
-        for (int i = 1; i < argc; ++i) {
-            if (!wcscmp(argv[i], L"--setup")) force = true;
-            else if (!wcscmp(argv[i], L"--check")) quiet = true;
-            else if (!wcscmp(argv[i], L"--open-data")) open = true;
-            else fail(L"Supported options: --setup, --check, --open-data");
-        }
-        LocalFree(argv);
         if (open) {
             if ((INT_PTR)ShellExecuteW(nullptr, L"open", data.c_str(), nullptr, nullptr, SW_SHOWNORMAL) <= 32)
                 fail(L"Explorer could not open the user-data directory.");

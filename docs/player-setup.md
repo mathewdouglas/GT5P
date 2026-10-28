@@ -2,10 +2,10 @@
 
 Implementation branch: `feature/player-setup`, based on the v0.18.0 upgrade.
 Worktree: `../GT5P-player-setup`. The shared working tree, runtime checkouts,
-generated sources and existing build were left alone. This work was written
-while Claude was active: **no compiler, test executable, game, emulator or
-release packaging command has been run for it**. Compilation and the acceptance
-checks below are required before distributing a player ZIP. No release asset
+generated sources and existing build were left alone. Initial implementation
+was written while Claude was active. With Claude paused, the launcher was
+compiled and tested on 2026-10-29 as recorded below. Interactive and real-game
+acceptance checks remain before distributing a player ZIP. No release asset
 has been uploaded.
 
 ## Player experience
@@ -152,13 +152,63 @@ It detects changes to copied inputs and verifies the ZIP's actual engine digest
 before committing the final filename. Only the named ZIP should be attached
 to a GitHub release, never input/, gamedata/, shadercache/ or scratch/.
 
+## Local validation (2026-10-29)
+
+The x64 MSVC Release `/MT` launcher compiles with `/W4` and no warnings.
+Compilation found missing `shellapi.h` declarations and two BOM-byte cast
+warnings; both are fixed. Option parsing now precedes path initialization,
+so `--check` also suppresses error dialogs for early initialization failures
+and unknown options, regardless of option order.
+
+Local binary: `../GT5P/scratch/launcher-validation-20261029/build/GT5P.exe`.
+`dumpbin /dependents` lists only Windows DLLs (USER32, SHELL32, ole32,
+bcrypt, COMCTL32, KERNEL32); no MSVC redistributable is required by the
+launcher itself. The engine's DLL requirements are unchanged.
+
+Passed `scripts/test/player_package.py`: wrong-target/debug-build rejection,
+missing/non-PE dependencies, invalid ELF/assets, strict ZIP allowlist,
+private-input exclusion, engine/ELF digest binding and existing-ZIP preservation.
+These use synthetic metadata, not a distributable game ZIP.
+
+Passed `scripts/test/launcher_native.py` against the compiled launcher and an
+independently compiled `launcher_probe.cpp` stand-in child:
+
+- Missing/moved setup, wrong title/version, truncated SFO, missing volume,
+  wrong engine/ELF digest and unknown options fail without dialogs in check mode.
+- Both disc-root and PS3_GAME selections normalize; paths with spaces reach the
+  child as one argument, with correct working directory and environment.
+- Saved configuration launches without setup, stdout/stderr logs are captured,
+  assets copy into private data and original synthetic dump files are unchanged.
+- Initial 720p settings are created; subsequent launches preserve user settings.
+- Duplicate launch is blocked while a child runs. Terminating the launcher
+  terminates its owned child (verified through a Windows process handle), and
+  another configuration check can acquire the released lock.
+
+To reproduce from an x64 VS Developer Command Prompt after building the launcher:
+
+```bat
+cl /nologo /std:c++17 /O2 /W4 /MT /EHsc /Fo"C:\GT5P-release\launcher\probe.obj" /Fe"C:\GT5P-release\launcher\probe.exe" scripts\test\launcher_probe.cpp
+python scripts\test\launcher_native.py --launcher C:\GT5P-release\launcher\GT5P.exe --probe C:\GT5P-release\launcher\probe.exe
+python scripts\test\player_package.py
+```
+
+Logs are in `../GT5P/scratch/launcher-validation-20261029/`. The probe and
+synthetic fixtures are test inputs only and never belong in the player ZIP.
+No game/emulator was launched, and the engine was not rebuilt. The absolute
+SFO-path integration in `src/main.cpp` therefore still needs an engine build
+and a real first-run/menu acceptance test.
+
+Interactive testing could not proceed: the Computer Use native helper reported
+`failed to connect native pipe` after retry and session reset. Folder selection,
+cancellation and the RPCS3 helper dialog remain unverified; this is not evidence
+that those UI paths passed.
+
 ## Acceptance checks still required before publishing
 
 Do these in an isolated user-data directory on a spare Windows machine/Ally,
-after Claude's testing is finished. No such checks have been run in this work.
-`python scripts/test/player_package.py` covers packaging rejection, input
-exclusion, digest binding and preservation of an existing ZIP using synthetic
-fixtures only. It is included for that later validation, not executed here.
+after Claude's testing is finished. The local checks above cover the compiled
+launcher with synthetic fixtures; the table also includes the interactive,
+real-game, decryption and deployment cases that remain unverified.
 
 | Check | Required result |
 | --- | --- |
