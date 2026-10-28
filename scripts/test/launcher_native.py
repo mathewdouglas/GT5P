@@ -16,12 +16,13 @@ import time
 
 
 def sfo(title='BCUS98158', version='03.00'):
-    keys = b'TITLE_ID\0APP_VER\0'
+    keys = b'TITLE_ID\0VERSION\0APP_VER\0'
     a, b = title.encode() + b'\0', version.encode() + b'\0'
-    return (struct.pack('<5I', 0x46535000, 0x101, 52, 52 + len(keys), 2)
+    return (struct.pack('<5I', 0x46535000, 0x101, 68, 68 + len(keys), 3)
             + struct.pack('<HHIII', 0, 0x204, len(a), len(a), 0)
             + struct.pack('<HHIII', 9, 0x204, len(b), len(b), len(a))
-            + keys + a + b)
+            + struct.pack('<HHIII', 17, 0x204, 6, 6, len(a)+len(b))
+            + keys + a + b + b'01.00\0')
 
 
 def main():

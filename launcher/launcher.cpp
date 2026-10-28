@@ -113,7 +113,7 @@ static fs::path game_folder(fs::path p) {
         auto name = text_at(b, key, b.size()-key);
         auto value = text_at(b, values + le(b, at+12, 4), le(b, at+4, 4));
         if (name == "TITLE_ID") id = value;
-        if (name == "APP_VER") version = value;
+        if (name == "VERSION") version = value;
     }
     if (id != "BCUS98158" || version != "03.00")
         fail(L"This release supports Gran Turismo 5 Prologue BCUS98158 v03.00 (US disc). Select that extracted game's folder.");

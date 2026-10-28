@@ -12,7 +12,7 @@ has been uploaded.
 
 1. Extract the entire ZIP and launch **GT5P.exe**.
 2. Select the extracted disc dump, or its `PS3_GAME` directory. The launcher
-   checks `PARAM.SFO` for BCUS98158 / APP_VER 03.00 and requires `GT.VOL` and
+   checks `PARAM.SFO` for BCUS98158 / VERSION 03.00 and requires `GT.VOL` and
    `TV.DAT`. Selecting an ISO is not supported.
 3. If a matching decrypted `USRDIR/EMAIN.ELF` is present, it is reused. Otherwise
    select an existing decrypted ELF or choose an installed RPCS3 executable.
@@ -194,14 +194,43 @@ python scripts\test\player_package.py
 
 Logs are in `../GT5P/scratch/launcher-validation-20261029/`. The probe and
 synthetic fixtures are test inputs only and never belong in the player ZIP.
-No game/emulator was launched, and the engine was not rebuilt. The absolute
-SFO-path integration in `src/main.cpp` therefore still needs an engine build
-and a real first-run/menu acceptance test.
+These initial checks used no game/emulator. The local assembly follow-up below
+also validates a real dump and exercises the engine integration.
 
 Interactive testing could not proceed: the Computer Use native helper reported
 `failed to connect native pipe` after retry and session reset. Folder selection,
 cancellation and the RPCS3 helper dialog remain unverified; this is not evidence
 that those UI paths passed.
+
+### Local assembly follow-up
+
+The standalone compiler output is **not a runnable player installation**.
+Launching it without its siblings produces the missing `release.ini` error.
+Use the complete local test folder instead:
+`../GT5P/scratch/launcher-validation-20261029/player/GT5P.exe`.
+It includes the hash-bound `release.ini`, engine, SDL/FFmpeg/MSVC DLLs and
+glyph assets. Keep the folder together. No game data is bundled in it.
+This is a local test assembly, not a public release ZIP with reviewed notices.
+
+Validation against the actual disc found an incorrect SFO check: this dump has
+`VERSION=03.00` and `APP_VER=01.00`. The launcher now validates `VERSION`,
+and the synthetic SFO fixture represents both fields independently. The native
+suite passed again, and `--check` against the real dump/private ELF returned 0.
+
+Compiled only the feature branch's `src/main.cpp` into a scratch object and
+linked a separate engine against the existing completed v0.18.0 build objects.
+The main worktree's sources, objects and `build/gt5p.exe` were not replaced.
+The compile/link retained pre-existing format/unused-option/imported-DllMain
+warnings; the launcher itself builds without warnings.
+
+An isolated profile launch through the assembled launcher logged the correct
+`BCUS98158` title from the absolute SFO path and reached CursorRoot,
+GTLogoTransition and ConfirmDialog boot milestones. The owned launcher was
+then terminated; this was a short boot-path smoke check, not menu/race visual
+acceptance. Logs/private test profile remain in `real-dump-check/`, outside
+the `player/` folder. The player's default first-run profile was not configured
+by this check. Interactive folder selection, decryption and deployment checks
+still remain.
 
 ## Acceptance checks still required before publishing
 
