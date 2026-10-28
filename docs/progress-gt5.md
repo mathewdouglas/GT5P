@@ -4,6 +4,76 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 16 — Game audio silent: narrowed to the sgx mixer's input (2026-10-28)
+
+**Status.** Movie audio plays. The sound engine (sgx) outputs only zeros:
+no menu music, no effects. Not fixed. What is known so far is below.
+
+**Output side, the same as GT5 Prologue.**
+
+- Device-change handling (`AUDIO_HOTPLUG`, WASAPI notifications) is in this
+  runtime's `cellAudio.c`, as in GT5P.
+- The mixer thread now also registers with MMCSS as "Pro Audio", as GT5P's
+  runtime does (`AUDIO_MMCSS=0` off).
+- `cellAudioSetPortLevel` (`0x56DFE179`) was unresolved. It now sets the
+  port's level, read from f1. The movie sets port 1 to 0.708.
+- `PS3_MUTE` in GT5P's runtime is read but never applied, so it was not
+  copied.
+
+**Where the zeros come from (`AUDIO_RATE`, `SPU_DMA_RANGE` with `_HIST` and
+`SPU_DMA_HIST_LS`, `PPU_WWATCH`, `GT5P_PEEK`).**
+
+- Port 0 (8 channels, 16 blocks) belongs to sgx; it is 100% silent on the
+  menu, with or without presses.
+- The sound chain `0x40040000` runs three job images:
+  - image 13 (`0x017C9800`), an AC3 decoder: its input frames start with
+    `0B77`;
+  - image 11, the mixer;
+  - image 14, the output stage (writes port 0).
+- Images 2-10, 12 and 15 run nine times each at boot and never again: those
+  are the module queries.
+- The menu music stream is fine:
+  - the audio thread (tid 18, `func_009D894C`) writes the voice block at
+    `0x4FFA8000` every block, and its source steps by 0x280 (one AC3 frame)
+    every 6 blocks;
+  - the decoder's output is real, quiet audio (about ±1e-3);
+  - menu presses do reach the engine (fncount on 0x990000-0x9F0000) and its
+    command area `0x40070000`.
+- The mixer (image 11) is where the signal stops:
+  - it writes the bus `0x4FF9E000`; image 14 reads that and writes port 0;
+  - in 1,500 bus writes it read the voice buffers (`0x4003C0D0`,
+    `0x4003D0F0`) only 172 times;
+  - even then its voice input in LS was non-zero and its bus output zero;
+  - its voice list is at `0x4FFA6000` (`0x22` entries for channels 2 and 3)
+    and its bus commands at `0x40070010`.
+- Not the lift: running image 11 on the SPU interpreter (`SPU_INTERP_IMG=11`,
+  new) is just as silent. The mixer runs correctly on state that tells it
+  to output nothing.
+
+**Ruled out:**
+
+- the audio-out configuration (6 channels reported);
+- the save (a fresh save is just as silent; the original is restored);
+- a second walker on the chain (create/run coalesce by address);
+- unlifted DSP code (no unlifted-branch reports);
+- the conversion helpers (`csflt` and `cflts` scaling are correct).
+
+`SPURS_SYNTH_SKIP_SENT=0` (Phase 11's corruption) does not reach the menu.
+
+**Next.**
+
+- Work out how the mixer reads the bus routing and gains: the `0x40070010`
+  command list (`0x20`, argument `0xA2`; then `0x21`, `0x23`, `0x24`, `0x30`,
+  `0x40` per channel) and its module state at `0x40046000`.
+- Find why the voice list is only present in about 11% of blocks.
+- Compare with GT5P, whose sgx engine plays on this runtime. Its bus counts
+  come from the job mailbox (commands 0x105/0x106, `cellSpurs.c`); GT5's
+  jobs post no mailbox values.
+
+**Also seen.** A run with directional presses on the menu crashed in a
+recursive `func_00D803D4` chain (`scratch/pv/aud2.err`); the report was cut
+short. Not investigated.
+
 ## Phase 15 — Movies play: SPURS Taskset2 and the lifted converter task (2026-10-28)
 
 **Result.** The opening movie plays: the Polyphony Digital logo over the

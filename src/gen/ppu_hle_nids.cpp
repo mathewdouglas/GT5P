@@ -40,6 +40,7 @@ extern "C" {
     void cellAudioPortClose(void);
     void cellAudioPortStart(void);
     void cellAudioPortStop(void);
+    void cellAudioSetPortLevel(void);
     void cellAudioGetPortBlockTag(void);
     void cellAudioGetPortTimestamp(void);
     void cellAudioCreateNotifyEventQueue(void);
@@ -1265,6 +1266,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x4129FE2Du, "cellAudioPortClose", (void*)cellAudioPortClose);
     ps3_hle_register(0x89BE28F2u, "cellAudioPortStart", (void*)cellAudioPortStart);
     ps3_hle_register(0x5B1E2C73u, "cellAudioPortStop", (void*)cellAudioPortStop);
+    ps3_hle_register(0x56DFE179u, "cellAudioSetPortLevel", (void*)cellAudioSetPortLevel);
     ps3_hle_register(0xE4046AFEu, "cellAudioGetPortBlockTag", (void*)cellAudioGetPortBlockTag);
     ps3_hle_register(0x4109D08Cu, "cellAudioGetPortTimestamp", (void*)cellAudioGetPortTimestamp);
     ps3_hle_register(0x04AF134Eu, "cellAudioCreateNotifyEventQueue", (void*)cellAudioCreateNotifyEventQueue);

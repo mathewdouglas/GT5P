@@ -115,10 +115,18 @@ index 00000000..e3700ff5
 +#endif
 +#endif
 diff --git a/libs/audio/cellAudio.c b/libs/audio/cellAudio.c
-index b51fb7c4..da68a11a 100644
+index b51fb7c4..484c4976 100644
 --- a/libs/audio/cellAudio.c
 +++ b/libs/audio/cellAudio.c
-@@ -73,12 +73,16 @@ extern uint32_t sys_event_queue_create_direct(uint64_t key, int32_t size);
+@@ -15,6 +15,7 @@
+ #include "../../runtime/memory/vm.h"   /* vm_commit */
+ #include "cellAudio.h"
+ #include "../../runtime/ppu/ppu_memory.h"   /* vm_base, vm_read64, vm_write32 */
++#include "../../runtime/ppu/ppu_context.h"  /* g_active_ctx: float arguments (f1) */
+ #include <stdio.h>
+ #include <string.h>
+ #include <stdlib.h>
+@@ -73,12 +74,16 @@ extern uint32_t sys_event_queue_create_direct(uint64_t key, int32_t size);
    DEFINE_AUDIO_GUID(ps3r_IID_IMMDeviceEnumerator,  0xA95664D2,0x9614,0x4F35,0xA7,0x46,0xDE,0x8D,0xB6,0x36,0x17,0xE6);
    DEFINE_AUDIO_GUID(ps3r_IID_IAudioClient,         0x1CB9AD4C,0xDBFA,0x4c32,0xB1,0x78,0xC2,0xF5,0x68,0xA7,0x03,0xB2);
    DEFINE_AUDIO_GUID(ps3r_IID_IAudioRenderClient,   0xF294ACFC,0x3146,0x4483,0xA7,0xBF,0xAD,0xDC,0xA7,0xC2,0x60,0xE2);
@@ -135,7 +143,7 @@ index b51fb7c4..da68a11a 100644
  #endif
  
  #if AUDIO_BACKEND_SDL2
-@@ -233,37 +237,31 @@ static IAudioClient*        s_wasapi_client = NULL;
+@@ -233,37 +238,31 @@ static IAudioClient*        s_wasapi_client = NULL;
  static IAudioRenderClient*  s_wasapi_render = NULL;
  static HANDLE               s_wasapi_event  = NULL;
  static UINT32               s_wasapi_buf_frames = 0;
@@ -193,7 +201,7 @@ index b51fb7c4..da68a11a 100644
      if (FAILED(hr)) {
          printf("[cellAudio] Failed to activate audio client: 0x%08lX\n", hr);
          return -1;
-@@ -280,65 +278,175 @@ static int audio_backend_init(void)
+@@ -280,65 +279,175 @@ static int audio_backend_init(void)
  
      /* Request event-driven mode with a ~20ms buffer */
      REFERENCE_TIME buf_duration = 200000; /* 20ms in 100ns units */
@@ -395,7 +403,7 @@ index b51fb7c4..da68a11a 100644
      }
  }
  
-@@ -347,7 +455,8 @@ static void audio_backend_submit(const float* stereo_samples, u32 num_samples)
+@@ -347,7 +456,8 @@ static void audio_backend_submit(const float* stereo_samples, u32 num_samples)
      if (!s_wasapi_render) return;
  
      UINT32 padding = 0;
@@ -405,7 +413,7 @@ index b51fb7c4..da68a11a 100644
  
      UINT32 available = s_wasapi_buf_frames - padding;
      if (num_samples > available) {
-@@ -357,11 +466,12 @@ static void audio_backend_submit(const float* stereo_samples, u32 num_samples)
+@@ -357,11 +467,12 @@ static void audio_backend_submit(const float* stereo_samples, u32 num_samples)
      if (num_samples == 0) return;
  
      BYTE* buf = NULL;
@@ -420,7 +428,7 @@ index b51fb7c4..da68a11a 100644
  }
  
  /* Frames the device can take right now; -1 with no device open. */
-@@ -371,10 +481,7 @@ static int audio_backend_room(void)
+@@ -371,10 +482,7 @@ static int audio_backend_room(void)
      UINT32 padding = 0;
      const HRESULT hr = s_wasapi_client->lpVtbl->GetCurrentPadding(s_wasapi_client, &padding);
      if (FAILED(hr)) {
@@ -432,7 +440,7 @@ index b51fb7c4..da68a11a 100644
          return -1;
      }
      return (int)(s_wasapi_buf_frames - padding);
-@@ -408,6 +515,16 @@ static inline float ld_be_f32(const float* p)
+@@ -408,6 +516,16 @@ static inline float ld_be_f32(const float* p)
      return f;
  }
  
@@ -449,7 +457,7 @@ index b51fb7c4..da68a11a 100644
  /* Mix one block from all active ports into s_mix_buffer (stereo float) */
  static void audio_mix_one_block(void)
  {
-@@ -444,7 +561,71 @@ static void audio_mix_one_block(void)
+@@ -444,7 +562,71 @@ static void audio_mix_one_block(void)
          if (level > 1.0f) level = 1.0f;
  
          /* Read one block at the current read_index */
@@ -522,7 +530,7 @@ index b51fb7c4..da68a11a 100644
          u32 block_offset = block_idx * CELL_AUDIO_BLOCK_SAMPLES * nch;
          float* src = port->buffer + block_offset;
  
-@@ -467,7 +648,7 @@ static void audio_mix_one_block(void)
+@@ -467,7 +649,7 @@ static void audio_mix_one_block(void)
                          p, (unsigned long long)port->read_index, block_idx, map);
              } } }
  
@@ -531,7 +539,7 @@ index b51fb7c4..da68a11a 100644
              float left, right;
              if (nch >= 2) {
                  left  = ld_be_f32(&src[s * nch + 0]) * level;
-@@ -496,7 +677,7 @@ static void audio_mix_one_block(void)
+@@ -496,7 +678,7 @@ static void audio_mix_one_block(void)
          /* Firmware clears a ring-buffer block after consuming it. Besides
           * preventing stale PCM from replaying when a producer stalls, the
           * cleared block is an observable consumption signal for producers. */
@@ -540,7 +548,7 @@ index b51fb7c4..da68a11a 100644
  
          /* Keep the monotonic counter for tags/timestamps, but publish the
           * ring slot to the guest. SurMixer multiplies this value by the block
-@@ -535,10 +716,22 @@ static void audio_notify_event_queues(void)
+@@ -535,10 +717,35 @@ static void audio_notify_event_queues(void)
  }
  
  #ifdef _WIN32
@@ -560,10 +568,23 @@ index b51fb7c4..da68a11a 100644
 +     * normal priority it was itself held up for 14 ms and more, dozens of
 +     * times a minute. AUDIO_MIX_NORMAL_PRIO=1: leave it. */
 +    if (!getenv("AUDIO_MIX_NORMAL_PRIO")) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
++    /* AUDIO_MMCSS (on): also register with the multimedia scheduler as "Pro
++     * Audio", as the GT5 Prologue runtime does, so the device deadline is met
++     * while guest threads keep every core busy. avrt.dll is loaded by hand so
++     * the runtime needs no avrt.lib. =0: priority only. */
++    { const char* e = getenv("AUDIO_MMCSS");
++      if (!(e && e[0] == '0')) {
++          HMODULE avrt = LoadLibraryW(L"avrt.dll");
++          typedef HANDLE (WINAPI *set_mm_fn)(LPCWSTR, LPDWORD);
++          set_mm_fn set_mm = avrt ? (set_mm_fn)(void*)GetProcAddress(avrt, "AvSetMmThreadCharacteristicsW") : NULL;
++          DWORD task = 0;
++          if (set_mm && !set_mm(L"Pro Audio", &task))
++              fprintf(stderr, "[cellAudio] MMCSS Pro Audio unavailable (%lu)\n", (unsigned long)GetLastError());
++      } }
  
      /* Pace to the device clock. The PS3 consumes one block every 5.33 ms;
       * the old Sleep(2)/Sleep(5) loop keyed on a queue depth the 1056-frame
-@@ -549,7 +742,42 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -549,7 +756,42 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
      LARGE_INTEGER qf, q0; QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&q0);
      unsigned long long blocks = 0;
      while (s_mix_thread_running) {
@@ -606,7 +627,7 @@ index b51fb7c4..da68a11a 100644
          if (room >= 0 && room < CELL_AUDIO_BLOCK_SAMPLES) { audio_backend_wait(); continue; }
          if (room < 0) {
              LARGE_INTEGER now; QueryPerformanceCounter(&now);
-@@ -562,7 +790,13 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -562,7 +804,13 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
                  q0.QuadPart = now.QuadPart -
                      (long long)(blocks * CELL_AUDIO_BLOCK_SAMPLES * qf.QuadPart / CELL_AUDIO_SAMPLE_RATE);
          }
@@ -620,7 +641,7 @@ index b51fb7c4..da68a11a 100644
          /* Mix and submit one block */
          audio_mix_one_block();
          /* AUDIO_PEAK=1: report the mixed block's peak amplitude periodically so
-@@ -579,6 +813,57 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -579,6 +827,57 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
            if (_wf == (FILE*)-1) { const char* e = getenv("AUDIO_WAV"); _wf = e ? fopen(e, "wb") : NULL; }
            if (_wf) fwrite(s_mix_buffer, sizeof(float), CELL_AUDIO_BLOCK_SAMPLES * 2, _wf); }
          audio_backend_submit(s_mix_buffer, CELL_AUDIO_BLOCK_SAMPLES);
@@ -678,7 +699,7 @@ index b51fb7c4..da68a11a 100644
          /* AUDIO_RATE=1: blocks mixed vs real time, and frames dropped. */
          { static int on = -1; if (on < 0) on = getenv("AUDIO_RATE") ? 1 : 0;
            if (on) { static ULONGLONG t0; static unsigned n, z; static unsigned long long d0;
-@@ -586,6 +871,7 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -586,6 +885,7 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
              { int nz = 0; for (u32 i = 0; i < CELL_AUDIO_BLOCK_SAMPLES * 2; i++) if (s_mix_buffer[i] != 0.0f) { nz = 1; break; }
                if (!nz) z++; }
              if (now - t0 >= 5000) {
@@ -686,7 +707,7 @@ index b51fb7c4..da68a11a 100644
                  fprintf(stderr, "[audio-rate] %.1f blocks/s (real time 187.5), silent %.1f%%, dropped %.0f frames/s, device buf %u%c",
                          n * 1000.0 / (now - t0), n ? 100.0 * z / n : 0.0, (g_audio_dropped - d0) * 1000.0 / (now - t0),
                  #if AUDIO_BACKEND_WASAPI
-@@ -599,6 +885,9 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
+@@ -599,6 +899,9 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
          audio_notify_event_queues();
      }
  
@@ -696,7 +717,7 @@ index b51fb7c4..da68a11a 100644
      printf("[cellAudio] Mixing thread stopped\n");
      return 0;
  }
-@@ -693,10 +982,12 @@ s32 cellAudioInit(void)
+@@ -693,10 +996,12 @@ s32 cellAudioInit(void)
      memset(s_notify_queues, 0, sizeof(s_notify_queues));
      mutex_init(&s_audio_mutex);
  
@@ -709,7 +730,7 @@ index b51fb7c4..da68a11a 100644
  
  
  #ifdef _WIN32
-@@ -724,7 +1015,9 @@ s32 cellAudioQuit(void)
+@@ -724,7 +1029,9 @@ s32 cellAudioQuit(void)
          return CELL_AUDIO_ERROR_NOT_INIT;
  
      audio_stop_mix_thread();
@@ -719,6 +740,33 @@ index b51fb7c4..da68a11a 100644
  
      /* Port buffers live in the guest vm_base arena (bump-allocated, not host
       * malloc) -- just drop the references; never free() them. */
+@@ -888,6 +1195,26 @@ s32 cellAudioPortStop(u32 portNum)
+     return CELL_OK;
+ }
+ 
++/* cellAudioSetPortLevel(portNum, float level): the port's output level, as
++ * the level field of the port parameters sets it at open. The float arrives
++ * in f1, which the generic HLE adapter does not pass, so it is read from the
++ * caller's registers. Gran Turismo 5's movie player calls it on its port. */
++s32 cellAudioSetPortLevel(u32 portNum)
++{
++    extern PPU_THREAD_LOCAL ppu_context* g_active_ctx;
++    const float level = g_active_ctx ? (float)g_active_ctx->fpr[1] : 1.0f;
++    printf("[cellAudio] SetPortLevel(port=%u level=%.3f)\n", portNum, level);
++    if (!s_audio_initialized)
++        return CELL_AUDIO_ERROR_NOT_INIT;
++    if (portNum >= CELL_AUDIO_PORT_MAX || !s_ports[portNum].in_use)
++        return CELL_AUDIO_ERROR_PORT_NOT_OPEN;
++    if (!(level >= 0.0f)) return CELL_AUDIO_ERROR_PARAM;
++    mutex_lock(&s_audio_mutex);
++    s_ports[portNum].param.level = level;
++    mutex_unlock(&s_audio_mutex);
++    return CELL_OK;
++}
++
+ s32 cellAudioGetPortBlockTag(u32 portNum, u64 blockNo, u64* tag)
+ {
+     uint32_t tag_ea = (uint32_t)(uintptr_t)tag;
 diff --git a/libs/codec/cellAdec.c b/libs/codec/cellAdec.c
 index 3da70179..9a4815bf 100644
 --- a/libs/codec/cellAdec.c
@@ -40833,7 +40881,7 @@ index 2a8dca10..8ef1cbd2 100644
       * descriptor at eaContext+0x10 = {0x40-marker handle, workload EAs}; the
       * async SPU thread reading it later would race the PPU stack. word1 is
 diff --git a/runtime/spu/spurs_job.c b/runtime/spu/spurs_job.c
-index 9e588334..563c39ba 100644
+index 9e588334..6df80e38 100644
 --- a/runtime/spu/spurs_job.c
 +++ b/runtime/spu/spurs_job.c
 @@ -42,6 +42,8 @@
@@ -40937,7 +40985,31 @@ index 9e588334..563c39ba 100644
      ctx.gpr[1]._u32[0] = (stack_top - 16u) & ~15u;   /* SPU stack grows down */
      /* Link register: where the job returns when it is done. The job manager
       * would pass an address inside itself; 0 makes the job re-enter its own
-@@ -364,14 +408,19 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -356,7 +400,22 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+      * and trips its parameter guard, which HALTS -- ending the run. So the
+      * HALT-ASSERT heqi 0x1650 seen once per jm2 job is NORMAL COMPLETION
+      * noise, not a failure: the job's real work finished before the jump. */
+-    spu_run_with_halt(entry, &ctx);
++    /* SPU_INTERP_IMG=<image id>: a diagnostic. Run that image's jobs on the SPU
++     * interpreter from LS 0, under an image id with no lifted code, so no part
++     * of the job takes the compiled path: if the job's output changes, the
++     * lift is at fault, not its input. Far slower than the lifted code. */
++    { static int interp_img = -2;
++      if (interp_img == -2) { const char* e = getenv("SPU_INTERP_IMG"); interp_img = e ? atoi(e) : -1; }
++      if (interp_img >= 0 && image_id == interp_img) {
++          extern uint32_t spu_interp_run(spu_context*, uint32_t);
++          static int _n = 0;
++          if (_n++ < 2) fprintf(stderr, "[spurs-job] image %d on the interpreter (SPU_INTERP_IMG)\n", image_id);
++          ctx.image_id = 0x7FFF;
++          spu_interp_run(&ctx, 0);
++          ctx.image_id = image_id;
++      } else
++          spu_run_with_halt(entry, &ctx);
++    }
+ 
+     /* Capture the job's outbound mailbox. These are LS POINTERS TO STRINGS for
+      * the SPU printf service, NOT query results -- value 0x83C0 from the sound
+@@ -364,14 +423,19 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
       * comment here claimed they carried the title's bus counts; they do not,
       * and feeding them into the completion event turned 0x40000000 into a 1 GB
       * allocation request. Kept because the printf service needs them. */
@@ -40960,7 +41032,7 @@ index 9e588334..563c39ba 100644
      { uint32_t _cb = g32(job_ea + 0x4C);
        g_spurs_job_cmd = _cb ? (g32(_cb) >> 16) : 0; }
      { static int s_t = -1; if (s_t < 0) s_t = getenv("SPURS_JOB_MBOX") ? 1 : 0;
-@@ -380,7 +429,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -380,7 +444,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
            fprintf(stderr, "[spurs-job] job 0x%08X posted mbox=0x%08X intr=0x%08X\n",
                    job_ea, g_spurs_job_mbox, g_spurs_job_mbox_intr); }
  
@@ -40969,7 +41041,7 @@ index 9e588334..563c39ba 100644
          fprintf(stderr, "[spurs-job] job 0x%08X exit: status=0x%X stop=0x%X pc=0x%05X\n",
                  job_ea, ctx.status, ctx.stop_code, ctx.pc);
          /* Post-run view of the same command block: the game polls result/status
-@@ -397,7 +446,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
+@@ -397,7 +461,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
          fflush(stderr);
      }
  
