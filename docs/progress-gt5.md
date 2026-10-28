@@ -12,6 +12,39 @@ paragraph): asphalt, markings, kerbs, banners and mirror now draw. Still
 to check against that fix: the kerbs' rainbow noise and the noisy barriers
 (the shot after the fix shows neither), the livery of a car in the mirror.
 
+**Speckled car paint: evicted render targets (fixed, 2026-10-29).** Every
+car's paint showed multicoloured per-pixel noise, in the mirror and in the
+main view. The paint program (`0x05E00A01`, found by ID colours read from
+the raw scene target) takes its diffuse colour from unit 8, a 256x512
+linear ARGB texture at `0x05E59100`. GT5 renders that texture once per
+car at load: it is a render target. The race load then needs more than
+the backend's 16 target slots and evicts it, and the contents existed only
+on the GPU. Unit 8 then sampled the never-written local memory. Units 4-15
+never resolve to targets by address anyway.
+
+`RSX_RT_EVICT_WB` (on; `=0` off) reads an evicted target back into guest
+local memory before releasing it. It writes only while the guest bytes
+hash the same as when the target was created, so anything the title wrote
+there since wins. The readback uses its own command list (the frame's list
+is open mid-replay) and the eviction's existing GPU wait.
+`RSX_RT_EVICT_WB_DBG=1` logs each eviction and why it was or was not
+written back. Pitfall met on the way: `cellGcmResolveOffset` resolves a
+local surface offset through the IO map, to main memory (`0x05E59100` gave
+`0x45E59100`); the first version wrote there and hung the game. The
+write-back uses `cellGcmResolveLocated(1, off)`. The target creation path
+still fills new targets through `cellGcmResolveOffset` (not changed;
+GT5P depends on it).
+
+Also checked on the way: the car reflection cube (unit 14, six 256x511
+linear faces with the mip chain stacked below at the same pitch, rebuilt
+each frame by downsample draws) is assembled correctly by `RSX_CUBE_RT`.
+`RSX_TEXALL_FP=<fp>[,n]` (new) prints every bound unit of a program's
+draws with format, mips, cube, control0, filter and address.
+
+**The black border is the game's own screen-size option** (user). GT5
+draws its picture into a centred 1152x648 rectangle at `0x01AE6280`
+(x 64, y 36), set by func `0x00A35DB4`.
+
 **The purple road was a dropped copy engine (fixed, 2026-10-29).**
 GT5's libgcm binds the NV0039 memory-to-memory engine to FIFO subchannel 1
 (`cellGcmSetTransferData`, func `0x00D38134`: headers `0x00082184` DMA
