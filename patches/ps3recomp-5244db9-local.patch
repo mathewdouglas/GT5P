@@ -4800,10 +4800,18 @@ index 00000000..e8aa9f7a
 +
 +#endif
 diff --git a/libs/filesystem/cellFs.c b/libs/filesystem/cellFs.c
-index 5166a47d..1f9afcd4 100644
+index 5166a47d..8ae37a91 100644
 --- a/libs/filesystem/cellFs.c
 +++ b/libs/filesystem/cellFs.c
-@@ -74,6 +74,9 @@ static void init_default_mappings(void)
+@@ -14,6 +14,7 @@
+ #include <sys/stat.h>
+ #include <errno.h>
+ #include "../../runtime/ppu/ppu_memory.h"   /* GUEST_PTR, vm_write*: guest EA -> host */
++#include "../../runtime/ppu/ppu_context.h"  /* g_active_ctx: FS_READLOG call chain */
+ 
+ /* glibc's <sys/stat.h> exposes st_atime/st_mtime/st_ctime as macros that expand
+  * to st_atim.tv_sec etc.  They collide with the identically named members of the
+@@ -74,6 +75,9 @@ static void init_default_mappings(void)
      cellfs_add_path_mapping("/dev_flash/", "gamedata/dev_flash/");
      cellfs_add_path_mapping("/app_home/",  "gamedata/app_home/");
      cellfs_add_path_mapping("/dev_usb000/","gamedata/dev_usb/");
@@ -4813,7 +4821,7 @@ index 5166a47d..1f9afcd4 100644
  }
  
  void cellfs_set_root_path(const char* root)
-@@ -126,6 +129,24 @@ static int translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
+@@ -126,6 +130,24 @@ static int translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
      if (!ps3_path || !host_buf || buf_size == 0)
          return -1;
  
@@ -4838,7 +4846,7 @@ index 5166a47d..1f9afcd4 100644
      /* Find longest matching prefix */
      int best = -1;
      size_t best_len = 0;
-@@ -215,6 +236,78 @@ int cellfs_translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
+@@ -215,6 +237,78 @@ int cellfs_translate_path(const char* ps3_path, char* host_buf, size_t buf_size)
      return translate_path(ps3_path, host_buf, buf_size);
  }
  
@@ -4917,7 +4925,7 @@ index 5166a47d..1f9afcd4 100644
  /* ---------------------------------------------------------------------------
   * Host stat -> CellFsStat conversion
   * -----------------------------------------------------------------------*/
-@@ -322,27 +415,53 @@ typedef struct {
+@@ -322,27 +416,53 @@ typedef struct {
  static FsFileSlot s_files[MAX_OPEN_FILES];
  static FsDirSlot  s_dirs[MAX_OPEN_DIRS];
  
@@ -4975,7 +4983,7 @@ index 5166a47d..1f9afcd4 100644
  }
  
  /* Build fopen mode string from PS3 flags */
-@@ -353,6 +472,19 @@ static const char* flags_to_mode(s32 flags)
+@@ -353,6 +473,19 @@ static const char* flags_to_mode(s32 flags)
      int trunc   = flags & CELL_FS_O_TRUNC;
      int append  = flags & CELL_FS_O_APPEND;
  
@@ -4995,7 +5003,7 @@ index 5166a47d..1f9afcd4 100644
      if (access == CELL_FS_O_RDONLY) {
          return "rb";
      } else if (access == CELL_FS_O_WRONLY) {
-@@ -408,6 +540,7 @@ static void ensure_parent_dirs(const char* path)
+@@ -408,6 +541,7 @@ static void ensure_parent_dirs(const char* path)
  s32 cellFsOpen(const char* path, s32 flags, CellFsFd* fd, const void* arg, u64 size)
  {
      printf("[cellFs] Open(path='%s', flags=0x%X)\n", gpath(path) ? gpath(path) : "<null>", flags);
@@ -5003,7 +5011,7 @@ index 5166a47d..1f9afcd4 100644
      { extern char* getenv(const char*); static int _bt=-1; if(_bt<0){ const char* e=getenv("PS3_FSLOG_BT"); _bt=(e&&*e&&*e!='0')?1:0; } if(_bt){ extern unsigned int ppu_prof_resolve_host(void*); void* fr[24]; unsigned short n=RtlCaptureStackBackTrace(0,24,fr,0); char ln[600]; int p=snprintf(ln,sizeof ln,"[FSBT]"); unsigned int prev=0; for(unsigned short i=0;i<n;i++){ unsigned int g=ppu_prof_resolve_host(fr[i]); if(g&&g!=prev){ prev=g; p+=snprintf(ln+p,sizeof(ln)-p," %08X",g); } } fprintf(stderr,"%s%c",ln,10); } }
  
      if (!path || !fd)
-@@ -427,6 +560,15 @@ s32 cellFsOpen(const char* path, s32 flags, CellFsFd* fd, const void* arg, u64 s
+@@ -427,6 +561,15 @@ s32 cellFsOpen(const char* path, s32 flags, CellFsFd* fd, const void* arg, u64 s
          ensure_parent_dirs(host_path);
      }
  
@@ -5019,7 +5027,7 @@ index 5166a47d..1f9afcd4 100644
      const char* mode = flags_to_mode(flags);
      FILE* fp = fopen(host_path, mode);
  
-@@ -491,6 +633,23 @@ s32 cellFsRead(CellFsFd fd, void* buf, u64 nbytes, u64* nread)
+@@ -491,6 +634,23 @@ s32 cellFsRead(CellFsFd fd, void* buf, u64 nbytes, u64* nread)
      u64 bytes_read = 0;
  
      if (s_files[fd].host_fp) {
@@ -5043,7 +5051,45 @@ index 5166a47d..1f9afcd4 100644
          /* gptr(buf): the DATA buffer is a guest address like every other
           * pointer parameter. The nread out-param below was already translated,
           * which made this look handled -- but the file contents were being read
-@@ -533,8 +692,32 @@ s32 cellFsWrite(CellFsFd fd, const void* buf, u64 nbytes, u64* nwrite)
+@@ -515,6 +675,37 @@ s32 cellFsRead(CellFsFd fd, void* buf, u64 nbytes, u64* nread)
+             }
+             printf("\n"); } }
+ 
++    /* FS_READLOG=<lo>-<hi> (hex guest addresses): log each read landing in
++     * that range with its time, file offset and first bytes. */
++    { static uint32_t lo = 1, hi;
++      if (lo == 1) { const char* e = getenv("FS_READLOG"); lo = 0;
++          if (e) { char* d; lo = (uint32_t)strtoul(e, &d, 16); if (*d == '-') hi = (uint32_t)strtoul(d + 1, 0, 16); } }
++      uint32_t b = (uint32_t)(uintptr_t)buf;
++      if (hi && b < hi && b + nbytes > lo) {
++          extern unsigned long long ps3_ms_now(void);
++          const unsigned char* g = (const unsigned char*)gptr(buf);
++          long long pos = s_files[fd].host_fp ? (long long)_ftelli64(s_files[fd].host_fp) - (long long)bytes_read : -1;
++          fprintf(stderr, "[fs-read] t=%llu fd=%d buf=0x%08X n=0x%llX pos=0x%llX first=%02X%02X%02X%02X%02X%02X%02X%02X\n",
++                  ps3_ms_now(), fd, b, (unsigned long long)bytes_read, pos,
++                  g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7]);
++          /* FS_READLOG_FRAMES=<n>: the guest call chain of the first n. */
++          { static int nf = -1, done = 0;
++            if (nf < 0) { const char* e = getenv("FS_READLOG_FRAMES"); nf = e ? atoi(e) : 0; }
++            extern PPU_THREAD_LOCAL ppu_context* g_active_ctx;
++            if (done < nf && g_active_ctx) {
++                done++;
++                uint32_t sp = (uint32_t)g_active_ctx->gpr[1];
++                fprintf(stderr, "[fs-read]   lr=%08X frames:", (uint32_t)g_active_ctx->lr);
++                for (int k = 0; k < 16; k++) {
++                    uint32_t back = vm_read32(sp + 4);
++                    if (back <= sp || back - sp > 0x10000u) break;
++                    fprintf(stderr, " %08X/%08X", back, vm_read32(back + 20));
++                    sp = back;
++                }
++                fprintf(stderr, "\n");
++            } }
++      } }
++
+     if (nread)
+         *(u64*)gptr(nread) = ps3_bswap64(bytes_read);
+ 
+@@ -533,8 +724,32 @@ s32 cellFsWrite(CellFsFd fd, const void* buf, u64 nbytes, u64* nwrite)
      u64 bytes_written = 0;
  
      if (s_files[fd].host_fp) {
@@ -5076,7 +5122,7 @@ index 5166a47d..1f9afcd4 100644
      }
  
      if (nwrite)
-@@ -615,6 +798,7 @@ s32 cellFsFstat(CellFsFd fd, CellFsStat* sb)
+@@ -615,6 +830,7 @@ s32 cellFsFstat(CellFsFd fd, CellFsStat* sb)
  s32 cellFsStat(const char* path, CellFsStat* sb)
  {
      printf("[cellFs] Stat(path='%s')\n", gpath(path) ? gpath(path) : "<null>");
@@ -5084,7 +5130,7 @@ index 5166a47d..1f9afcd4 100644
  
      if (!path || !sb)
          return CELL_EFAULT;
-@@ -696,6 +880,41 @@ s32 cellFsFtruncate(CellFsFd fd, u64 size)
+@@ -696,6 +912,41 @@ s32 cellFsFtruncate(CellFsFd fd, u64 size)
      return CELL_OK;
  }
  
@@ -8472,7 +8518,7 @@ index 252c3e8c..9b57316c 100644
  
  s32 cellSysCacheClear(void)
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb04646..a2b3d0ab 100644
+index cdb04646..5748d670 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,6 +14,7 @@
@@ -8638,7 +8684,72 @@ index cdb04646..a2b3d0ab 100644
  static void gcm_2d_method(u32 subch, u32 method, u32 data)
  {
      /* GCM2D_TRACE=1: histogram of (subchannel, method) actually seen. The
-@@ -1083,6 +1167,17 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
+@@ -1038,6 +1122,64 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
+               printf("---%c", 10);
+           }
+       } }
++    /* NV0039 memory-to-memory copy, which libgcm binds to subchannel 1
++     * (cellGcmSetTransferData: 0x00082184 DMA in/out, then an 8-word burst
++     * 0x0020230C of offset in/out, pitch in/out, line length, line count,
++     * format, buffer notify). Gran Turismo 5 defragments its texture heap
++     * with it: the allocator records a block as moved and repoints the
++     * materials, so a dropped copy leaves them sampling whatever texture was
++     * there before (the purple road). Reached for subchannel 1 only when
++     * GCM_SUBCH1_M2MF=1 (or GCM_SUBCH1_2D=1); Gran Turismo 5 Prologue's SPU
++     * lists put NV4097 methods on subchannel 1 instead. */
++    if (subch == 1) {
++        static struct { u32 dma_in, dma_out, off_in, off_out, pitch_in, pitch_out, len, count, fmt; } m;
++        switch (method) {
++        case 0x0184: m.dma_in    = data; return;
++        case 0x0188: m.dma_out   = data; return;
++        case 0x030C: m.off_in    = data; return;
++        case 0x0310: m.off_out   = data; return;
++        case 0x0314: m.pitch_in  = data; return;
++        case 0x0318: m.pitch_out = data; return;
++        case 0x031C: m.len       = data; return;
++        case 0x0320: m.count     = data; return;
++        case 0x0324: m.fmt       = data; return;
++        case 0x0000: case 0x0180: return;   /* SET_OBJECT, notify DMA */
++        case 0x0328: break;                 /* BUFFER_NOTIFY: the copy */
++        default: {
++            static int un = 0;
++            if (un++ < 16) printf("[M2MF] unexpected method 0x%04X data=0x%08X%c", method, data, 10);
++            return; }
++        }
++        extern u8* vm_base;
++        const int sl = m.dma_in != 0xFEED0001u, dl = m.dma_out != 0xFEED0001u;
++        const u32 src = cellGcmResolveLocated(sl, m.off_in), dst = cellGcmResolveLocated(dl, m.off_out);
++        const u32 lin = m.fmt & 0xFFu, lout = (m.fmt >> 8) & 0xFFu;
++        const u64 span_in = (u64)m.pitch_in * (m.count ? m.count - 1 : 0) + m.len;
++        const u64 span_out = (u64)m.pitch_out * (m.count ? m.count - 1 : 0) + m.len;
++        { static int dbg = -1, n = 0;
++          if (dbg < 0) { const char* e = getenv("GCM_M2MF_DBG"); dbg = e ? atoi(e) : 0; }
++          if (n < dbg) { n++;
++              printf("[M2MF] %s 0x%08X(%s, pitch %u) -> 0x%08X(%s, pitch %u) len 0x%X x %u fmt 0x%X%c",
++                     (lin == 1 && lout == 1) ? "copy" : "SKIP", src, sl ? "local" : "main", m.pitch_in,
++                     dst, dl ? "local" : "main", m.pitch_out, m.len, m.count, m.fmt, 10); } }
++        if (!vm_base || !src || !dst || !m.len || !m.count || lin != 1 || lout != 1 ||
++            (u64)src + span_in > 0x100000000ull || (u64)dst + span_out > 0x100000000ull) {
++            static int bad = 0;
++            if (bad++ < 8) printf("[M2MF] copy skipped: src 0x%08X dst 0x%08X len 0x%X x %u fmt 0x%X%c",
++                                  src, dst, m.len, m.count, m.fmt, 10);
++            return;
++        }
++        /* The heap compaction slides blocks down over themselves: memmove,
++         * and lines in the order that does not overwrite unread source. */
++        if (dst > src) {
++            for (u32 i = m.count; i-- > 0;)
++                memmove(vm_base + dst + (u64)i * m.pitch_out, vm_base + src + (u64)i * m.pitch_in, m.len);
++        } else {
++            for (u32 i = 0; i < m.count; i++)
++                memmove(vm_base + dst + (u64)i * m.pitch_out, vm_base + src + (u64)i * m.pitch_in, m.len);
++        }
++        return;
++    }
+     /* Subchannel bindings are libgcm-version-specific (SET_OBJECT binds are
+      * not tracked): demosaic's SDK emits dest-surface on sub 3 and image-from-
+      * CPU on sub 5 (cellGcmSetInlineTransfer: 0x4630C / 0xCA304 / 0xA400
+@@ -1083,6 +1225,17 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
                    printf("[GCM2D] inline write dst=0x%08X (off=0x%X dma=0x%X pt=%u,%u pitch=%u) = 0x%08X\n",
                           base + py * dst_pitch + px * 4, s_gcm2d.dst_offset,
                           s_gcm2d.dst_dma, px, py, dst_pitch, data); }
@@ -8656,7 +8767,7 @@ index cdb04646..a2b3d0ab 100644
              vm_write32(base + py * dst_pitch + px * 4, data);
              return;
          }
-@@ -1232,12 +1327,74 @@ void gcm_forget_spu_blocks(void)
+@@ -1232,12 +1385,74 @@ void gcm_forget_spu_blocks(void)
      s_spu_blk_w = 0;
  }
  
@@ -8734,7 +8845,7 @@ index cdb04646..a2b3d0ab 100644
  
      /* Coalesce with the previous block when an SPU emits one buffer in several
       * transfers -- otherwise only the last fragment is remembered and the
-@@ -1279,6 +1436,28 @@ static u32 gcm_spu_block_for_put(u32 put)
+@@ -1279,6 +1494,28 @@ static u32 gcm_spu_block_for_put(u32 put)
   *
   * Dropping DRAWS on a resync is survivable: a frame is lost. Dropping a FENCE
   * is not, it deadlocks the title. Sweep the skipped range first. */
@@ -8763,7 +8874,7 @@ index cdb04646..a2b3d0ab 100644
  static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
  {
      static int n = 0;
-@@ -1399,6 +1578,7 @@ static void gcm_ref_publish_one(void)
+@@ -1399,6 +1636,7 @@ static void gcm_ref_publish_one(void)
   * poll-path below. TryAcquire on the poll path avoids re-entrancy (the walker
   * itself performs guest reads) and never blocks a spinning game thread. */
  static SRWLOCK s_gcm_fifo_lock = SRWLOCK_INIT;
@@ -8771,7 +8882,7 @@ index cdb04646..a2b3d0ab 100644
  static void gcm_rsx_process_fifo_unlocked(void);
  
  /* Kick event: a game thread whose fence wait finds the queue DRY signals the
-@@ -1459,6 +1639,36 @@ void cellGcm_ref_on_poll(void)
+@@ -1459,6 +1697,36 @@ void cellGcm_ref_on_poll(void)
          SetEvent(s_gcm_kick_ev);       /* dry: ask the present thread to walk */
  }
  
@@ -8808,7 +8919,7 @@ index cdb04646..a2b3d0ab 100644
  void cellGcm_rsx_process_fifo(void)
  {
      AcquireSRWLockExclusive(&s_gcm_fifo_lock);
-@@ -1468,6 +1678,23 @@ void cellGcm_rsx_process_fifo(void)
+@@ -1468,6 +1736,23 @@ void cellGcm_rsx_process_fifo(void)
  
  static void gcm_rsx_process_fifo_unlocked(void)
  {
@@ -8832,7 +8943,7 @@ index cdb04646..a2b3d0ab 100644
      { static unsigned _n = 0; static unsigned long long _t0 = 0;
        extern unsigned long long ps3_ms_now(void);
        _n++;
-@@ -1531,9 +1758,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1531,9 +1816,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
      if (getenv("GCM_DRAINDBG")) {
          static int n = 0;
          if (n++ % 60 == 0)
@@ -8845,7 +8956,7 @@ index cdb04646..a2b3d0ab 100644
      }
  
      /* GCM_SCANREF=1 (one-shot): list every NV406E_SET_REFERENCE actually
-@@ -1613,7 +1841,48 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1613,7 +1899,48 @@ static void gcm_rsx_process_fifo_unlocked(void)
          s_tr_off[s_tr_i % GCM_TRACE_N] = s_fifo_getoff;
          s_tr_w[s_tr_i % GCM_TRACE_N] = w;
          s_tr_i++;
@@ -8894,7 +9005,7 @@ index cdb04646..a2b3d0ab 100644
  
          if ((w & 0xFFFF0000u) == 0xFEAD0000u) {
              /* lv1 driver flip: statically-linked libgcm cellGcmSetFlip writes
-@@ -1653,12 +1922,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1653,12 +1980,54 @@ static void gcm_rsx_process_fifo_unlocked(void)
               * "Command Buffer Overflow" forever. Past the threshold keep
               * draining -- the intermediate presents are frames we are too far
               * behind to show anyway. No-op for a title that is keeping up. */
@@ -8952,7 +9063,7 @@ index cdb04646..a2b3d0ab 100644
          if (type == 1) {                       /* JUMP: 0x20000000 | offset */
              { static int _rd = -1; if (_rd < 0) _rd = getenv("GCM_RECDBG") ? 1 : 0;
                if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
-@@ -1672,14 +1983,82 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1672,14 +2041,82 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * times in one Twisted Metal run, which is the drain burning the
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
@@ -9038,7 +9149,7 @@ index cdb04646..a2b3d0ab 100644
                    break;
                }
                s_fifo_getoff = tgt; }
-@@ -1688,6 +2067,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1688,6 +2125,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          if ((w & 3) == 2) {                    /* CALL: offset | 2 */
              { u32 tgt = w & 0x1FFFFFFCu;
                if (!gcm_io2ea(tgt)) { gcm_fifo_bad_branch("CALL", tgt, w); gcm_fifo_resync_why("unmapped-CALL", &s_fifo_getoff, put); break; }
@@ -9046,7 +9157,7 @@ index cdb04646..a2b3d0ab 100644
                s_fifo_calloff = s_fifo_getoff + 4;
                s_fifo_getoff  = tgt; }
              continue;
-@@ -1699,6 +2079,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1699,6 +2137,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
          }
          if (type == 0 || type == 2) {          /* method (incrementing / NI) */
              u32 count  = (w >> 18) & 0x7FF;
@@ -9057,7 +9168,7 @@ index cdb04646..a2b3d0ab 100644
              u32 method = w & 0x1FFCu;
              u32 subch  = (w >> 13) & 7;
              /* TCONST_FIFO=1: how the title actually streams vertex constants.
-@@ -1743,7 +2127,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1743,7 +2185,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      { static int sn = 0; if (getenv("GCM_RECDBG") && sn++ < 12)
                          fprintf(stderr, "[SEMA] m=0x%02X v=0x%08X off=0x%X\n", m, v, s_sema_offset); }
                      if (m == 0x64u)      s_sema_offset = v;
@@ -9088,7 +9199,7 @@ index cdb04646..a2b3d0ab 100644
                      else if (m == 0x68u && vm_read32(la) != v) {
              /* GCM_SEMA_ACQUIRE=1 makes ACQUIRE actually block, which is what
               * the hardware does. Off by default: a title whose label nothing
-@@ -1758,6 +2164,49 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1758,6 +2222,52 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
@@ -9108,6 +9219,9 @@ index cdb04646..a2b3d0ab 100644
 +                         !getenv("GCM_VAL_WATCH") && !getenv("RSX_LIVE_FEED_DBG") && !getenv("GCM_REPORTDBG") &&
 +                         !rsx_live_draw_enabled() && !rsx_draw_engine_enabled();
 +                  const char* s2 = getenv("GCM_SUBCH1_2D"); s1_2d_fast = s2 ? atoi(s2) : 0;
++                  /* GCM_SUBCH1_M2MF=1: subchannel 1 is libgcm's NV0039 copy
++                   * engine (Gran Turismo 5), not a second 3D binding. */
++                  const char* s3 = getenv("GCM_SUBCH1_M2MF"); if (s3 && s3[0] == '1') s1_2d_fast = 1;
 +              }
 +              const int report = type == 0 ? (method <= 0x1800u && 0x1800u < method + count * 4u) : method == 0x1800u;
 +              if (fast && count && !report && (subch == 0 || (subch == 1 && !s1_2d_fast))) {
@@ -9138,7 +9252,7 @@ index cdb04646..a2b3d0ab 100644
              for (u32 i = 0; i < count; i++) {
                  u32 dea = gcm_io2ea(s_fifo_getoff + 4 + i * 4);
                  if (!dea) break;
-@@ -1775,7 +2224,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1775,7 +2285,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
                                m, vm_read32(dea)); }
                  if (subch == 7 && m == 0x0B00u) {
                      extern void rsx_raise_user_cmd(u32 arg);
@@ -9158,7 +9272,37 @@ index cdb04646..a2b3d0ab 100644
                      continue;
                  }
                  /* GCM_SUBCH1_3D=1: treat subchannel 1 as the 3D object too.
-@@ -1878,6 +2338,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1813,7 +2334,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
+                  * does not claim as 3D. GCM_SUBCH1_2D=1 restores the old split.
+                  */
+                 static int s1_2d = -1;
+-                if (s1_2d < 0) { const char* e = getenv("GCM_SUBCH1_2D"); s1_2d = e ? atoi(e) : 0; }
++                if (s1_2d < 0) { const char* e = getenv("GCM_SUBCH1_2D"); s1_2d = e ? atoi(e) : 0;
++                                 const char* e2 = getenv("GCM_SUBCH1_M2MF"); if (e2 && e2[0] == '1') s1_2d = 1; }
+                 /* GCM_SUBCH_GATE=<file>: while <file> exists, log every method on a
+                  * non-zero subchannel -- what each binding slot actually carries. */
+                 { static const char* sg = (const char*)-1; static unsigned poll; static int open_g;
+@@ -1822,9 +2344,17 @@ static void gcm_rsx_process_fifo_unlocked(void)
+                   /* GCM_VAL_WATCH=<hex>: every FIFO word carrying that value, any method. */
+                   { static u32 vw = 1;
+                     if (vw == 1) { const char* e = getenv("GCM_VAL_WATCH"); vw = e ? (u32)strtoul(e, 0, 16) : 0; }
++                    /* GCM_VAL_WATCH_MAX=<n> (default 64); each line also has
++                     * the next two words, the word's guest address and the
++                     * flip count. */
++                    static int vmax = -1;
++                    if (vmax < 0) { const char* e = getenv("GCM_VAL_WATCH_MAX"); vmax = e ? atoi(e) : 64; }
+                     if (vw && vm_read32(dea) == vw) {
+-                        static int vn; if (vn++ < 64)
+-                            printf("[valwatch] subch=%u method=0x%04X = 0x%08X get=0x%X%c", subch, m, vw, s_fifo_getoff, 10);
++                        extern unsigned long long g_gcm_ft_flips;
++                        static int vn; if (vn++ < vmax)
++                            printf("[valwatch] subch=%u method=0x%04X = 0x%08X next=%08X %08X get=0x%X ea=0x%08X flip=%llu%c", subch, m, vw,
++                                   i + 1 < count ? vm_read32(dea + 4) : 0xFFFFFFFFu, i + 2 < count ? vm_read32(dea + 8) : 0xFFFFFFFFu,
++                                   s_fifo_getoff, dea, g_gcm_ft_flips, 10);
+                     } }
+                   /* ...and surface offsets (colour 0x210/0x218/0x288/0x28C, zeta 0x214) and texture 1 offset */
+                   if (sg && !subch && (cm3 == 0x210 || cm3 == 0x214 || cm3 == 0x218 || cm3 == 0x288 || cm3 == 0x28C ||
+@@ -1878,6 +2408,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  } else if (mfull == 0xE920u || mfull == 0xE924u) {
                      cellGcmSetFlipCommand(vm_read32(dea) & 7u);
                  } else if (subch == 0 || (subch == 1 && !s1_2d)) {
@@ -9166,7 +9310,7 @@ index cdb04646..a2b3d0ab 100644
                      rsx_process_method(&s_state, m, vm_read32(dea));
                      /* NV406E_SET_REFERENCE: queue the fence value for PACED
                       * publication (gcm_ref_publish below) instead of letting a
-@@ -1887,17 +2348,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1887,17 +2418,36 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -9205,7 +9349,7 @@ index cdb04646..a2b3d0ab 100644
              }
              s_fifo_getoff += 4 + count * 4;
              continue;
-@@ -1948,8 +2428,51 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1948,8 +2498,51 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -9257,7 +9401,7 @@ index cdb04646..a2b3d0ab 100644
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
  
-@@ -1957,6 +2480,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1957,6 +2550,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
       * value stays observable to equality-waiters. The wrap recycle path polls
       * the drained EA. */
@@ -9269,7 +9413,7 @@ index cdb04646..a2b3d0ab 100644
      if (getenv("GCM_DRAINDBG")) {
          static int n2 = 0;
          if (n2++ % 60 == 0)
-@@ -2189,6 +2717,7 @@ u32 cellGcm_display_buffer_count(void)
+@@ -2189,6 +2787,7 @@ u32 cellGcm_display_buffer_count(void)
  
  static s32 gcm_flip_request(u32 bufferId, int in_fifo)
  {
@@ -9277,7 +9421,7 @@ index cdb04646..a2b3d0ab 100644
      /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
       * which answers "did it ever flip?" and not "is it still flipping, and how
       * fast?" -- the question that matters when a title stops appearing on
-@@ -2331,6 +2860,26 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
+@@ -2331,6 +2930,26 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
  s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
  {
      (void)ctx;  /* command buffer context -- not used in HLE */
@@ -9304,7 +9448,7 @@ index cdb04646..a2b3d0ab 100644
  
      if (bufferId >= CELL_GCM_MAX_DISPLAY_BUFFER_NUM)
          return CELL_GCM_ERROR_INVALID_VALUE;
-@@ -2339,6 +2888,18 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2339,6 +2958,18 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
          return CELL_GCM_ERROR_INVALID_VALUE;
  
      printf("[cellGcmSys] SetPrepareFlip(bufferId=%u)\n", bufferId);
@@ -9323,7 +9467,7 @@ index cdb04646..a2b3d0ab 100644
  
      s_current_display_buffer_id = bufferId;
      s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
-@@ -2352,6 +2913,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2352,6 +2983,14 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
      if (s_flip_handler_opd && g_ps3_guest_caller && !gcm_flipcb_on_tick_only())
          g_ps3_guest_caller(s_flip_handler_opd, 0, 0, 0, 0, 0, 0, 0, 0);
  
@@ -9338,7 +9482,7 @@ index cdb04646..a2b3d0ab 100644
      return CELL_OK;
  }
  
-@@ -2662,6 +3231,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2662,6 +3301,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -9355,7 +9499,7 @@ index cdb04646..a2b3d0ab 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -3299,7 +3878,17 @@ void cellGcmSetUserCommand(u32 cmd)
+@@ -3299,7 +3948,17 @@ void cellGcmSetUserCommand(u32 cmd)
   * Like the driver cause register, multiple pending commands coalesce. */
  void cellGcmQueueUserCommand(u32 cmd)
  {
@@ -39316,7 +39460,7 @@ index 8d8e4aac..49da6e60 100644
                  ((ctx)->event_status & (ctx)->event_mask))      \
                  _tf = spu_take_interrupt((ctx), _tf);          \
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221e..a91ba7b0 100644
+index 90f3221e..becab3d5 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -20,6 +20,7 @@
@@ -39413,10 +39557,50 @@ index 90f3221e..a91ba7b0 100644
            /* ...and every 5 s, the bytes PUT into / GOT from the range. */
            { static volatile long long s_put, s_get; static unsigned long long s_t0;
              extern unsigned long long ps3_ms_now(void);
-@@ -205,6 +262,28 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -205,6 +262,68 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                  fprintf(stderr, "[dma-range] %.0f B/s put, %.0f B/s get\n",
                          s_put * 1000.0 / (now - s_t0), s_get * 1000.0 / (now - s_t0));
                  s_put = s_get = 0; s_t0 = now; } } } }
++    /* SPU_JOBDESC=<hex ea>: a job whose parameter block is GOT from this EA
++     * ({?, ?, src, srcsize, dst, dstsize, ...}, GT5's inflate job) logs the
++     * block with a hash of its source, and every later GET from that source
++     * by the same SPU thread is re-hashed against the bytes as they were when
++     * the block was read: "[jobdesc] CHANGED" means the source buffer was
++     * rewritten while the job was still reading it. */
++    { static uint32_t s_jd = 1;
++      if (s_jd == 1) { const char* e = getenv("SPU_JOBDESC"); s_jd = e && *e ? (uint32_t)strtoul(e, 0, 16) : 0; }
++      if (s_jd && (cmd & 0xF0) == 0x40) {
++          extern uint8_t* vm_base; extern unsigned long long ps3_ms_now(void);
++          static SPU_DMA_TLS uint32_t j_src, j_len, j_dst, j_hash[64], j_seq;
++          static volatile long s_seq;
++          #define JD_W(p) (((uint32_t)(p)[0] << 24) | ((uint32_t)(p)[1] << 16) | ((uint32_t)(p)[2] << 8) | (p)[3])
++          #define JD_FNV(p, n, h) do { h = 2166136261u; for (uint32_t _i = 0; _i < (n); _i++) h = (h ^ (p)[_i]) * 16777619u; } while (0)
++          if ((uint32_t)ea == s_jd) {
++              const uint8_t* d = vm_base + (uint32_t)ea;
++              uint32_t w[8]; for (int i = 0; i < 8; i++) w[i] = JD_W(d + 4 * i);
++              j_src = w[2]; j_len = w[3] > 64 * 16384 ? 64 * 16384 : w[3]; j_dst = w[4];
++              j_seq = (uint32_t)_InterlockedIncrement(&s_seq);
++              uint32_t all; const uint8_t* s = vm_base + j_src; JD_FNV(s, j_len, all);
++              for (uint32_t k = 0; k * 16384 < j_len; k++) {
++                  uint32_t n = j_len - k * 16384; if (n > 16384) n = 16384;
++                  JD_FNV(s + k * 16384, n, j_hash[k]);
++              }
++              fprintf(stderr, "[jobdesc] #%u t=%llu spu=%p %08X %08X src=%08X len=%08X dst=%08X dlen=%08X %08X %08X"
++                              " srchash=%08X src0=%02X%02X%02X%02X%02X%02X%02X%02X\n",
++                      j_seq, ps3_ms_now(), (void*)spu, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], all,
++                      s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]);
++          } else if (j_len && (uint32_t)ea >= j_src && (uint32_t)ea < j_src + j_len && (((uint32_t)ea - j_src) & 16383) == 0) {
++              uint32_t k = ((uint32_t)ea - j_src) >> 14, n = j_len - k * 16384, h;
++              if (n > 16384) n = 16384;
++              if (size < n) n = size;
++              JD_FNV(vm_base + (uint32_t)ea, n, h);
++              if (n == (j_len - k * 16384 > 16384 ? 16384 : j_len - k * 16384) && h != j_hash[k])
++                  fprintf(stderr, "[jobdesc] #%u CHANGED t=%llu piece %u of src=%08X (dst=%08X): %08X -> %08X\n",
++                          j_seq, ps3_ms_now(), k, j_src, j_dst, j_hash[k], h);
++          }
++          #undef JD_W
++          #undef JD_FNV
++      } }
 +    /* SPU_SPINDBG=1: an SPU that GETs the same bytes over and over is polling
 +     * main memory for something to change. After 20,000 identical GETs in a
 +     * row (then every 500,000) print where, what it keeps reading, and r5 and
@@ -39442,7 +39626,7 @@ index 90f3221e..a91ba7b0 100644
      /* Malformed transfers are REJECTED, as the hardware MFC does. The rules
       * are the ones the SDK's own dma.h asserts: a non-zero size, at most
       * 16 KB, a multiple of 16 once >= 16 bytes, and LSA/EA sharing 16-byte
-@@ -673,6 +752,29 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -673,6 +792,29 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
           * find the pushbuffer; NULL for every title that does not. */
          { extern void (*g_spu_put_hook)(uint32_t ea, uint32_t size);
            if (g_spu_put_hook) g_spu_put_hook((uint32_t)ea, size); }
@@ -39472,7 +39656,7 @@ index 90f3221e..a91ba7b0 100644
          /* Bink sync-area watch (armed by the PPU barrier probe): log SPU PUTs
           * that touch the per-SPU lane counters. */
          { extern uint32_t g_barrier_sync_watch;
-@@ -767,11 +869,10 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+@@ -767,11 +909,10 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
               * handler sees g_WwsJob_loadJobState still kNone and (correctly)
               * declines the Load->Run advance, and clear-on-read ch25 eats the
               * only stall. See spu_drain.c: g_sn_defer / SPU_SN_DEFER. */
@@ -39487,7 +39671,7 @@ index 90f3221e..a91ba7b0 100644
              spu_ch_wake(spu);
              { static int _n = 0; if (_n++ < 16)
                  fprintf(stderr, "[mfc-list] STALL img=%d tag=%u elem@0x%05X "
-@@ -811,7 +912,10 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -811,7 +952,10 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
       * about to land. If the handler was supposed to fill in the claimed job's
       * EA and did not, the elements read back empty and the transfer is a no-op
       * -- which looks identical to "the pipeline never ran" from the PPU side. */
@@ -39499,7 +39683,7 @@ index 90f3221e..a91ba7b0 100644
        fprintf(stderr, "[mfc-list] RESUME-ELEMS dest=0x%05X elems\n0x%05X:",
                spu->list_stall_dest_lsa[t], _e);
        for (uint32_t _o = 0; _o < 16 && (_e + _o) + 3 < SPU_LS_SIZE; _o += 4)
-@@ -937,9 +1041,16 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -937,9 +1081,16 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
        if (s_wl == -2) { const char* e7 = getenv("SPU_WATCHLSA");
                          s_wl = e7 ? 1 : 0;
                          s_wlsa = e7 ? (uint32_t)strtoul(e7, 0, 16) : 0u; }
@@ -39518,7 +39702,7 @@ index 90f3221e..a91ba7b0 100644
                const uint8_t* q = spu->ls + (s_wlsa & SPU_LS_MASK);
                fprintf(stderr, "[watchlsa] n=%lu spu%u cmd=0x%02X ea=0x%08X"
                                " lsa=0x%05X size=%u pc=0x%05X ->"
-@@ -1176,18 +1287,61 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1176,18 +1327,61 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * pages on demand the counter never advanced and a spinning job simply hung
       * the chain walker instead. Count repeats whether or not the transfer
       * succeeds, and halt at a known pc rather than hanging silently. */

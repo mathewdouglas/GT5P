@@ -872,6 +872,14 @@ int main(int argc, char* argv[])
         _putenv_s("PS3_PAGE_FAULT", "2");
     if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("PS3_MMAPPER_LV2_AREA"))
         _putenv_s("PS3_MMAPPER_LV2_AREA", "1");
+    /* GT5's libgcm binds the NV0039 copy engine to FIFO subchannel 1, and its
+     * texture heap compaction moves textures with it. The walker took
+     * subchannel 1 for 3D (Gran Turismo 5 Prologue's SPU lists), so the
+     * copies were dropped and the moved textures' materials sampled stale
+     * VRAM: the purple road (docs/progress-gt5.md, Phase 21).
+     * GCM_SUBCH1_M2MF=0 for the old routing. */
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("GCM_SUBCH1_M2MF"))
+        _putenv_s("GCM_SUBCH1_M2MF", "1");
 
     /* SPU render lanes on cores of their own (strict pinning): 1.14 times
      * faster lanes, Ferrari at a median 28.2 fps against 24.8 free, and no

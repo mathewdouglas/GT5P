@@ -7,8 +7,65 @@ Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 ## Phase 21 — The race runs; a faster route there (2026-10-28)
 
 **Status.** Arcade → High Speed Ring → race, at 30 fps on the grid screen
-and 40-60 fps racing. Open: the road is blue/purple and noisy, the kerbs
-are rainbow-coloured and some barriers are noisy (below).
+and 40-60 fps racing. The purple road is fixed (2026-10-29, next
+paragraph): asphalt, markings, kerbs, banners and mirror now draw. Still
+to check against that fix: the kerbs' rainbow noise and the noisy barriers
+(the shot after the fix shows neither), the livery of a car in the mirror.
+
+**The purple road was a dropped copy engine (fixed, 2026-10-29).**
+GT5's libgcm binds the NV0039 memory-to-memory engine to FIFO subchannel 1
+(`cellGcmSetTransferData`, func `0x00D38134`: headers `0x00082184` DMA
+in/out, then `0x0020230C` offset in/out, pitch in/out, line length, line
+count, format `0x101`, buffer notify). The FIFO walker sent subchannel 1
+to the 3D engine, a rule made for Gran Turismo 5 Prologue's SPU lists,
+which put NV4097 methods there. NV0039 was not implemented at all. So
+every copy was dropped, and its registers landed on NV4097's alpha-test
+and blend methods (`0x30C`-`0x328`). Two things depend on those copies:
+
+- **Texture tails.** Every texture is loaded in two parts: chunks the SPU
+  inflates (lifted body `0x01788E00`), and a small-mip tail copied from a
+  staging area (entry `+0`, size `+4` of the 32-byte texture table
+  entries). Those tails were never copied.
+- **Heap compaction.** When a texture is freed (func `0x00C28530`), the
+  texture manager's tick (func `0x00A22A54`) runs the allocator's
+  defragmenter (func `0x00C288D4`, 8 MB a tick). That asks the owner
+  (vtable `0x01886EC8`) to start a move: `+8` = `0x01091788` issues the
+  NV0039 copy through func `0x00D2A970`. Later it calls `+0x10` =
+  `0x010916DC`, which repoints every material record holding the old
+  offset. With the copy dropped, the records moved and the bytes did not.
+  On High Speed Ring the colour texture (handle `0x816`, DXT5 512x512)
+  slid into the slot of a freed 1024x512 DXT1 normal map of the same
+  rounded size (`0x55580`). The road's colour layer then sampled the
+  normal map: the lilac colour.
+
+`GCM_SUBCH1_M2MF=1` (set by GT5's `main.cpp`; `=0` for the old routing)
+sends subchannel 1 to a new NV0039 engine in the walker: line copies with
+memmove, in the order that is safe when source and destination overlap.
+Only format `0x101` (byte in, byte out) is implemented; anything else is
+logged and skipped. Before the fix, every run checked had a normal map on a
+colour unit; after it, none did (`RSX_TEXNM_CHECK=09B96581`).
+
+How it was found, for the next one like it:
+
+- `SPU_JOBDESC=<ea>` logs each inflate job's parameter block with a hash of
+  its source, and flags a source rewritten under a running job. There
+  were none, so a staging-buffer race was ruled out.
+- `FS_READLOG=<lo>-<hi>` (`FS_READLOG_FRAMES=<n>` adds guest call chains)
+  logs `cellFsRead` landing in a range.
+- `PPU_WVAL=<value>` on the destination address found the allocator
+  (func `0x00C28B54`, first fit, handles mapped to addresses by a hash).
+  On the record offset it found the record fix-up (func `0x00A20B68`,
+  key = allocator handle).
+- Temporary prints in the generated loader (func `0x00A21884`, a state
+  machine: queue, sorted file-key table, allocate, inflate chunks, insert)
+  showed the load itself consistent.
+- `GCM_VAL_WATCH=<value>` now prints the next two words, the guest address
+  and the flip (`GCM_VAL_WATCH_MAX=<n>`). It showed the SPU-built ring
+  setting unit 0 to the normal map's offset with the DXT5 format word.
+  It also showed the stray NV0039 words on subchannel 1.
+- `GT5P_MEMSNAP=RaceStart+12000` caught the allocator table after the
+  compaction: handle `0x816` at the old normal map's address.
+- `GCM_M2MF_DBG=<n>` logs the first n copies.
 
 **The race load hung the GPU.** Every run reached the race loading screen
 and then crawled at 1-2 fps for minutes, the bar near full. The first race
@@ -52,8 +109,8 @@ every 3 s until the screen wanted:
 The script prints each milestone with its time; `-ShotsFrom` picks where
 shots start (grid: RaceLoad, race: RaceStart).
 
-**The purple road: textures loaded into each other's slots (cause found,
-not fixed; 2026-10-29).** Measured, with the scene target read raw
+**The purple road: textures loaded into each other's slots (superseded by the fix above;
+2026-10-29).** Measured, with the scene target read raw
 (`RSX_CAP_ALLRT=1`, below) instead of through tone mapping and motion blur:
 
 - Road program `0x09B96581` blends four colour layers (units 2, 3, 1, 0),
