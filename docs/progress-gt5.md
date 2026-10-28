@@ -38,8 +38,29 @@ is 59, so presses added after the car-list route were dropped silently: the
 earlier "pick a car" runs never picked one. It now holds 256 and says so
 when more are given.
 
-**Next:** the loading dip (about 2 s of 65-80 ms frames entering the car
-list), and the race.
+**The loading dip, measured (not fixed).** Entering the car list, about
+2.5 s of 60-85 ms frames, then a steady 45 fps (`GT5P_FRAME_LOG`, a
+`PS3_TIMELINE` across the entry, `tl.py`):
+
+- The FIFO walk stays at 8-14 ms a frame, and no guest or host thread is
+  saturated (`GT5P_SAMPLE=12`): the frames wait on SPU work.
+- The render workload `Wws_Job/GPUSyncArray` (wid 4; the game allows it 4
+  SPUs, `maxC=4`) takes about 65 ms a pass for those 2.5 s, then about 21 ms:
+  the 21 ms is what holds the car list at 45 fps.
+- `GT5P_SAMPLE_WID=4`: 65% in job body `0x0196FF40` (its software-pipelined
+  loop `0xB240` alone 21%), 35% runtime (`mfc_do_transfer` 8%,
+  `spu_indirect_branch` 7%, `spu_lookup_fast` 4%, `spu_drain_call_impl` 4%).
+  The dip's profile is the same as the steady one: the same jobs do about
+  three times the work for a while (plausibly the reflection cube built on
+  entry), not different code.
+- Not it: pipeline creation (about 220 new pipelines on entry; background
+  creation and startup preload each change the dip little), lane pinning
+  (`SPURS_LANE_PIN=0`: 41.9 fps against 45.1), `spu_fma` (no libm call).
+- So the dip and the 45 fps are SPU compute. Faster needs GT5P-style work on
+  this body: a native replacement for its hot loop, or cutting the dispatch
+  overhead.
+
+**Next:** the race (High Speed Ring loads), then the SPU render cost above.
 
 ## Phase 19 — Cars painted; fewer car-list freezes (2026-10-28)
 
