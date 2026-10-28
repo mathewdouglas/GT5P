@@ -32490,7 +32490,7 @@ index 9cc36701..5ca4416a 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d02..721a008e 100644
+index 0b235d02..82f1996f 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,70 +1,71 @@
@@ -32629,7 +32629,7 @@ index 0b235d02..721a008e 100644
  /* Called after an SPU atomic commits a 128-byte line, with the lock-line lock
   * released. cellSpurs sets it so a PPU blocked in cellSpursEventFlagWait wakes
   * when a task sets the flag, instead of on its next 2 ms poll. */
-@@ -105,2667 +106,2863 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -105,2667 +106,2914 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -32752,6 +32752,7 @@ index 0b235d02..721a008e 100644
 -    ctx->irq_frame = 0;
 +static SPU_TLS jmp_buf s_spu_halt_env;
 +static SPU_TLS int     s_spu_halt_armed = 0;
++static SPU_TLS const char* s_spu_restart_why;   /* which trigger, for the restart log */
 +
 +/* A non-local return replaces the old host call chain without changing
 + * any architectural registers, local store, or pending guest work. */
@@ -32759,6 +32760,7 @@ index 0b235d02..721a008e 100644
 +{
 +    g_spu_trampoline_fn = 0;
 +    SPU_IRQMARK(2);
++    s_spu_restart_why = "dispatch";
 +    if (s_spu_halt_armed) longjmp(s_spu_halt_env, 2);
 +    fprintf(stderr, "[spu] non-local return outside execution driver at 0x%05X\n", ctx->pc);
 +    ctx->status = SPU_STATUS_STOPPED_BY_HALT;
@@ -33413,7 +33415,26 @@ index 0b235d02..721a008e 100644
 +        /* A one-way guest stack reset invalidates every lifted host caller.
 +         * Re-enter its target with the same guest state on the driver stack. */
 +        SPU_IRQMARK(3);
++        const uint32_t depth0 = ctx->host_depth;
 +        ctx->host_depth = 0;
++        /* ...including the drain frames an interrupt taken in them would iret
++         * to. Left registered, the iret longjmp'd into a frame this restart
++         * had discarded: STATUS_BAD_STACK on a render lane (Gran Turismo 5's
++         * Arcade car list). With none, an iret still pending unwinds to this
++         * driver, as for an interrupt taken at depth 0.
++         * SPU_RESTART_KEEP_IRQ_FRAME=1 keeps the old, dangling frame. */
++        { static int keep = -1;
++          if (keep < 0) { const char* e = getenv("SPU_RESTART_KEEP_IRQ_FRAME"); keep = (e && *e == '1'); }
++          if (ctx->irq_frame) {
++              static volatile long n = 0;
++              long k = _InterlockedIncrement(&n);
++              if (k <= 8 || (k & (k - 1)) == 0)
++                  fprintf(stderr, "[spu] restart (%s) at 0x%05X img=%d ovl=%d from depth %u drops irq frames (irq_saved=%d srr0=0x%05X int=%d) #%ld\n",
++                          s_spu_restart_why ? s_spu_restart_why : "?", ctx->pc & SPU_LS_MASK, ctx->image_id,
++                          (int)ctx->resident_ovl, depth0, ctx->irq_saved,
++                          ctx->irq_resume_pc & SPU_LS_MASK, ctx->int_enable, k);
++          }
++          if (!keep) ctx->irq_frame = 0; }
 +        g_spu_trampoline_fn = 0;
 +        spu_indirect_branch(ctx);
 +        SPU_DRAIN(ctx);
@@ -36052,6 +36073,7 @@ index 0b235d02..721a008e 100644
 +        if (ctx->pc == s_stack_reset[i].entry &&
 +            fn == spu_lookup(ctx->pc, s_stack_reset[i].image_id)) {
 +            g_spu_trampoline_fn = 0;
++            s_spu_restart_why = "stack-reset";
 +            longjmp(s_spu_halt_env, 2);
 +        }
 +}
@@ -36213,8 +36235,17 @@ index 0b235d02..721a008e 100644
 +        uint32_t base = ctx->resident_code[slot].lsa;
 +        uint32_t end = base + ctx->resident_code[slot].size;
 +        if (lsa < end && lsa + size > base &&
-+            (lsa < base || ea != ctx->resident_code[slot].source_ea + (lsa - base)))
++            (lsa < base || ea != ctx->resident_code[slot].source_ea + (lsa - base))) {
++            /* SPU_OVL_SPANLOG=<min span, hex>: which transfer evicted a
++             * resident body at least that large. */
++            { static long on = -1; static volatile long n = 0;
++              if (on < 0) { const char* e = getenv("SPU_OVL_SPANLOG"); on = e ? strtol(e, 0, 16) : 0; }
++              if (on && ctx->resident_code[slot].size >= (uint32_t)on && _InterlockedIncrement(&n) <= 64)
++                  fprintf(stderr, "[spu-ovl] GET ea=0x%08X lsa=0x%05X size=%u (pc=0x%05X) evicts image %d at LS 0x%05X+0x%X (src 0x%08X)\n",
++                          ea, lsa, size, ctx->pc & SPU_LS_MASK, ctx->resident_code[slot].image_id,
++                          base, ctx->resident_code[slot].size, ctx->resident_code[slot].source_ea); }
 +            ctx->resident_code[slot].image_id = 0;
++        }
 +    }
 +    for (int i = 0; i < s_ovl_src_count; i++) {
 +        const spu_ovl_src* o = &s_ovl_src[i];
@@ -36596,8 +36627,10 @@ index 0b235d02..721a008e 100644
 +         * III`s job kernel dies here on an `ilh` at LS 0x6638 -- a perfectly
 +         * ordinary instruction the interpreter handles -- and with it the
 +         * decompression job it was running never completes. */
-+        { static int _n = 0;
-+          if (_n++ < 8) {
++        { static int _n = 0, _hi = 0;
++          /* Boot-time stubs use up the first 8; job-body code the job
++           * manager (image 1) runs, at LS 0x4000 up, gets 8 of its own. */
++          if (_n++ < 8 || (pc >= 0x4000 && ctx->image_id == 1 && _hi++ < 8)) {
 +              fprintf(stderr, "[spu-smc] microstep img=%d pc=0x%05X word 0x%08X not in the"
 +                      " microstep set -- handing to the interpreter (steps=%d)\n",
 +                      ctx->image_id, pc, w, steps);
@@ -37575,6 +37608,7 @@ index 0b235d02..721a008e 100644
 +             * Resume at depth zero so SPU_RET follows the restored guest link. */
 +            ctx->resident_task = ti;
 +            g_spu_trampoline_fn = 0;
++            s_spu_restart_why = "task";
 +            longjmp(s_spu_halt_env, 2);
 +        }
 +        if (!ti && !ctx->resident_task) ti = spu_taskset_task_image(ctx->pc);
@@ -37986,9 +38020,26 @@ index 0b235d02..721a008e 100644
 +      static int _bt0[BT0_MAX_IMG];
 +      unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
 +                     ? (unsigned)ctx->image_id : 0;
-+      if (_bt0[img]++ < BT0_PER_IMG)
++      if (_bt0[img]++ < BT0_PER_IMG) {
 +        fprintf(stderr, "[SPU] BRANCH-TO-0 unresolved pc=0x%05X image=%d lr=0x%05X\n",
-+                ctx->pc, ctx->image_id, ctx->gpr[0]._u32[0] & SPU_LS_MASK); }
++                ctx->pc, ctx->image_id, ctx->gpr[0]._u32[0] & SPU_LS_MASK);
++        /* What code the runtime believed was resident, and where we came from. */
++        if (_bt0[img] <= 3) {
++            fprintf(stderr, "[SPU]   ovl=%d task=%d depth=%u spans:", (int)ctx->resident_ovl,
++                    (int)ctx->resident_task, ctx->host_depth);
++            for (unsigned s = 0; s < 4; ++s)
++                fprintf(stderr, " [img %d LS 0x%05X+0x%X src 0x%08X]", ctx->resident_code[s].image_id,
++                        ctx->resident_code[s].lsa, ctx->resident_code[s].size, ctx->resident_code[s].source_ea);
++            fprintf(stderr, " recent:");
++            for (unsigned k = 0; k < 8; ++k)
++                fprintf(stderr, " %05X", g_spu_pch[(g_spu_pch_n - 8 + k) & 7] & SPU_LS_MASK);
++            fprintf(stderr, " LS[pc-0x10..]:");
++            for (int k = -16; k < 16; k += 4) {
++                const uint8_t* q = ctx->ls + ((ctx->pc + (uint32_t)k) & SPU_LS_MASK);
++                fprintf(stderr, " %02X%02X%02X%02X", q[0], q[1], q[2], q[3]);
++            }
++            fprintf(stderr, " r0=%05X r1=%05X\n", ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[1]._u32[0] & SPU_LS_MASK);
++        } } }
 +    /* One-shot: the FMOD null-handler DSP node carries a PPU descriptor EA at
 +     * node+0x14 (observed 0x93C3C0). Dump it to identify which plugin/unit
 +     * type never got its SPU code streamed (env SPU_DSPDESC=<hex ea>). */
@@ -38994,7 +39045,7 @@ index 90f3221e..ac8ed72e 100644
                spu_halt(spu);
            }
 diff --git a/runtime/spu/spu_drain.c b/runtime/spu/spu_drain.c
-index 931d3b34..93c1081d 100644
+index 931d3b34..1908711d 100644
 --- a/runtime/spu/spu_drain.c
 +++ b/runtime/spu/spu_drain.c
 @@ -5,6 +5,12 @@
@@ -39358,8 +39409,28 @@ index 931d3b34..93c1081d 100644
                          ctx->host_depth = f.depth;
                          ctx->image_id = f.image_id;
                          g_spu_trampoline_fn = spu_indirect_branch;
-@@ -452,10 +605,29 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
-             spu_drain_fn fn = ctx->resident_ovl ? spu_lookup(pc, ctx->resident_ovl) : 0;
+@@ -449,13 +602,48 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
+         }
+         {
+             uint32_t pc = ctx->pc & SPU_LS_MASK;
+-            spu_drain_fn fn = ctx->resident_ovl ? spu_lookup(pc, ctx->resident_ovl) : 0;
++            spu_drain_fn fn = 0;
++            /* A job body resident by span (spu_overlay_register_region) owns
++             * its LS range, as in spu_indirect_branch. Without this a body's
++             * return to a lifted entry -- GT5's 0x0173BF00 returning from its
++             * main function to 0x40DC -- missed here and unwound every host
++             * frame (spu_restart_dispatch), and the returns pending in them
++             * then fell to the interpreter. SPU_DRAIN_SPANS=0: old lookup. */
++            { static int spans = -1;
++              if (spans < 0) { const char* e = getenv("SPU_DRAIN_SPANS"); spans = !(e && *e == '0'); }
++              if (spans)
++                  for (unsigned slot = 0; slot < 4; ++slot)
++                      if (ctx->resident_code[slot].image_id && pc >= ctx->resident_code[slot].lsa &&
++                          pc - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size) {
++                          fn = spu_lookup(pc, ctx->resident_code[slot].image_id);
++                          break;
++                      } }
++            if (!fn && ctx->resident_ovl) fn = spu_lookup(pc, ctx->resident_ovl);
              if (!fn) fn = spu_lookup(pc, ctx->image_id);
              if (fn) {
 -                { static int _n = 0; if (_n++ < 8)
@@ -39390,7 +39461,7 @@ index 931d3b34..93c1081d 100644
                  g_spu_trampoline_fn = spu_indirect_branch;
                  continue;
              }
-@@ -463,6 +635,7 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
+@@ -463,6 +651,7 @@ void spu_drain_call(spu_context* ctx, uint32_t return_pc)
          {
              extern void spu_restart_dispatch(spu_context*);
              SPU_DRAIN_POP_IRQ();

@@ -65,6 +65,14 @@ RESUME_SEEDS = os.environ.get("SPU_RESUME_SEEDS", "1") != "0"
 # SPU_ABS_TABLES=0 lifts without their targets.
 ABS_TABLES = os.environ.get("SPU_ABS_TABLES", "1") != "0"
 
+# Bodies linked at their load address (GT5 Phase 18): their `ila` values are
+# local-store addresses, not offsets, and r126 comes out 0. SPU_LINK_BASE=0
+# reads every body as linked at 0, as before.
+LINK_BASE = os.environ.get("SPU_LINK_BASE", "1") != "0"
+# Extra entry points for those bodies (linked_seeds). SPU_LINKED_SEEDS=0 at
+# lift time lifts without them.
+LINKED_SEEDS = os.environ.get("SPU_LINKED_SEEDS", "1") != "0"
+
 
 def run(*args):
     r = subprocess.run([sys.executable, *map(str, args)],
@@ -129,6 +137,39 @@ def abs_tables(raw, lsa):
     return {t for t in found if int.from_bytes(raw[t - lsa:t - lsa + 4], "big") != 0}
 
 
+def linked_seeds(raw, lsa):
+    """Entries the function finder misses in a body linked at its load
+    address (GT5's car-list render body 0x0173BF00, Phase 18). Each fell to
+    the SPU interpreter, which has no `mpyui`, and the job died:
+    - a pointer table's quadword with one pointer next to quadwords
+      abs_tables accepts (0x7AD0 at LS 0x27040);
+    - the code after a `bi $r0` return, which starts the next function
+      (0x21C40, reached through a computed pointer);
+    - `brsl rX, +4` then `ai rX, rX, n`: a computed target n bytes past the
+      `ai` (0x2369C, branched to by `bihz`)."""
+    lo, hi = lsa + 0x10, lsa + len(raw)
+    words = [int.from_bytes(raw[i:i + 4], "big") for i in range(0, len(raw) - 3, 4)]
+    found = set()
+    quads = []
+    for o in range(0x20, len(raw) - 15, 16):
+        ws = words[o // 4:o // 4 + 4]
+        ok = all(w == 0 or (w % 4 == 0 and lo <= w < hi) for w in ws)
+        quads.append((o, ws, ok, sum(1 for w in ws if w)))
+    for k, (o, ws, ok, n) in enumerate(quads):
+        if ok and n == 1 and any(0 <= k + d < len(quads) and quads[k + d][2] and quads[k + d][3] >= 2
+                                 for d in (-1, 1)):
+            found |= {w for w in ws if w}
+    for i, w in enumerate(words[:-1]):
+        if w == 0x35000000 and words[i + 1]:                  # bi $r0
+            found.add(lsa + 4 * (i + 1))
+        if w >> 23 == 0x066 and (w >> 7) & 0xFFFF == 1:      # brsl rX, +4
+            x, nxt = w & 0x7F, words[i + 1]
+            if nxt >> 24 == 0x1C and nxt & 0x7F == x and (nxt >> 7) & 0x7F == x:   # ai rX, rX, n
+                n = ((nxt >> 14) & 0x3FF) - (0x400 if (nxt >> 23) & 1 else 0)
+                found.add(lsa + 4 * (i + 1) + n)
+    return {t for t in found if lo <= t < hi and t % 4 == 0 and words[(t - lsa) // 4]}
+
+
 def resume_points(raw, base, funcs_json):
     """Call-return addresses a resumed job can come back through: those of
     calls whose callee can reach an interrupt-enable point (a branch with the
@@ -164,18 +205,39 @@ def resume_points(raw, base, funcs_json):
     return {pc + 4 for pc, t, _ in calls if reaches(t)}
 
 
+def link_base(raw):
+    """The address a body was linked at. Its prologue finds its load address
+    with `ila r2, L` + `brsl r126, L` + `sf r126, r2, r126`, so r126 is the
+    load address less the link address: L less the label's offset. Most
+    bodies are linked at 0 (r126 = load address); GT5's 0x0165A700,
+    0x01673D80 and 0x0173BF00 are linked at 0x4000, where they run, so r126
+    is 0 and their `ila` values are already local-store addresses."""
+    if not LINK_BASE:
+        return 0
+    w = [int.from_bytes(raw[i:i + 4], "big") for i in range(0, min(len(raw), 0x400) - 3, 4)]
+    for i, x in enumerate(w):
+        if x >> 25 != 0x21 or x & 0x7F != 2:                 # ila r2
+            continue
+        for j in range(i + 1, min(i + 5, len(w))):
+            if w[j] >> 23 == 0x066 and w[j] & 0x7F == 126:  # brsl r126
+                tgt = (j * 4 + (((w[j] >> 7) & 0xFFFF) << 2)) & 0x3FFFF
+                return ((x >> 7) & 0x3FFFF) - tgt
+    return 0
+
+
 def pic_continuations(raw, lsa):
     """Addresses a body builds as `ila rT, off` + `a rT, rT, r126` and later
     branches to. r126 holds the load address, so the lifter, which sees only
     the offset, does not take them for code."""
     words = [int.from_bytes(raw[i:i + 4], "big") for i in range(0, len(raw) - 3, 4)]
+    base = link_base(raw)
     found = set()
     for w, nxt in zip(words, words[1:]):
         if w >> 25 != 0x21 or nxt >> 21 != 0x0C0:         # ila, a
             continue
-        rt, off = w & 0x7F, (w >> 7) & 0x3FFFF
+        rt, off = w & 0x7F, ((w >> 7) & 0x3FFFF) - base
         rb, ra, rt2 = (nxt >> 14) & 0x7F, (nxt >> 7) & 0x7F, nxt & 0x7F
-        if rt2 == rt and {ra, rb} == {rt, 126} and off < len(raw) and off % 4 == 0:
+        if rt2 == rt and {ra, rb} == {rt, 126} and 0 <= off < len(raw) and off % 4 == 0:
             found.add(lsa + off)
     return found
 
@@ -189,12 +251,13 @@ def pic_tables(raw, lsa):
     SPU interpreter (Phase 47: job j307E5DC7's table at LS 0x1C84, three of
     its 38 targets unlifted)."""
     words = [int.from_bytes(raw[i:i + 4], "big") for i in range(0, len(raw) - 3, 4)]
+    base = link_base(raw)
     found = set()
     for i, w in enumerate(words):
         if w >> 25 != 0x21:                                 # ila
             continue
-        rt, off = w & 0x7F, (w >> 7) & 0x3FFFF
-        if off % 4 or off >= len(raw):
+        rt, off = w & 0x7F, ((w >> 7) & 0x3FFFF) - base
+        if off % 4 or not 0 <= off < len(raw):
             continue
         if not any(nxt >> 21 == 0x0C0 and {(nxt >> 7) & 0x7F, (nxt >> 14) & 0x7F} == {rt, 126}
                    for nxt in words[i + 1:i + 9]):         # a rY, rT, r126
@@ -349,6 +412,8 @@ def main():    # --chain: apply chain_forward to the job images already generate
             seeds |= pic_tables(raw, lsa)
         if ABS_TABLES:
             seeds |= abs_tables(raw, lsa)
+        if LINKED_SEEDS and lsa and link_base(raw) == lsa:
+            seeds |= linked_seeds(raw, lsa)
         n = lift(blob, prefix, outdir, base=lsa, extra=",".join(map(hex, sorted(seeds))))
         total += n
         chained = f" ({chain_forward(outdir)} transfers made direct)" if CHAIN_BODIES else ""

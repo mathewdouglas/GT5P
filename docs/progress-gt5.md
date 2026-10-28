@@ -4,6 +4,68 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 18 — Arcade car list: crash fixed, car models load (2026-10-28)
+
+**Status.** Arcade → Single Race → Beginner → High Speed Ring → car list no
+longer crashes. The car list draws each car's 3D model and can be browsed
+(Copen, then Fiat 500). The cars draw black (open). Picking a car (Cross on
+the list) then freezes on the next screen (open; see below).
+
+**The crash.** `0xC0000028` (STATUS_BAD_STACK) on a `spurs-lane` thread, not
+an access violation, so the report started at a misleading "fault chain" of
+`func_00D803D4` (host addresses of lifted SPU code named as the nearest PPU
+function). The host frames (`build/gt5.map`) were the job manager (image 1)
+→ `spu_drain_call_impl` → `spu_indirect_branch` →
+`spu_irq_regs_maybe_restore` → `longjmp` into an interrupt frame that no
+longer existed. Three faults stacked up:
+
+1. **Unlifted job-body entries.** The car-list render body `0x0173BF00`
+   (141 KB) is linked at its load address 0x4000: its prologue
+   (`ila r2, 0x4068; brsl r126; sf r126, r2, r126`) leaves r126 = 0, and its
+   `ila` values are LS addresses. `lift_spu_jobs.py`'s `pic_tables` and
+   `pic_continuations` read them as offsets from 0, so the 75-entry jump
+   table at LS 0x12D3C was read from the wrong place and 25 of its 44
+   handlers were never lifted. Bodies `0x0165A700` and `0x01673D80` are
+   linked the same way. New in the script:
+   - `link_base()` (`SPU_LINK_BASE=0` at lift time: old reading);
+   - `linked_seeds()` for such bodies (`SPU_LINKED_SEEDS=0`): pointer-table
+     quadwords with one pointer (LS 0x27040 → 0x7AD0), code after a `bi $r0`
+     (0x21C40), and `brsl rX, +4; ai rX, rX, n` targets (0x2369C).
+   At run time those handlers fell to the SPU interpreter, which has no
+   `mpyui` (LS 0x17D74), and branched to 0.
+2. **The drain loop ignored span-resident bodies.** `spu_drain_call_impl`
+   looked up only `resident_ovl` and the current image, not the
+   `resident_code` spans `spu_indirect_branch` uses. The body's return to
+   its lifted entry 0x40DC missed, and `spu_restart_dispatch` unwound every
+   host frame, so every return still pending in them became a lookup of a
+   mid-function address. It now checks the spans (`SPU_DRAIN_SPANS=0`: old).
+3. **The restart left a dangling interrupt frame.** `spu_run_with_halt`'s
+   restart (`case 2`) reset `host_depth` but kept `ctx->irq_frame`, a drain
+   frame it had just discarded; the next interrupt return `longjmp`'d into
+   it. It now clears it (`SPU_RESTART_KEEP_IRQ_FRAME=1`: old).
+
+**Still open: freeze after picking a car.** Render workload 4's lanes spin
+at 0x4600 waiting for RSX label `0x030004C0` (ring space) with the FIFO
+empty (`get == put`), the shape of Phase 11's render stall. Not
+investigated.
+
+**Diagnostics added.**
+
+- The crash report names the exception code and host thread, and prints
+  the raw host chain (`host chain (exe+)`), to resolve against
+  `build/gt5.map`.
+- `SPU_OVL_SPANLOG=<min span, hex>`: transfers that evict a resident body.
+- The `BRANCH-TO-0` report lists the resident spans, the last drain pcs and
+  the LS words around the pc. The interpreter hand-off log keeps 8 lines for
+  job-body code run by image 1 (boot stubs used up the old 8).
+- The restart log names its trigger (`dispatch`, `stack-reset`, `task`).
+
+**Test route** (`gt5boot.ps1`, timings from `MusicDecode`): the main menu's
+icon bar shows for about 8 s, then hides during the idle camera and only
+comes back on a press, so Right goes at +5 s. Then Cross at +7 s (Arcade),
++22 s (Beginner) and +37 s (High Speed Ring). Screen loads vary by up to
+8 s, so presses closer together miss screens.
+
 ## Phase 17 — Game audio plays: no stand-in job completions (2026-10-28)
 
 **Status.** Menu music and sounds play: port 0 went from 100% to 0% silent

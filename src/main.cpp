@@ -501,7 +501,19 @@ static LONG CALLBACK report_crash(EXCEPTION_POINTERS* ep)
         if (vm_base && at >= (uintptr_t)vm_base && at < (uintptr_t)vm_base + 0x100000000ull)
             fprintf(stderr, " = GUEST 0x%08X", (uint32_t)(at - (uintptr_t)vm_base));
         fprintf(stderr, " (thread %lu)\n", GetCurrentThreadId());
+    } else {
+        /* A stack overflow (0xC00000FD) lands here too; say so, and on which
+         * host thread, or the report starts at the fault chain unexplained. */
+        fprintf(stderr, "\n[GT5P] EXCEPTION 0x%08lX at exe+0x%llX (thread %lu)\n",
+                (unsigned long)er->ExceptionCode,
+                (unsigned long long)((uintptr_t)er->ExceptionAddress - (uintptr_t)GetModuleHandleW(NULL)),
+                GetCurrentThreadId());
     }
+    { PWSTR nm = nullptr;
+      if (SUCCEEDED(GetThreadDescription(GetCurrentThread(), &nm)) && nm) {
+          fprintf(stderr, "[GT5P]   host thread name: %ls\n", nm);
+          LocalFree(nm);
+      } }
     /* The registers below are the main thread's, which is not much use when a
      * worker faults. Name the guest function the faulting thread is in, and
      * its callers, by unwinding the host stack -- same method as
@@ -513,6 +525,21 @@ static LONG CALLBACK report_crash(EXCEPTION_POINTERS* ep)
             uint32_t g = ppu_prof_resolve_host((void*)hc.Rip);
             if (g) fprintf(stderr, " func_%08X", g);
             else   fprintf(stderr, " <host:%08X>", (unsigned)(hc.Rip & 0xFFFFFFFF));
+            DWORD64 imgBase = 0;
+            PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(hc.Rip, &imgBase, nullptr);
+            if (!rf) break;
+            PVOID hd = nullptr; DWORD64 est = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, imgBase, hc.Rip, rf, &hc, &hd, &est, nullptr);
+        }
+        fputc('\n', stderr);
+        /* The names above are the nearest PPU function, which is wrong for
+         * lifted SPU code and the runtime: the raw offsets go through
+         * scripts/diag/maplook.py with build/gt5.map. */
+        hc = *ep->ContextRecord;
+        const uintptr_t base = (uintptr_t)GetModuleHandleW(NULL);
+        fprintf(stderr, "[GT5P]   host chain (exe+):");
+        for (int f = 0; f < 24 && hc.Rip; f++) {
+            fprintf(stderr, " %llX", (unsigned long long)(hc.Rip - base));
             DWORD64 imgBase = 0;
             PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(hc.Rip, &imgBase, nullptr);
             if (!rf) break;
