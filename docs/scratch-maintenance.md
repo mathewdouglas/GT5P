@@ -1,5 +1,29 @@
 # Scratch cleanup record
 
+## 2026-10-29
+
+Recycled 71 reproducible test-output directories containing 2,829 files /
+2,950,404,433 bytes (2.75 GiB). These were `debug-export-test-*`,
+`audio-native-*`, `audio-math-*`, `cond-callback-*` and `spurs-arg-*`
+fixtures; their canonical sources remain under `scripts/test/`. Every selected
+directory predated October 28 and was checked again for changes before recycling.
+
+After cleanup, `scratch/` contained 80,257 files / 27,356,550,288 bytes
+(25.48 GiB), before writing the final small summary manifest. Recycled data
+remains recoverable; disk space is reclaimed only when the Recycle Bin is emptied.
+
+Preserved all GPU captures, reference frames, race reports, shader caches,
+unique diagnostic helpers and investigation outputs. In particular,
+`upgrade-v018/` (including runtime worktrees and rollback files),
+`gen-prerelift/`, `rdoc/`, `renderdoc/`, `pv/` and `shader89/` remain intact.
+No builds, tests or game launches were performed during cleanup.
+
+Every target was resolved beneath the exact workspace `scratch/` directory,
+restricted to the fixture prefixes above, and checked for reparse points and
+protected capture/cache files. File counts and sizes were matched against the
+plan, and all 71 target paths were verified absent afterwards. Local audit files
+are `scratch/cleanup-20261029-{plan,result,summary}.json` (gitignored).
+
 ## 2026-10-19
 
 The user requested removal of unneeded scratch data. The folder contained
