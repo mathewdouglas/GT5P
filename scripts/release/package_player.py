@@ -77,7 +77,8 @@ def main():
     files = {'GT5P.exe': windows_binary(args.launcher_exe),
              'runtime/gt5p.exe': windows_binary(args.build_dir / 'gt5p.exe'),
              'LICENSE.txt': regular(ROOT / 'LICENSE'),
-             'START-HERE.txt': regular(ROOT / 'launcher/START-HERE.txt')}
+             'START-HERE.txt': regular(ROOT / 'launcher/START-HERE.txt'),
+             'Change storage.cmd': regular(ROOT / 'launcher/Change storage.cmd')}
     for name in RUNTIME:
         files['runtime/' + name] = windows_binary(args.build_dir / name)
     for name in VC_REQUIRED:

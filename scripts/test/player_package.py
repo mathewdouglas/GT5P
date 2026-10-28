@@ -41,6 +41,7 @@ def main():
             put(root / 'notices' / name, b'Synthetic fixture https://example.invalid/source\n')
         put(package.ROOT / 'LICENSE', b'Synthetic license fixture\n')
         put(package.ROOT / 'launcher/START-HERE.txt', b'Synthetic instructions\n')
+        put(package.ROOT / 'launcher/Change storage.cmd', b'@echo off\n')
         put(package.ROOT / 'assets/glyphs/textures.txt', b'# Synthetic metadata\n')
         put(package.ROOT / 'assets/glyphs/kenney/License.txt', b'Synthetic license\n')
         # These deliberately sit near the build input and must never leak.
@@ -88,6 +89,7 @@ def main():
         with zipfile.ZipFile(out) as z:
             names = set(z.namelist())
             assert 'release.ini' in names and 'runtime/gt5p.exe' in names
+            assert 'Change storage.cmd' in names
             assert not any(n.startswith(('input/', 'gamedata/', 'shadercache/')) for n in names)
             assert not any(n.lower().endswith(('.elf', '.self', '.toml')) for n in names)
             assert all(b'sentinel' not in z.read(n) for n in names)

@@ -28,6 +28,7 @@ struct Handle {
 };
 static fs::path install, data;
 static bool quiet = false;
+static bool silent_errors = false;
 static std::wstring profile(const fs::path& file, const wchar_t* section, const wchar_t* key) {
     std::array<wchar_t, 32768> b{};
     const DWORD n = GetPrivateProfileStringW(section, key, L"", b.data(), (DWORD)b.size(), file.c_str());
@@ -251,7 +252,7 @@ static bool setup(const std::wstring& expected) {
 }
 static void report(const std::wstring& message) {
     try {
-        if (!data.empty()) {
+        if (!data.empty() && fs::is_directory(data)) {
             fs::create_directories(data/L"logs");
             int n = WideCharToMultiByte(CP_UTF8, 0, message.c_str(), (int)message.size(), nullptr, 0, nullptr, nullptr);
             std::string text(n, '\0');
@@ -260,22 +261,88 @@ static void report(const std::wstring& message) {
         }
     } catch (const std::exception&) {}
     fwprintf(stderr, L"%ls\n", message.c_str());
-    if (!quiet) MessageBoxW(nullptr, message.c_str(), L"GT5P setup", MB_OK|MB_ICONERROR);
+    if (!quiet && !silent_errors) MessageBoxW(nullptr, message.c_str(), L"GT5P setup", MB_OK|MB_ICONERROR);
+}
+static bool within(const fs::path& a, const fs::path& b) {
+    auto x = a.lexically_normal().wstring(), y = b.lexically_normal().wstring();
+    std::transform(x.begin(), x.end(), x.begin(), towlower);
+    std::transform(y.begin(), y.end(), y.begin(), towlower);
+    if (x == y) return true;
+    if (!y.empty() && y.back() != L'\\') y += L'\\';
+    return x.compare(0, y.size(), y) == 0;
+}
+// Copy before switching the locator. Keep the old profile as a recovery copy.
+static void relocate(const fs::path& chosen, const fs::path& home) {
+    fs::path destination = fs::weakly_canonical(fs::absolute(chosen));
+    auto source = fs::weakly_canonical(data);
+    runtime_path(destination);
+    if (within(destination, source) && within(source, destination)) return;
+    if (within(destination, source) || within(source, destination) ||
+        within(install, destination) || within(home, destination))
+        fail(L"Choose a separate storage folder, outside the current data folder and containing neither the launcher nor its configuration folder.");
+    if (fs::exists(destination) && (!fs::is_directory(destination) || !fs::is_empty(destination)))
+        fail(L"Choose an empty folder for GT5P storage. Existing files will not be overwritten.");
+    // Check the entire source before copying; do not follow directory links.
+    for (const auto& entry : fs::recursive_directory_iterator(source))
+        if (GetFileAttributesW(entry.path().c_str()) & FILE_ATTRIBUTE_REPARSE_POINT)
+            fail(L"The existing storage contains a linked file or folder. Relocation stopped; the original storage is unchanged.");
+    fs::create_directories(destination);
+    Handle lock(CreateFileW((destination/L"launcher.lock").c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr));
+    if (lock.h == INVALID_HANDLE_VALUE) fail(L"The selected storage folder is not writable or is in use.");
+    for (const auto& entry : fs::recursive_directory_iterator(source)) {
+        auto relative = entry.path().lexically_relative(source);
+        if (relative == L"launcher.lock" || relative == L"storage.lock" ||
+            relative == L"storage.ini" || relative == L"storage.new.ini") continue;
+        auto target = destination/relative;
+        if (entry.is_directory()) fs::create_directories(target);
+        else if (entry.is_regular_file()) {
+            fs::copy_file(entry.path(), target);
+            if (hash(entry.path()) != hash(target)) fail(L"Storage copy verification failed. The original storage remains selected.");
+        } else fail(L"Unsupported file in storage. The original storage remains selected.");
+    }
+    auto staged = home/L"storage.new.ini";
+    { std::ofstream f(staged, std::ios::binary|std::ios::trunc); f.write("\xff\xfe", 2); }
+    setting(staged, L"directory", destination);
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, staged.c_str());
+    if (!MoveFileExW(staged.c_str(), (home/L"storage.ini").c_str(), MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+        fail(L"Could not remember the storage folder. The original storage remains selected.");
+    data = destination;
+}
+static fs::path storage_picker() {
+    TASKDIALOG_BUTTON buttons[] = {{100,L"Keep the current storage folder"}, {101,L"Choose a folder (including an external SSD)"}};
+    TASKDIALOGCONFIG td{}; td.cbSize = sizeof td;
+    td.dwFlags = (TASKDIALOG_FLAGS)(TDF_USE_COMMAND_LINKS | TDF_ALLOW_DIALOG_CANCELLATION);
+    td.pszWindowTitle = L"GT5P - storage location";
+    td.pszMainInstruction = L"Where should GT5P store its files?";
+    std::wstring content = L"Saves, settings, shader cache and the verified executable will be stored here:\n\n" + data.wstring() +
+        L"\n\nYour game dump stays where it is. The launcher stays where you extracted it; you can put that entire folder on your SSD too. Changing storage copies existing data and keeps the original as a backup.";
+    td.pszContent = content.c_str(); td.cButtons = 2; td.pButtons = buttons;
+    td.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    int choice = IDCANCEL;
+    if (FAILED(TaskDialogIndirect(&td, &choice, nullptr, nullptr))) fail(L"Could not open storage setup.");
+    if (choice == IDCANCEL) return {};
+    if (choice == 100) return data;
+    return pick(true, L"Choose an empty folder for GT5P saves, settings and cache");
 }
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (!argv) fail(L"Could not read launcher options.");
-        bool force = false, open = false, unknown = false;
+        bool force = false, open = false, unknown = false, choose_storage = false;
+        fs::path storage;
         for (int i = 1; i < argc; ++i) {
             if (!wcscmp(argv[i], L"--setup")) force = true;
             else if (!wcscmp(argv[i], L"--check")) quiet = true;
             else if (!wcscmp(argv[i], L"--open-data")) open = true;
+            else if (!wcscmp(argv[i], L"--choose-storage")) choose_storage = true;
+            else if (!wcscmp(argv[i], L"--set-storage") && i+1 < argc) storage = argv[++i];
             else unknown = true;
         }
         LocalFree(argv);
-        if (unknown) fail(L"Supported options: --setup, --check, --open-data");
+        silent_errors = !storage.empty();
+        if (unknown || (quiet && (choose_storage || !storage.empty() || open)))
+            fail(L"Supported options: --setup, --check, --open-data, --choose-storage, --set-storage <empty folder>. Storage changes cannot be combined with --check.");
         if (FAILED(com)) fail(L"Windows COM initialization failed.");
         std::array<wchar_t, 32768> module{};
         DWORD n = GetModuleFileNameW(nullptr, module.data(), (DWORD)module.size());
@@ -283,8 +350,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         install = fs::path(module.data()).parent_path();
         PWSTR local = nullptr;
         if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) fail(L"Could not locate Local AppData.");
-        data = env(L"GT5P_USER_DIR").empty() ? fs::path(local)/L"GT5PRecomp" : fs::absolute(env(L"GT5P_USER_DIR"));
+        auto home = env(L"GT5P_LAUNCHER_HOME").empty() ? fs::path(local)/L"GT5PRecomp" : fs::absolute(env(L"GT5P_LAUNCHER_HOME"));
         CoTaskMemFree(local);
+        bool override_data = !env(L"GT5P_USER_DIR").empty();
+        data = override_data ? fs::absolute(env(L"GT5P_USER_DIR")) : home;
+        runtime_path(home);
+        if (override_data && (choose_storage || !storage.empty())) fail(L"Unset GT5P_USER_DIR before changing the remembered storage location.");
+        if (!override_data) {
+            auto saved = profile(home/L"storage.ini", L"game", L"directory");
+            if (!saved.empty()) {
+                data = saved;
+                if (!fs::is_directory(data)) {
+                    data = home;
+                    fail(L"Your selected GT5P storage is unavailable:\n\n" + saved + L"\n\nReconnect the drive and try again. Your saved selection has been kept.");
+                }
+            }
+        }
         runtime_path(data); runtime_path(install);
         fs::create_directories(data);
         if (open) {
@@ -292,6 +373,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 fail(L"Explorer could not open the user-data directory.");
             CoUninitialize(); return 0;
         }
+        // Serialize locator changes and launches even while data lives elsewhere.
+        if (!override_data) fs::create_directories(home);
+        Handle home_lock(override_data ? INVALID_HANDLE_VALUE : CreateFileW((home/L"storage.lock").c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr));
+        if (!override_data && home_lock.h == INVALID_HANDLE_VALUE) fail(L"GT5P is already running or storage setup is in use.");
         Handle lock(CreateFileW((data/L"launcher.lock").c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr));
         if (lock.h == INVALID_HANDLE_VALUE) fail(L"GT5P is already running or this user-data folder is not writable.");
         auto expected = release_value(L"elf_sha256");
@@ -300,6 +385,20 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             fail(L"Missing or incompatible release.ini. Re-extract the full release ZIP.");
         auto game = install/L"runtime"/L"gt5p.exe";
         if (!fs::is_regular_file(game) || hash(game) != release_value(L"game_sha256")) fail(L"The game executable does not match release.ini. Re-extract the complete ZIP.");
+        bool first_storage = !override_data && !fs::exists(data/L"setup.ini") &&
+            env(L"GT5P_STORAGE_PICKER") != L"0" && env(L"GT5P_LAUNCHER_SETUP") != L"0" && !quiet && !open;
+        if (!override_data && (choose_storage || !storage.empty() || first_storage || (force && !quiet && env(L"GT5P_STORAGE_PICKER") != L"0"))) {
+            auto selected = storage.empty() ? storage_picker() : storage;
+            if (selected.empty()) { CoUninitialize(); return 0; }
+            auto previous = data;
+            relocate(selected, home);
+            if (data != previous) {
+                CloseHandle(lock.h);
+                lock.h = CreateFileW((data/L"launcher.lock").c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr);
+                if (lock.h == INVALID_HANDLE_VALUE) fail(L"The selected storage folder is in use or not writable.");
+            }
+            if (choose_storage || !storage.empty()) { CoUninitialize(); return 0; }
+        }
         bool valid = false;
         auto disc = fs::path(profile(data/L"setup.ini", L"game", L"directory"));
         if (!force && !disc.empty()) {

@@ -1,7 +1,9 @@
 GT5P Recomp - player setup
 
 1. Extract the ENTIRE release ZIP to a folder. Do not run it inside the ZIP.
-2. Run GT5P.exe. Select your extracted GT5P disc dump or its PS3_GAME folder.
+2. Run GT5P.exe. Choose where to store saves, settings, shaders and the verified
+   executable (the default folder or an empty folder on your external SSD).
+   Then select your extracted GT5P disc dump or its PS3_GAME folder.
    Supported: BCUS98158, US disc, v03.00. Other builds and ISO files are not
    supported by this release.
 3. If EMAIN.ELF is not already available, select your installed RPCS3 when
@@ -14,9 +16,16 @@ GT5P Recomp - player setup
 The initial preset is 720p with 2x MSAA. Press F1 for game settings.
 Do not move/delete the selected dump while using the port.
 
-Settings, saves, shaders and logs are under:
-  %LOCALAPPDATA%\GT5PRecomp
+Settings, saves, shaders and logs are in your selected storage folder.
+The default is %LOCALAPPDATA%\GT5PRecomp.
   logs\play.out and logs\play.err contain startup diagnostics.
+
+To put everything on an external SSD, extract this entire launcher folder
+there and choose an empty storage folder on that SSD during setup. Your
+original game dump stays in the location you select; it is not copied.
+Close the game and double-click Change storage.cmd to change storage later.
+Existing data is copied and verified; the original remains as a backup.
+The chosen location is remembered. Reconnect an external drive before launch.
 
 Run GT5P.exe --setup to change the dump folder.
 Run GT5P.exe --open-data to open saves/settings/logs in Explorer.

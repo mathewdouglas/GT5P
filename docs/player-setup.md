@@ -11,7 +11,9 @@ has been uploaded.
 ## Player experience
 
 1. Extract the entire ZIP and launch **GT5P.exe**.
-2. Select the extracted disc dump, or its `PS3_GAME` directory. The launcher
+2. Choose the default storage folder or an empty folder on another drive,
+   including an external SSD. Then select the extracted disc dump, or its
+   `PS3_GAME` directory. The launcher
    checks `PARAM.SFO` for BCUS98158 / VERSION 03.00 and requires `GT.VOL` and
    `TV.DAT`. Selecting an ISO is not supported.
 3. If a matching decrypted `USRDIR/EMAIN.ELF` is present, it is reused. Otherwise
@@ -42,6 +44,7 @@ The release contains only these selected files:
 GT5P.exe                 native /MT launcher, no managed runtime required
 release.ini              schema, target, ELF digest and engine digest
 START-HERE.txt
+Change storage.cmd       reopen the storage chooser with the game closed
 LICENSE.txt
 runtime/gt5p.exe
 runtime/SDL2.dll
@@ -59,7 +62,8 @@ metadata, not the file. The package script never recursively copies a build or
 third_party directory. ZIP inputs are explicit; assets are limited to PNG/text
 and checked for expected content. EXEs/DLLs must be native Windows x64 PE files.
 
-Mutable files live under `%LOCALAPPDATA%\GT5PRecomp`:
+Mutable files live in the user-selected storage folder, initially defaulting
+to `%LOCALAPPDATA%\GT5PRecomp`:
 
 - `setup.ini`: selected dump path, written atomically after successful setup.
 - `input/EMAIN.ELF`: verified personal copy; never part of a release.
@@ -76,20 +80,46 @@ does not overwrite user data. An exclusive user-directory lock prevents a
 second launch. A Windows job owns only the child the launcher created; killing
 the launcher cannot leave its game running and then allow a duplicate launch.
 
+The binaries remain wherever the player extracts the ZIP. To install on an
+external SSD, extract the entire player folder there, then choose a separate
+empty storage folder on that drive during first setup. Original disc files
+remain in their selected location. Existing configured profiles keep their
+location until the user chooses to change it.
+
+Double-click `Change storage.cmd` (or run `GT5P.exe --choose-storage`) with the
+game closed to change storage. Saves/settings/cache/imports are copied and
+SHA-256 verified before atomically changing the remembered location. The
+original profile is retained as a backup. Nonempty and nested destinations
+are rejected, as are linked source files/directories. A failed copy leaves the
+original selected and may leave an incomplete destination for inspection;
+choose another empty destination before retrying. Large caches can take time
+to copy and verify. This is a copy-and-switch operation, not deletion.
+
+A small `storage.ini` locator and `storage.lock` remain under Local AppData's
+`GT5PRecomp` folder. A missing external drive produces a reconnect message
+without changing that selection or silently creating a fresh profile.
+
 Options:
 
 | Option | Effect |
 | --- | --- |
 | `--setup` | Select a different dump; cancellation keeps the old selection |
 | `--open-data` | Open user data in Explorer, including while the game runs |
+| `--choose-storage` | Open the storage chooser, copy/verify existing data and remember the new folder; exit without starting the game |
+| `--set-storage <folder>` | Same relocation to a named empty folder without dialogs; errors go to stderr/logs |
 | `--check` | Validate release/config/dump/ELF without dialogs or launching a child; exit 0/1 |
 | `GT5P_USER_DIR=<folder>` | Separate writable user-data location/profile |
+| `GT5P_LAUNCHER_HOME=<folder>` | Override the small locator/lock directory for isolated testing |
+| `GT5P_STORAGE_PICKER=0` | Skip the automatic first-run/setup storage chooser |
 | `GT5P_LAUNCHER_SETUP=0` | Suppress automatic interactive setup and report missing/invalid configuration |
 
 The game receives the existing `GT5P_ROOT`, `GT5P_SETTINGS`, `GT5P_GAME_DIR`,
 `PS3_VFS_ROOT` and `PS3_GAMEDATA_ROOT` overrides. Its working directory is user
 data, so ordinary cache/log writes work even if the install folder is read-only.
 Glyph art is copied from the ZIP into that working directory on launch.
+`GT5P_USER_DIR` overrides the remembered choice and suppresses the storage
+chooser; unset it before using the relocation options. Check mode never
+changes the remembered storage location.
 
 The only game-source integration change is the direct `PARAM.SFO` lookup in
 `src/main.cpp`: an absolute game directory must not be prefixed by the writable
@@ -231,6 +261,20 @@ acceptance. Logs/private test profile remain in `real-dump-check/`, outside
 the `player/` folder. The player's default first-run profile was not configured
 by this check. Interactive folder selection, decryption and deployment checks
 still remain.
+
+### Custom storage validation (2026-10-29)
+
+Rebuilt the launcher with the first-run storage chooser and relocation options;
+MSVC `/W4` reports no warnings. Native integration checks pass for a custom
+path containing spaces, verified migration of saves/settings/cache/private ELF,
+retention of the original profile, remembered launching, a second relocation,
+refusing nonempty/nested/installation destinations, and blocking relocation
+while the owned child runs. A simulated unavailable external path fails without
+recreating the directory or changing the locator. Packaging fixtures pass with
+the additional explicitly selected `Change storage.cmd` file. The installed
+local `player/` folder has the rebuilt launcher and shortcut; no real user
+profile was relocated. The new TaskDialog/folder-picker clicks still require
+interactive acceptance because the Windows automation helper was unavailable.
 
 ## Acceptance checks still required before publishing
 

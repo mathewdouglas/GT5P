@@ -163,6 +163,78 @@ def main():
             time.sleep(.05)
         print('launcher termination retires owned child and releases lock: passed')
 
+        # A small per-user locator remembers an external/custom storage path.
+        # Keep this isolated from the real Local AppData profile.
+        home, target = root/'Locator home', root/'External SSD'/'GT5P data'
+        shutil.copytree(data, home)
+        storage_env = dict(env, GT5P_LAUNCHER_HOME=str(home))
+        storage_env.pop('GT5P_USER_DIR')
+        (home/'shadercache').mkdir()
+        (home/'shadercache/sentinel.bin').write_bytes(b'personal cache')
+        (home/'gamedata/save.bin').write_bytes(b'personal save')
+        moved = subprocess.run([launcher, '--set-storage', target], env=storage_env,
+                               timeout=15, capture_output=True)
+        assert moved.returncode == 0, moved.stderr
+        for name in ('setup.ini', 'input/EMAIN.ELF', 'gt5p_settings.toml',
+                     'shadercache/sentinel.bin', 'gamedata/save.bin'):
+            assert (target/name).read_bytes() == (home/name).read_bytes(), name
+        locator = (home/'storage.ini').read_bytes()
+        p = subprocess.run([launcher, '--check'], env=storage_env, timeout=10)
+        assert p.returncode == 0
+        p = subprocess.run([launcher], env=storage_env, timeout=15)
+        assert p.returncode == 0
+        probe = dict(line.split('=',1) for line in (target/'probe.txt').read_text(encoding='utf-8-sig').splitlines())
+        assert Path(probe['GT5P_ROOT']) == target
+        print('custom storage: verified copy, original preservation, remembered launch location: passed')
+        owner = subprocess.Popen([launcher], env=dict(storage_env, GT5P_PROBE_DELAY_MS='30000'))
+        try:
+            # The previously completed child has gone; wait for this one's PID.
+            old_pid = probe['pid']
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    current = dict(line.split('=',1) for line in (target/'probe.txt').read_text(encoding='utf-8-sig').splitlines())
+                    if current.get('pid') and current['pid'] != old_pid:
+                        break
+                except (OSError, ValueError):
+                    pass
+                time.sleep(.05)
+            else:
+                raise AssertionError('delayed custom-storage child did not start')
+            blocked = root/'Must not be created'
+            p = subprocess.run([launcher, '--set-storage', blocked], env=storage_env,
+                               timeout=10, capture_output=True)
+            assert p.returncode == 1 and not blocked.exists()
+            assert (home/'storage.ini').read_bytes() == locator
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
+        print('storage relocation blocked while game child runs: passed')
+        for dest in (target/'nested', root, install, home, disc):
+            p = subprocess.run([launcher, '--set-storage', dest], env=storage_env,
+                               timeout=10, capture_output=True)
+            assert p.returncode == 1, dest
+            assert (home/'storage.ini').read_bytes() == locator
+        print('nested/source/installation/nonempty targets refused without changing selection: passed')
+        unavailable = target.with_name('temporarily disconnected')
+        target.rename(unavailable)
+        try:
+            p = subprocess.run([launcher, '--check'], env=storage_env, timeout=10)
+            assert p.returncode == 1
+            assert not target.exists(), 'missing storage recreated silently'
+            assert (home/'storage.ini').read_bytes() == locator
+        finally:
+            unavailable.rename(target)
+        second = root/'Second SSD'/'Data'
+        p = subprocess.run([launcher, '--set-storage', second], env=storage_env,
+                           timeout=15, capture_output=True)
+        assert p.returncode == 0, p.stderr
+        assert (second/'gamedata/save.bin').read_bytes() == b'personal save'
+        assert (target/'gamedata/save.bin').read_bytes() == b'personal save'
+        p = subprocess.run([launcher, '--check'], env=storage_env, timeout=10)
+        assert p.returncode == 0
+        print('unavailable drive preserves selection; subsequent storage relocation: passed')
+
 
 if __name__ == '__main__':
     main()
