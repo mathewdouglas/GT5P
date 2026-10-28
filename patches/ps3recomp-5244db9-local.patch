@@ -6559,6 +6559,57 @@ index a0d6dce5..1f36e9b3 100644
  
  /* Base64 encode/decode (used for HTTP Basic auth) */
  s32 cellHttpUtilBase64Encode(char* out, u32 outSize,
+diff --git a/libs/network/sceNp.c b/libs/network/sceNp.c
+index 8bb66dbb..7582d07b 100644
+--- a/libs/network/sceNp.c
++++ b/libs/network/sceNp.c
+@@ -9,6 +9,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <stdint.h>
++#include <stdlib.h>
+ #include "../../runtime/ppu/ppu_memory.h"   /* vm_write*: guest EA -> host, byte-swapped */
+ #include "np_psnr.h"
+ #include "../system/cellSysutil.h"
+@@ -240,6 +241,26 @@ s32 sceNpManagerGetStatus(s32* status)
+     return CELL_OK;
+ }
+ 
++/* sceNpManagerGetNetworkTime(CellRtcTick*): the PSN server's clock. It was
++ * not implemented, so it answered CELL_OK without writing the tick and the
++ * caller took whatever its buffer held (Gran Turismo 5's clock, wrong at boot
++ * and on each page load). Signed in (psnr): the host's UTC time. Offline:
++ * SCE_NP_ERROR_OFFLINE, as a console that is not signed in answers.
++ * NP_NETWORK_TIME=1 answers with the host time offline too. */
++s32 sceNpManagerGetNetworkTime(void* pTick)
++{
++    if (!s_np_initialized)
++        return SCE_NP_ERROR_NOT_INITIALIZED;
++    if (!pTick)
++        return SCE_NP_ERROR_INVALID_ARGUMENT;
++    static int always = -1;
++    if (always < 0) { const char* e = getenv("NP_NETWORK_TIME"); always = e && e[0] == '1'; }
++    if (!np_psnr_enabled() && !always)
++        return SCE_NP_ERROR_OFFLINE;
++    extern s32 cellRtcGetCurrentTick(void* pTick);
++    return cellRtcGetCurrentTick(pTick);
++}
++
+ s32 sceNpManagerRegisterCallback(SceNpManagerCallback callback, void* arg)
+ {
+     if (!s_np_initialized)
+diff --git a/libs/network/sceNp.h b/libs/network/sceNp.h
+index ea160aa4..789557de 100644
+--- a/libs/network/sceNp.h
++++ b/libs/network/sceNp.h
+@@ -126,6 +126,7 @@ s32 sceNpGetMyLanguages(SceNpMyLanguages* langs);
+ typedef void (*SceNpManagerCallback)(s32 event, s32 result, void* arg);
+ 
+ s32 sceNpManagerGetStatus(s32* status);
++s32 sceNpManagerGetNetworkTime(void* pTick);
+ s32 sceNpManagerRegisterCallback(SceNpManagerCallback callback, void* arg);
+ s32 sceNpManagerUnregisterCallback(void);
+ s32 sceNpManagerGetNpId(SceNpId* npId);
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
 index 688ff041..6a1ae5d8 100644
 --- a/libs/spurs/cellSpurs.c
@@ -8342,6 +8393,113 @@ index 071b9ecd..74fc6923 100644
      return CELL_OK;
  }
  
+diff --git a/libs/system/cellRtc.c b/libs/system/cellRtc.c
+index d1e776ca..e6524b3c 100644
+--- a/libs/system/cellRtc.c
++++ b/libs/system/cellRtc.c
+@@ -159,6 +159,31 @@ static void rtc_dt_read(const CellRtcDateTime* p, CellRtcDateTime* v)
+     }
+ }
+ 
++
++/* RTC_TRACE=<n>: the first n calls of each traced function with their
++ * results (ticks as dates), to see what a title's clock is made of. */
++static int rtc_trace_on(int* left)
++{
++    static int n = -1;
++    if (n < 0) { const char* e = getenv("RTC_TRACE"); n = e ? atoi(e) : 0; }
++    if (*left < 0) *left = n;
++    if (*left <= 0) return 0;
++    (*left)--;
++    return 1;
++}
++static const char* rtc_tick_str(u64 tick, char* buf)
++{
++    time_t t = (time_t)tick_to_time_t(tick);
++    struct tm tm_val;
++#ifdef _WIN32
++    gmtime_s(&tm_val, &t);
++#else
++    gmtime_r(&t, &tm_val);
++#endif
++    snprintf(buf, 40, "%04d-%02d-%02d %02d:%02d:%02d", tm_val.tm_year + 1900, tm_val.tm_mon + 1,
++             tm_val.tm_mday, tm_val.tm_hour, tm_val.tm_min, tm_val.tm_sec);
++    return buf;
++}
+ /* ---------------------------------------------------------------------------
+  * API implementations
+  * -----------------------------------------------------------------------*/
+@@ -171,6 +196,7 @@ s32 cellRtcGetCurrentTick(CellRtcTick* pTick)
+     u64 unix_usec = get_host_time_usec();
+     rtc_tick_write(pTick, unix_usec + PS3_UNIX_EPOCH_DIFF * USEC_PER_SEC);
+ 
++    { static int l = -1; char b[40]; if (rtc_trace_on(&l)) fprintf(stderr, "[rtc] GetCurrentTick -> %s UTC%c", rtc_tick_str(rtc_tick_read(pTick), b), 10); }
+     return CELL_OK;
+ }
+ 
+@@ -329,6 +355,7 @@ s32 cellRtcTickAddMinutes(CellRtcTick* pTick0, const CellRtcTick* pTick1, s32 iA
+         return CELL_EINVAL;
+ 
+     rtc_tick_write(pTick0, rtc_tick_read(pTick1) + (u64)((s64)iAdd * 60LL * USEC_PER_SEC));
++    { static int l = -1; char b[40]; if (rtc_trace_on(&l)) fprintf(stderr, "[rtc] TickAddMinutes %d -> %s%c", iAdd, rtc_tick_str(rtc_tick_read(pTick0), b), 10); }
+     return CELL_OK;
+ }
+ 
+@@ -338,6 +365,7 @@ s32 cellRtcTickAddSeconds(CellRtcTick* pTick0, const CellRtcTick* pTick1, s64 iA
+         return CELL_EINVAL;
+ 
+     rtc_tick_write(pTick0, rtc_tick_read(pTick1) + (u64)(iAdd * (s64)USEC_PER_SEC));
++    { static int l = -1; char b[40]; if (rtc_trace_on(&l)) fprintf(stderr, "[rtc] TickAddSeconds %lld -> %s%c", (long long)iAdd, rtc_tick_str(rtc_tick_read(pTick0), b), 10); }
+     return CELL_OK;
+ }
+ 
+@@ -394,6 +422,7 @@ s32 cellRtcConvertUtcToLocalTime(const CellRtcTick* pUtc, CellRtcTick* pLocalTim
+     s64 offset_sec = (s64)(local_t - utc_t);
+ 
+     rtc_tick_write(pLocalTime, rtc_tick_read(pUtc) + (u64)(offset_sec * (s64)USEC_PER_SEC));
++    { static int l = -1; char b[40], c[40]; if (rtc_trace_on(&l)) fprintf(stderr, "[rtc] UtcToLocal %s -> %s%c", rtc_tick_str(rtc_tick_read(pUtc), b), rtc_tick_str(rtc_tick_read(pLocalTime), c), 10); }
+     return CELL_OK;
+ }
+ 
+@@ -514,6 +543,7 @@ s32 cellRtcSetTick(CellRtcDateTime* pDateTime, const CellRtcTick* pTick)
+         tm_to_datetime(&tm_val, usec, &dt_s);
+         rtc_dt_write(pDateTime, &dt_s);
+     }
++    { static int l = -1; char b[40]; if (rtc_trace_on(&l)) fprintf(stderr, "[rtc] SetTick %s%c", rtc_tick_str(tick, b), 10); }
+     return CELL_OK;
+ }
+ 
+@@ -532,5 +562,18 @@ s32 cellRtcGetTick(const CellRtcDateTime* pDateTime, CellRtcTick* pTick)
+ #endif
+ 
+     rtc_tick_write(pTick, time_t_to_tick((s64)tt) + dt_g.microsecond);
++    { static int l = -1; char b[40]; if (rtc_trace_on(&l)) fprintf(stderr, "[rtc] GetTick %04u-%02u-%02u %02u:%02u:%02u -> %s%c", dt_g.year, dt_g.month, dt_g.day, dt_g.hour, dt_g.minute, dt_g.second, rtc_tick_str(rtc_tick_read(pTick), b), 10); }
+     return CELL_OK;
+ }
++
++/* cellRtcIsLeapYear: 1 for a Gregorian leap year, 0 otherwise. It was not
++ * implemented, and an unregistered import answers 0 (CELL_OK): "not a leap
++ * year" for every year. Gran Turismo 5 imports it beside its own tick and
++ * date arithmetic; its clock ran 10 days behind. */
++s32 cellRtcIsLeapYear(s32 year)
++{
++    if (year < 1)
++        return CELL_EINVAL;
++    { static int l = -1; if (rtc_trace_on(&l)) fprintf(stderr, "[rtc] IsLeapYear %d%c", year, 10); }
++    return is_leap_year(year) ? 1 : 0;
++}
+diff --git a/libs/system/cellRtc.h b/libs/system/cellRtc.h
+index 6392ccd4..d3ac6593 100644
+--- a/libs/system/cellRtc.h
++++ b/libs/system/cellRtc.h
+@@ -51,6 +51,7 @@ typedef CellRtcDateTime CellRtcTime;
+  * -----------------------------------------------------------------------*/
+ 
+ s32 cellRtcGetCurrentTick(CellRtcTick* pTick);
++s32 cellRtcIsLeapYear(s32 year);
+ 
+ s32 cellRtcGetCurrentClockLocalTime(CellRtcDateTime* pClock);
+ 
 diff --git a/libs/system/cellSaveData.c b/libs/system/cellSaveData.c
 index 79ea8cab..dd45729b 100644
 --- a/libs/system/cellSaveData.c
@@ -8480,10 +8638,38 @@ index 79ea8cab..dd45729b 100644
  }
  
 diff --git a/libs/system/cellSysutil.c b/libs/system/cellSysutil.c
-index 252c3e8c..9b57316c 100644
+index 252c3e8c..44761aed 100644
 --- a/libs/system/cellSysutil.c
 +++ b/libs/system/cellSysutil.c
-@@ -408,14 +408,31 @@ s32 cellSysCacheMount(char* param)
+@@ -272,8 +272,25 @@ s32 cellSysutilGetSystemParamInt(s32 id, u32 value_ea)
+         break;
+     case CELL_SYSUTIL_SYSTEMPARAM_ID_DATE_FORMAT:    v = 0; break; /* YYYYMMDD */
+     case CELL_SYSUTIL_SYSTEMPARAM_ID_TIME_FORMAT:    v = 0; break; /* 24-hour */
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_TIMEZONE:       v = 0; break; /* UTC */
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_SUMMERTIME:     v = 0; break; /* No DST */
++    /* The host's zone (minutes east of UTC, standard time) and whether
++     * daylight saving is in effect: cellRtcConvertUtcToLocalTime already
++     * uses the host's local time, and the two must agree.
++     * SYSPARAM_TZ_HOST=0: UTC and no DST, as before. */
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_TIMEZONE:
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_SUMMERTIME: {
++        static int host = -1;
++        if (host < 0) { const char* e = getenv("SYSPARAM_TZ_HOST"); host = !(e && e[0] == '0'); }
++        v = 0;
++#ifdef _WIN32
++        if (host) {
++            TIME_ZONE_INFORMATION tzi;
++            const DWORD r = GetTimeZoneInformation(&tzi);
++            /* Daylight saving folded into the zone, flag 0 (as sys_time_get_timezone). */
++            v = id == CELL_SYSUTIL_SYSTEMPARAM_ID_TIMEZONE
++                ? -(s32)(tzi.Bias + (r == TIME_ZONE_ID_DAYLIGHT ? tzi.DaylightBias : tzi.StandardBias)) : 0;
++        }
++#endif
++        break; }
+     case CELL_SYSUTIL_SYSTEMPARAM_ID_GAME_PARENTAL_LEVEL:           v = 0; break;
+     case CELL_SYSUTIL_SYSTEMPARAM_ID_GAME_PARENTAL_LEVEL0_RESTRICT: v = 0; break;
+     case CELL_SYSUTIL_SYSTEMPARAM_ID_CURRENT_USER_HAS_NP_ACCOUNT:   v = 1; break;
+@@ -408,14 +425,31 @@ s32 cellSysCacheMount(char* param)
      cache_id[32] = '\0';
      printf("[cellSysutil] SysCacheMount(id='%s')\n", cache_id);
  
@@ -42402,6 +42588,18 @@ index bcb1df42..3d16c5c3 100644
          rc = 0;                                   /* sys_memory window */
      } else if (addr >= 0xC0000000u && addr < 0xD0000000u) {
          rc = 0;                                   /* RSX local memory */
+diff --git a/runtime/syscalls/lv2_syscall_table.h b/runtime/syscalls/lv2_syscall_table.h
+index a274395b..c6fa047e 100644
+--- a/runtime/syscalls/lv2_syscall_table.h
++++ b/runtime/syscalls/lv2_syscall_table.h
+@@ -139,6 +139,7 @@ extern uint32_t g_ps3_sdk_version;
+ #define SYS_TIMER_SLEEP                 142
+ 
+ /* Time */
++#define SYS_TIME_GET_TIMEZONE           144
+ #define SYS_TIME_GET_CURRENT_TIME       145
+ #define SYS_TIME_GET_TIMEBASE_FREQUENCY 147
+ 
 diff --git a/runtime/syscalls/sys_cond.c b/runtime/syscalls/sys_cond.c
 index 45235ea6..8b664d8b 100644
 --- a/runtime/syscalls/sys_cond.c
@@ -43106,7 +43304,7 @@ index a297bf5c..d0a57142 100644
  int64_t sys_ppu_thread_join(ppu_context* ctx);
  int64_t sys_ppu_thread_detach(ppu_context* ctx);
 diff --git a/runtime/syscalls/sys_timer.c b/runtime/syscalls/sys_timer.c
-index d8f40814..4eeb6fb5 100644
+index d8f40814..75a60b4e 100644
 --- a/runtime/syscalls/sys_timer.c
 +++ b/runtime/syscalls/sys_timer.c
 @@ -2,6 +2,7 @@
@@ -43182,7 +43380,51 @@ index d8f40814..4eeb6fb5 100644
  #else
      if (usec > 0) {
          struct timespec ts;
-@@ -288,14 +323,29 @@ int64_t sys_time_get_current_time(ppu_context* ctx)
+@@ -274,6 +309,43 @@ int64_t sys_timer_sleep(ppu_context* ctx)
+     return CELL_OK;
+ }
+ 
++/* ---------------------------------------------------------------------------
++ * sys_time_get_timezone
++ *
++ * r3 = pointer to receive the time zone (s32, minutes east of UTC, standard)
++ * r4 = pointer to receive the summer-time flag (s32)
++ *
++ * Was a stub that wrote nothing, so a title converting UTC to local time
++ * used whatever its two variables held: Gran Turismo 5's clock read minutes
++ * off and its date days off. The host's zone and daylight-saving state,
++ * agreeing with cellSysutilGetSystemParamInt and cellRtc. PS3_TZ_HOST=0:
++ * UTC and no summer time.
++ * -----------------------------------------------------------------------*/
++int64_t sys_time_get_timezone(ppu_context* ctx)
++{
++    uint32_t tz_addr = LV2_ARG_PTR(ctx, 0);
++    uint32_t st_addr = LV2_ARG_PTR(ctx, 1);
++    int32_t tz = 0, st = 0;
++    static int host = -1;
++    if (host < 0) { const char* e = getenv("PS3_TZ_HOST"); host = e ? atoi(e) : 1; }
++#ifdef _WIN32
++    if (host) {
++        TIME_ZONE_INFORMATION tzi;
++        const DWORD r = GetTimeZoneInformation(&tzi);
++        /* Daylight saving folded into the zone, flag 0: Gran Turismo 5
++         * ignores the flag (an hour behind in New Zealand summer), and a title
++         * that adds it gets the same answer. PS3_TZ_HOST=2: standard zone
++         * plus the flag. */
++        const int dst = r == TIME_ZONE_ID_DAYLIGHT;
++        if (host == 2) { tz = -(int32_t)(tzi.Bias + tzi.StandardBias); st = dst; }
++        else tz = -(int32_t)(tzi.Bias + (dst ? tzi.DaylightBias : tzi.StandardBias));
++    }
++#endif
++    if (tz_addr) write_be32(tz_addr, (uint32_t)tz);
++    if (st_addr) write_be32(st_addr, (uint32_t)st);
++    return CELL_OK;
++}
++
+ /* ---------------------------------------------------------------------------
+  * sys_time_get_current_time
+  *
+@@ -288,14 +360,29 @@ int64_t sys_time_get_current_time(ppu_context* ctx)
      uint64_t sec, nsec;
  
  #ifdef _WIN32
@@ -43220,7 +43462,7 @@ index d8f40814..4eeb6fb5 100644
  #else
      struct timespec ts;
      clock_gettime(CLOCK_REALTIME, &ts);
-@@ -329,9 +379,57 @@ int64_t sys_time_get_timebase_frequency(ppu_context* ctx)
+@@ -329,9 +416,57 @@ int64_t sys_time_get_timebase_frequency(ppu_context* ctx)
   * -----------------------------------------------------------------------*/
  
  /* Forward declaration */
@@ -43279,7 +43521,7 @@ index d8f40814..4eeb6fb5 100644
  static DWORD WINAPI timer_thread_proc(LPVOID param)
  {
      sys_timer_info* t = (sys_timer_info*)param;
-@@ -346,7 +444,7 @@ static DWORD WINAPI timer_thread_proc(LPVOID param)
+@@ -346,7 +481,7 @@ static DWORD WINAPI timer_thread_proc(LPVOID param)
          }
  
          if (t->running) {
@@ -43288,7 +43530,7 @@ index d8f40814..4eeb6fb5 100644
          }
      }
  
-@@ -373,7 +471,7 @@ static void* timer_thread_proc(void* param)
+@@ -373,7 +508,7 @@ static void* timer_thread_proc(void* param)
  
          if (rc == ETIMEDOUT) {
              pthread_mutex_unlock(&t->mtx);
@@ -43297,7 +43539,7 @@ index d8f40814..4eeb6fb5 100644
              pthread_mutex_lock(&t->mtx);
          }
      }
-@@ -383,7 +481,7 @@ static void* timer_thread_proc(void* param)
+@@ -383,7 +518,7 @@ static void* timer_thread_proc(void* param)
  }
  #endif
  
@@ -43306,7 +43548,7 @@ index d8f40814..4eeb6fb5 100644
  {
      if (t->event_queue_id <= 0 || t->event_queue_id > SYS_EVENT_QUEUE_MAX)
          return;
-@@ -395,8 +493,8 @@ static void timer_send_event(sys_timer_info* t)
+@@ -395,8 +530,8 @@ static void timer_send_event(sys_timer_info* t)
      sys_event_t evt;
      evt.source = t->source;
      evt.data1  = t->data1;
@@ -43317,7 +43559,7 @@ index d8f40814..4eeb6fb5 100644
  
      /* Push event (ignore if queue full) */
  #ifdef _WIN32
-@@ -532,6 +630,7 @@ int64_t sys_timer_connect_event_queue(ppu_context* ctx)
+@@ -532,6 +667,7 @@ int64_t sys_timer_connect_event_queue(ppu_context* ctx)
      t->event_queue_id = (int32_t)queue_id;
      t->source         = source;
      t->data1          = data1;
@@ -43325,7 +43567,7 @@ index d8f40814..4eeb6fb5 100644
  
      return CELL_OK;
  }
-@@ -579,6 +678,28 @@ int64_t sys_timer_start(ppu_context* ctx)
+@@ -579,6 +715,28 @@ int64_t sys_timer_start(ppu_context* ctx)
      if (t->running)
          return (int64_t)(int32_t)CELL_EBUSY;
  
@@ -43354,6 +43596,12 @@ index d8f40814..4eeb6fb5 100644
      if (period == 0)
          return (int64_t)(int32_t)CELL_EINVAL;
  
+@@ -677,4 +835,5 @@ void sys_timer_init(lv2_syscall_table* tbl)
+     lv2_syscall_register(tbl, SYS_TIMER_USLEEP,            sys_timer_usleep);
+     lv2_syscall_register(tbl, SYS_TIMER_SLEEP,             sys_timer_sleep);
+     lv2_syscall_register(tbl, SYS_TIME_GET_CURRENT_TIME,   sys_time_get_current_time);
++    lv2_syscall_register(tbl, SYS_TIME_GET_TIMEZONE,       sys_time_get_timezone);
+ }
 diff --git a/runtime/syscalls/sys_timer.h b/runtime/syscalls/sys_timer.h
 index 3588dcea..e1da9251 100644
 --- a/runtime/syscalls/sys_timer.h

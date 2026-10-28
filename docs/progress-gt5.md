@@ -12,6 +12,28 @@ paragraph): asphalt, markings, kerbs, banners and mirror now draw. Still
 to check against that fix: the kerbs' rainbow noise and the noisy barriers
 (the shot after the fix shows neither), the livery of a car in the mirror.
 
+**Clock wrong (fixed, 2026-10-29).** The menu clock is not built from
+`cellRtc` at all (`RTC_TRACE=<n>`, new, logged no call on the way to the
+menu): GT5 reads `sys_time_get_current_time` (correct) and converts it with
+`sys_time_get_timezone`, syscall 144. That was an unregistered stub: it
+returned CELL_OK and wrote nothing, so the conversion used whatever its two
+variables held. That is why the time and date differed at boot and on each
+page load (3 minutes ahead and 10 days behind in one report). Syscall 144
+now writes the host's zone. Daylight saving is folded into the zone and
+the flag reported as 0: with the flag set separately, GT5 showed New
+Zealand summer time an hour behind, so it ignores the flag
+(`PS3_TZ_HOST=2`: standard zone plus flag, `=0`: UTC). The system
+parameters TIMEZONE/SUMMERTIME (were UTC, no DST) report the same
+(`SYSPARAM_TZ_HOST=0` old). Measured: 12:08 shown from 12:08:38 to 12:08:58,
+12:09 at 12:09:08, date 29 on the 29th.
+
+Also found unregistered on the way, both answering a fake CELL_OK:
+`cellRtcIsLeapYear` (said no for every year; now Gregorian) and
+`sceNpManagerGetNetworkTime` (wrote no tick; now the host's UTC when
+signed in, `SCE_NP_ERROR_OFFLINE` otherwise, `NP_NETWORK_TIME=1` always
+the host time). `src/gen/ppu_hle_nids.cpp` regenerated (`--all`): those
+two registrations are the only change.
+
 **Loading-logo reflection showed the menu (fixed, 2026-10-29).** The GT
 logo's moving reflection band (program `0x05809341`, logo body
 `0x05807E81`) samples a 256x159 image at a scratch surface (`0x03780000`

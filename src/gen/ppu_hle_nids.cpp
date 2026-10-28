@@ -607,6 +607,7 @@ extern "C" {
     void cellRtcGetDaysInMonth(void);
     void cellRtcSetTick(void);
     void cellRtcGetTick(void);
+    void cellRtcIsLeapYear(void);
     void cellRudpInit(void);
     void cellRudpEnd(void);
     void cellRudpCreateContext(void);
@@ -961,6 +962,7 @@ extern "C" {
     void sceNpGetAccountAge(void);
     void sceNpGetMyLanguages(void);
     void sceNpManagerGetStatus(void);
+    void sceNpManagerGetNetworkTime(void);
     void sceNpManagerRegisterCallback(void);
     void sceNpManagerUnregisterCallback(void);
     void sceNpManagerGetNpId(void);
@@ -1833,6 +1835,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x5B6A0A1Du, "cellRtcGetDaysInMonth", (void*)cellRtcGetDaysInMonth);
     ps3_hle_register(0x99B13034u, "cellRtcSetTick", (void*)cellRtcSetTick);
     ps3_hle_register(0xC7BDB7EBu, "cellRtcGetTick", (void*)cellRtcGetTick);
+    ps3_hle_register(0x5316B4A8u, "cellRtcIsLeapYear", (void*)cellRtcIsLeapYear);
     ps3_hle_register(0x63F63545u, "cellRudpInit", (void*)cellRudpInit);
     ps3_hle_register(0xB6BCB4A1u, "cellRudpEnd", (void*)cellRudpEnd);
     ps3_hle_register(0x7DADC739u, "cellRudpCreateContext", (void*)cellRudpCreateContext);
@@ -2187,6 +2190,7 @@ extern "C" void ppu_hle_register_all(void) {
     ps3_hle_register(0x72CA41DCu, "sceNpGetAccountAge", (void*)sceNpGetAccountAge);
     ps3_hle_register(0xFACC5962u, "sceNpGetMyLanguages", (void*)sceNpGetMyLanguages);
     ps3_hle_register(0xA7BFF757u, "sceNpManagerGetStatus", (void*)sceNpManagerGetStatus);
+    ps3_hle_register(0xBDC07FD5u, "sceNpManagerGetNetworkTime", (void*)sceNpManagerGetNetworkTime);
     ps3_hle_register(0xE7DCD3B4u, "sceNpManagerRegisterCallback", (void*)sceNpManagerRegisterCallback);
     ps3_hle_register(0x52A6B523u, "sceNpManagerUnregisterCallback", (void*)sceNpManagerUnregisterCallback);
     ps3_hle_register(0xFE37A7F4u, "sceNpManagerGetNpId", (void*)sceNpManagerGetNpId);
