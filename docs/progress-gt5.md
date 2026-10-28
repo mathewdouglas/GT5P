@@ -52,7 +52,50 @@ every 3 s until the screen wanted:
 The script prints each milestone with its time; `-ShotsFrom` picks where
 shots start (grid: RaceLoad, race: RaceStart).
 
-**The purple road (open).** Measured so far:
+**The purple road: textures loaded into each other's slots (cause found,
+not fixed; 2026-10-29).** Measured, with the scene target read raw
+(`RSX_CAP_ALLRT=1`, below) instead of through tone mapping and motion blur:
+
+- Road program `0x09B96581` blends four colour layers (units 2, 3, 1, 0),
+  then lighting, specular and fog. Snapshots of each stage
+  (`FP_SHOW_AT`) show the colour already blue before any lighting: the
+  unit-0 layer adds it. Light vector, lightmap, shadow and constants are
+  all sane (`RSX_VCB_DBG`: c462 = (2, 1, 0.5, 8), c466 the sun).
+- The game's texture descriptors (68-byte records holding a prebuilt
+  SET_TEXTURE block, near `0x46FD7000`; found by searching a
+  `GT5P_MEMSNAP` snapshot) all agree: `0x0B3E6480` is a 512x512 DXT5 colour
+  texture (sRGB), `0x0B59BF00` a 1024x512 DXT1 normal map. Video memory
+  holds the opposite: a 1024x512 DXT1 normal map (road-marking panels)
+  at `0x0B3E6480`, 512x512 DXT5 tyre marks at `0x0B59BF00`. With mips the
+  two are 0x55570 and 0x55568 bytes, equal once rounded to 128.
+- The bytes come from an SPU decompression job (lifted body `0x01788E00`)
+  that inflates a compressed chunk from one staging buffer (`0x48DBA000`)
+  into video memory; its descriptor is {0, 0x4FAE8520, source, source size,
+  destination, output size} (`SPU_DMA_RANGE_HIST` with
+  `SPU_DMA_HIST_LS=A800:80`). So the PPU paired the normal map's chunk with
+  the colour texture's destination: the pairing of file chunks to
+  destinations is swapped for equal-size textures, which suggests a sort
+  whose tie order differs here (heap addresses or a recompiled compare).
+  The job builder is called from `0x00DC6614` ← `0x00DC8184` ←
+  `0x00E6775C` ← `0x002ACC74` ← `0x002AD424`; the pairing code is not
+  found yet. Next: Ghidra/REA on that chain.
+- Same layout in every run checked (deterministic). `RSX_TEXNM_CHECK=<fp>`
+  lists every colour (sRGB) unit of a program whose DXT data averages like
+  a normal map.
+- Separate, open: one road draw has `0x0B4BBD00` on unit 2 as a 1024x128
+  DXT5, while every command block in memory sets it on unit 3 as a
+  2048x128 DXT1. Not yet known whether the game or our state tracking
+  pairs them.
+
+New diagnostics (ps3recomp): `RSX_CAP_ALLRT=1` (every live target,
+16-bit UNORM supported), `FP_SHOW_AT=<n>` (the `FP_SHOW` value just
+before statement n), `RSX_VCB_DBG=<vs hash>[,n]`, `RSX_VPLAN_DBG=<n>[,attr]`
+(every attribute a vertex program reads, with raw bytes of the first
+vertices), `RSX_TEXDUMP_FP`/`_UNIT`/`_AROUND`, `RSX_TEXNM_CHECK`.
+`scripts/test/rdcap.ps1 -Gt5Race` captures a race frame in RenderDoc (it
+lost the device on this machine: memory).
+
+Earlier notes, superseded by the above:
 
 - The road is fragment program `0x09B96581` (found by painting candidate
   programs red with `FP_SHOW`/`FP_TEX_FP`; the barriers are `0x0A779301`,
