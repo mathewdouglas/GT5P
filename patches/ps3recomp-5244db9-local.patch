@@ -6611,7 +6611,7 @@ index ea160aa4..789557de 100644
  s32 sceNpManagerUnregisterCallback(void);
  s32 sceNpManagerGetNpId(SceNpId* npId);
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 688ff041..9326364f 100644
+index 688ff041..2f0a3d20 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -10,8 +10,11 @@
@@ -7144,7 +7144,7 @@ index 688ff041..9326364f 100644
      vm_write32((u32)attr_ea + WKATTR_NAME_CLASS, 0);
      vm_write32((u32)attr_ea + WKATTR_NAME_INST,  0);
      vm_write32((u32)attr_ea + WKATTR_HOOK,     0);
-@@ -1511,28 +1900,637 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1511,28 +1900,679 @@ static WklPm* spurs_resolve_pm(u32 wid)
   * then busy-waits at the cross-SPU barrier for lane 1, which the sequential
   * loop can never advance (SPU 1 hasn't run). Concurrency is required, not an
   * optimization: SPU 0's barrier poll observes SPU 1's atomic lane update live. */
@@ -7183,13 +7183,38 @@ index 688ff041..9326364f 100644
 + * it has none (the module's GETLLAR/PUTLLC at 0x3488, Phase 64). The title
 + * waits until every SPU's halfword reaches the end of the list. Returns the
 + * first job this lane still reports in flight, or -1. */
++/* Whether a WWS job list header or list may be read at `ea`. Gran Turismo 5
++ * Prologue's lists are in main memory below 0x40000000; Gran Turismo 5's are
++ * at 0x402xxxxx (user memory), which the old bound excluded, so neither the
++ * lane mask nor the in-flight check ever applied to them (GT5 Phase 23).
++ * Any committed page below the RSX's local memory now passes; the page is
++ * only queried, never committed. SPURS_WWS_LOW=1: the old bound. */
++static int wws_addr_ok(u32 ea, u32 size)
++{
++    static int low = -1;
++    if (low < 0) { const char* e = getenv("SPURS_WWS_LOW"); low = (e && *e == '1') ? 1 : 0; }
++    if (ea < 0x10000) return 0;
++    if (low) return ea < 0x40000000;
++    if (ea >= 0xC0000000u || ea + size < ea || ea + size > 0xC0000000u) return 0;
++#ifdef _WIN32
++    { extern uint8_t g_vm_page_bitmap[65536 / 8];
++      const u32 pg[2] = { ea >> 16, (ea + size - 1) >> 16 };
++      for (int i = 0; i < 2; i++) {
++          if ((g_vm_page_bitmap[pg[i] >> 3] >> (pg[i] & 7)) & 1) continue;
++          MEMORY_BASIC_INFORMATION mbi;
++          if (!VirtualQuery(vm_base + ((uintptr_t)pg[i] << 16), &mbi, sizeof mbi)) return 0;
++          if (mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return 0;
++      } }
++#endif
++    return 1;
++}
 +static int wws_lane_inflight(uint64_t arg, uint32_t spu)
 +{
 +    const u32 hd = (u32)arg;
-+    if (hd < 0x10000 || hd >= 0x40000000 || (hd & 0x7F) || spu > 5) return -1;
++    if (!wws_addr_ok(hd, 0x80) || (hd & 0x7F) || spu > 5) return -1;
 +    for (u32 q = 0; q < 4; q++) {
 +        const u32 list = vm_read32(hd + 0x30 + 4 * q);
-+        if (list < 0x10000 || list >= 0x40000000) continue;
++        if (!wws_addr_ok(list, 16)) continue;
 +        /* A job in flight is one the head has passed. Before a list is first
 +         * used its rows hold 0x1FFF here, which is not one. */
 +        const u32 head = vm_read16(hd + 0x40 + 16 * q);
@@ -7644,6 +7669,10 @@ index 688ff041..9326364f 100644
 +    { static int on = -1;
 +      if (on < 0) { const char* e = getenv("SPURS_LANE_MASK"); on = (e && *e == '0') ? 0 : 1; }
 +      const u32 hd = (u32)g->a.arg;
++      /* Below 0x40000000 only: Gran Turismo 5's lists (0x402xxxxx) keep
++       * four 16-bit queue masks at +0x20..+0x2F (workload 5: 03FF 03FF
++       * 000F 000F), so +0x2F is no SPU mask there; read as one, it cut
++       * workload 5 to a single lane and the race froze (GT5 Phase 23). */
 +      if (on && hd >= 0x10000 && hd < 0x40000000 && !(hd & 0x7F)) {
 +          allow = *(vm_base + hd + 0x2F);
 +          if (!allow) allow = 0xFF;                   /* no mask written yet */
@@ -7703,7 +7732,7 @@ index 688ff041..9326364f 100644
 +        /* A WWS job list's header: list pointers at +0x30, then a row per
 +         * queue from +0x40 (published head, then per-SPU progress). */
 +        const u32 hd = (u32)g->a.arg;
-+        if (hd >= 0x10000 && hd < 0x40000000 && !(hd & 0xF))
++        if (hd >= 0x10000 && hd < 0xC0000000u && !(hd & 0xF))
 +            for (u32 o = 0x20; o < 0x90; o += 16) {
 +                u8 q[16];
 +#ifdef _WIN32
@@ -7725,6 +7754,19 @@ index 688ff041..9326364f 100644
 +void cellSpurs_debug_dump(void)
 +{
 +    cellSpurs_debug_dump_to(stderr);
++    /* GCM labels 0x40-0x5F (guest 0x03000400): render jobs waiting for ring
++     * space poll one each (Gran Turismo 5: 0x48 + SPU), written by semaphore
++     * releases in the command stream. */
++#ifdef _WIN32
++    for (u32 l = 0x40; l < 0x60; l += 8) {
++        u8 q[0x80]; SIZE_T got = 0;
++        if (!ReadProcessMemory(GetCurrentProcess(), vm_base + 0x03000000u + l * 16, q, sizeof q, &got) || got != sizeof q) break;
++        fprintf(stderr, "[stall]   labels %02X..%02X:", l, l + 7);
++        for (int k = 0; k < 8; k++)
++            fprintf(stderr, " %02X%02X%02X%02X", q[k * 16], q[k * 16 + 1], q[k * 16 + 2], q[k * 16 + 3]);
++        fprintf(stderr, "%c", 10);
++    }
++#endif
 +    { extern void spu_rowlog_dump(void); spu_rowlog_dump(); }
 +}
 +
@@ -7785,7 +7827,7 @@ index 688ff041..9326364f 100644
      static volatile long s_pm_off = -1;
      if (s_pm_off < 0) s_pm_off = getenv("PS3_NO_SPURS_PM") ? 1 : 0;
  
-@@ -1554,7 +2552,9 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1554,7 +2594,9 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
      int changes_logged = 0;
  
      for (;;) {
@@ -7796,7 +7838,7 @@ index 688ff041..9326364f 100644
          u32 ea = si->ea;
          if (!ea || s_pm_off) continue;
  
-@@ -1605,6 +2605,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1605,6 +2647,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
              if (!(enabled & (0x80000000u >> wid))) continue;
              if (*(vm_base + ea + SPURS_WKL_STATE1 + wid) != 2) continue;
              if (!s_workloads[wid].in_use || s_workloads[wid].spurs_ea != ea) continue;
@@ -7804,7 +7846,7 @@ index 688ff041..9326364f 100644
  
              /* A SPURS policy module is a PERSISTENT SPU program. The real kernel
               * schedules an ENABLED, runnable workload onto an SPU and the module
-@@ -1626,7 +2627,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1626,7 +2669,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
              volatile u8* rdy = vm_base + ea + SPURS_WKL_READY1 + wid;
              u32 sig = vm_read32(ea + SPURS_WKL_SIGNAL1) >> 16;    /* be u16 @0x70 */
              int kicked = (*rdy != 0) || ((sig & (0x8000u >> wid)) != 0);
@@ -7823,7 +7865,7 @@ index 688ff041..9326364f 100644
              if (sig & (0x8000u >> wid))
                  vm_write32(ea + SPURS_WKL_SIGNAL1,
                             (vm_read32(ea + SPURS_WKL_SIGNAL1) & ~((0x8000u >> wid) << 16)));
-@@ -1694,12 +2705,61 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1694,12 +2747,61 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                if (s_fs == -2) { const char* e = getenv("SPURS_FORCE_SPUS");
                  s_fs = e ? atoi(e) : -1; }
                if (s_fs > 0) maxcont = (u8)(s_fs > 6 ? 6 : s_fs); }
@@ -7888,7 +7930,7 @@ index 688ff041..9326364f 100644
                  } else {
                      /* Run the workload's virtual SPUs CONCURRENTLY (see
                       * spurs_pm_worker): each lane advances in parallel so the
-@@ -1712,6 +2772,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1712,6 +2814,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                          wa[nth].pm = pm; wa[nth].pm_size = sz;
                          wa[nth].arg = arg; wa[nth].wid = wid; wa[nth].ea = ea;
                          wa[nth].spu_num = sn;
@@ -7896,7 +7938,7 @@ index 688ff041..9326364f 100644
                          th[nth] = CreateThread(NULL, 1u << 20, spurs_pm_worker, &wa[nth], 0, NULL);
                      }
                      spu_run_policy_module(r->fn, r->image_id, pm, sz, arg, wid, ea, 0);
-@@ -1721,7 +2782,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1721,7 +2824,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                      }
                  }
              }
@@ -7905,7 +7947,7 @@ index 688ff041..9326364f 100644
              /* "Found work" heuristic: a module that did something polls the
               * kernel for MORE work before exiting (selectWorkload calls >0);
               * an idle module exits immediately with polls==0. Grow the idle
-@@ -1741,8 +2802,15 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1741,8 +2844,15 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      s_workloads[wid].readyCount = value;
@@ -7923,7 +7965,7 @@ index 688ff041..9326364f 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -2159,6 +3227,7 @@ static struct {
+@@ -2159,6 +3269,7 @@ static struct {
      u16 max_grab;
      int run_count;
      volatile long running;   /* 1 while a host thread walks this chain */
@@ -7931,7 +7973,7 @@ index 688ff041..9326364f 100644
  } s_jobchains[MAX_JOBCHAINS];
  
  static void jc_dump_commands(const char* tag, u32 ea, int max_words)
-@@ -2386,11 +3455,22 @@ static struct {
+@@ -2386,11 +3497,22 @@ static struct {
      u32 ea;          /* guest CellSpursJobGuard address (128-byte aligned) */
      u32 count;       /* notifications still outstanding                    */
      u32 reset;       /* value to restore when autoReset is set             */
@@ -7955,7 +7997,7 @@ index 688ff041..9326364f 100644
  static int jg_find(u32 ea)
  {
      for (int i = 0; i < MAX_JOBGUARDS; i++)
-@@ -2447,9 +3527,26 @@ s32 cellSpursJobGuardNotify(u64 guard_ea)
+@@ -2447,9 +3569,26 @@ s32 cellSpursJobGuardNotify(u64 guard_ea)
       * OBSERVED zero, which threw away any notify that arrived while the job
       * was still running -- the title notified 6 times and the chain completed
       * 2 laps, so the thread waiting on the other 4 completions never woke. */
@@ -7985,7 +8027,7 @@ index 688ff041..9326364f 100644
        s_jobguards[i].count = remaining;
        vm_write32(ea, remaining); }
      { static int _n = 0;
-@@ -2474,22 +3571,49 @@ s32 cellSpursJobGuardReset(u64 guard_ea)
+@@ -2474,22 +3613,49 @@ s32 cellSpursJobGuardReset(u64 guard_ea)
   * chain then gives up this pass rather than spinning the walker thread
   * forever). An unknown guard opens immediately -- a chain guarded by something
   * we never saw initialised must not deadlock the walker. */
@@ -8040,7 +8082,7 @@ index 688ff041..9326364f 100644
  #else
          usleep(1000);
  #endif
-@@ -2513,6 +3637,19 @@ static int jg_wait(u32 ea)
+@@ -2513,6 +3679,19 @@ static int jg_wait(u32 ea)
  #endif
  extern SPURS_JOB_TLS uint32_t g_spurs_job_mbox, g_spurs_job_mbox_intr, g_spurs_job_cmd;
  extern SPURS_JOB_TLS int g_spurs_job_mbox_valid;
@@ -8060,7 +8102,7 @@ index 688ff041..9326364f 100644
  
  /* SPURS_EVENT_D3=<n>: probe. The value a job query returns to the PPU is read
   * from the completion event's data3 field (the guest stores r7 at sp+0xB8 and
-@@ -2527,6 +3664,16 @@ static u64 spurs_event_data3_probe(void)
+@@ -2527,6 +3706,16 @@ static u64 spurs_event_data3_probe(void)
      return (u64)(unsigned)v;
  }
  
@@ -8077,7 +8119,7 @@ index 688ff041..9326364f 100644
  static void jc_signal_done(u32 jc_ea, int job_index)
  {
      /* Carry the job's mailbox answer in the completion event. On hardware the
-@@ -2541,6 +3688,9 @@ static void jc_signal_done(u32 jc_ea, int job_index)
+@@ -2541,6 +3730,9 @@ static void jc_signal_done(u32 jc_ea, int job_index)
       * so a data2 pinned at 0 never ends that loop -- with the chain's lwmutex
       * held, which blocks the main thread's teardown behind it. A chain-level
       * signal (job_index < 0) sends 0. */
@@ -8087,7 +8129,7 @@ index 688ff041..9326364f 100644
      u64 d2 = (u64)(unsigned)(job_index < 0 ? 0 : job_index);
      u64 mbox = 0, d3 = 0;
      (void)spurs_event_data3_probe();   /* prime d3_probe_valid */
-@@ -2582,10 +3732,83 @@ static void jc_signal_done(u32 jc_ea, int job_index)
+@@ -2582,10 +3774,83 @@ static void jc_signal_done(u32 jc_ea, int job_index)
      }
  }
  
@@ -8098,7 +8140,7 @@ index 688ff041..9326364f 100644
 + * the executable's base, to look up in a linker map. */
 +static volatile long s_jc_sampler_on = 0;
 +static DWORD WINAPI jc_sampler(LPVOID p)
-+{
+ {
 +    HANDLE th = (HANDLE)p;
 +    static struct { unsigned long long rva; unsigned n; } b[4096];
 +    unsigned nb = 0, total = 0;
@@ -8143,7 +8185,7 @@ index 688ff041..9326364f 100644
 +#endif
 +
 +static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc, volatile long* stop)
- {
++{
 +#ifdef _WIN32
 +    /* On the console a chain's jobs run on SPUs nothing else can take.
 +     * Here they share cores with the title's own threads, and a walker
@@ -8172,7 +8214,7 @@ index 688ff041..9326364f 100644
      /* Bound IDLE steps, not total steps. A SPURS job chain is frequently a
       * SERVICE LOOP -- guard, job, sync, next, repeat -- and is meant to run for
       * the lifetime of the subsystem. A flat cap on total commands therefore
-@@ -2594,23 +3817,60 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2594,23 +3859,60 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
       * a malformed chain is spinning through commands WITHOUT running a job, so
       * count that instead and reset it whenever real work happens. */
      int idle = 0;
@@ -8235,7 +8277,7 @@ index 688ff041..9326364f 100644
              pc += 8; continue;
          }
          if (op == 1) { pc = (u32)(cmd & ~7ull); continue; }   /* RESET_PC */
-@@ -2619,7 +3879,11 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2619,7 +3921,11 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
          if (op == 7) {
              if (ext == (7 | (15 << 3))) {                     /* END */
                  printf("[cellSpurs] chain 0x%08X: END after %d job(s)\n", jc_ea, jobs);
@@ -8248,7 +8290,7 @@ index 688ff041..9326364f 100644
                  return;
              }
              if (ext == (7 | (14 << 3))) {                     /* RET */
-@@ -2633,7 +3897,9 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2633,7 +3939,9 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
          }
          if (op == 7 && ext == (7 | (1 << 3))) {           /* GUARD */
              u32 g_ea = (u32)(cmd & ~127ull);
@@ -8259,7 +8301,7 @@ index 688ff041..9326364f 100644
              pc += 8; continue;
          }
          /* NOP(0) / SYNC+LWSYNC(2, one virtual SPU: nothing to wait for) /
-@@ -2647,6 +3913,9 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
+@@ -2647,6 +3955,9 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
  
  static DWORD WINAPI jc_thread(LPVOID p)
  {
@@ -8269,7 +8311,7 @@ index 688ff041..9326364f 100644
      int slot = (int)(intptr_t)p;
      /* TIMING PROBE (SPURS_JC_DELAY=ms): the real jm2 chain walker is async and
       * picks up jobs as the PPU appends them + fills their descriptors. Our walk
-@@ -2655,12 +3924,16 @@ static DWORD WINAPI jc_thread(LPVOID p)
+@@ -2655,12 +3966,16 @@ static DWORD WINAPI jc_thread(LPVOID p)
       * Confirms timing-vs-never before committing to the async rewrite. */
      { const char* d = getenv("SPURS_JC_DELAY");
        if (d && *d) Sleep((unsigned)atoi(d)); }
@@ -8289,7 +8331,7 @@ index 688ff041..9326364f 100644
      return 0;
  }
  
-@@ -2691,8 +3964,13 @@ static s32 jc_start(u64 jc_ea, const char* who)
+@@ -2691,8 +4006,13 @@ static s32 jc_start(u64 jc_ea, const char* who)
              jc_dump_commands(who, s_jobchains[i].entry_ea, 16);
          }
          if (s_off || !s_jobchains[i].entry_ea) return CELL_OK;
@@ -8303,7 +8345,7 @@ index 688ff041..9326364f 100644
              HANDLE th = CreateThread(NULL, 1u << 20, jc_thread, (LPVOID)(intptr_t)i, 0, NULL);
              if (th) CloseHandle(th);
              else s_jobchains[i].running = 0;
-@@ -2727,7 +4005,14 @@ s32 cellSpursShutdownJobChain(u64 jc_ea)
+@@ -2727,7 +4047,14 @@ s32 cellSpursShutdownJobChain(u64 jc_ea)
      if (_n++ < 8) printf("[cellSpurs] ShutdownJobChain(jc=0x%08X)\n", (u32)jc_ea);
      for (int i = 0; i < MAX_JOBCHAINS; i++) {
          if (s_jobchains[i].jc_ea == (u32)jc_ea) {
@@ -8319,7 +8361,7 @@ index 688ff041..9326364f 100644
              return CELL_OK;
          }
      }
-@@ -3009,12 +4294,63 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3009,12 +4336,63 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      u32 se = (u32)spurs_ea;
      *(vm_base + base + 0x20) = *(vm_base + se + SPURS_WKL_CURCONT + wid);  /* contention   */

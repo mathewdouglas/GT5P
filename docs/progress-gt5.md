@@ -4,6 +4,45 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 23 — Race freezes: two shapes (2026-10-29)
+
+**The kick-to-dispatch delay was a measuring error.** `tl.py` charged the
+kicks the game issues while a pass is running (it appends jobs, which the
+running lanes take) to the next dispatch. Counting only kicks that reach an
+idle workload: 0.01-0.11 ms for every workload. Fixed in `tl.py`.
+
+**Where the game thread waits.** `gFKsE` puts a user command at the end of
+its frame and waits (about 9 ms a frame) until the FIFO walker reaches it;
+the pump delivers it about 0.7 ms later on the next guest HLE call. The walk
+(about 11 ms of CPU a frame) is therefore the game thread's wait, on top of
+its own 10.9 ms.
+
+**Row history.** `SPU_ROWLOG_N=<n>` sets the entries per line (default 64),
+each entry now carries the writer's last SPU PC, and `SPU_ROWLOG_OUT=<file>`
+sends the dump to a file. 131072 entries cover about 30 s of a render list.
+
+**Shape 1: a lane leaves with its job in flight** (`fz1`). On list
+`40240080`, SPU 3's slot (+0xA) took job 0x1D (pc 0x3334) and never wrote
+0xFFFF; the other lanes all leave through 0x3334 -> 0xFFFF. The stall dump
+has SPU 3's context mid-job (pc 0x063E0, interrupts on, waiting on the
+list-stall event) while the pool counts its lane as returned: the job
+manager suspended the job and went back to the kernel, and nothing sent the
+lane back in. `SPURS_LANE_INFLIGHT=1` (GT5P Phase 63) re-enters such a lane,
+but its address bound (`< 0x40000000`) skipped GT5's lists at 0x402xxxxx.
+`wws_addr_ok` now accepts any committed page below 0xC0000000, queried and
+never committed (`SPURS_WWS_LOW=1`: old bound).
+
+The lane mask keeps the old bound: GT5's headers hold four 16-bit queue
+masks at +0x20..+0x2F (workload 5: `03FF 03FF 000F 000F`), so +0x2F is no
+SPU mask; read as one, workload 5 ran on one lane.
+
+**Shape 2: ring space** (`inf1`, with that mistaken mask). Workload 4's
+three lanes spin at pc 0x04600 polling GCM labels 0x49-0x4B (guest
+0x03000490..), which semaphore releases in the command stream write. The
+FIFO is drained (get = put) and the game thread waits on workload 4's
+progress row (0x2CB of 0x2EF): a circle. The stall dump now prints labels
+0x40-0x5F.
+
 ## Phase 22 — Performance: first measurements (2026-10-29)
 
 **Frame test.** `gt5boot.ps1 -Route race -FrameTest [-Cpu] -Settle 60`
