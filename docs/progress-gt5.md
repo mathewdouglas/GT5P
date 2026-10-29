@@ -20,6 +20,56 @@ Seen before the Phase 23 fixes; not caused by them.
 4. ~~After a collision the hit car's textures break into rainbow colours.~~
    Fixed, Phase 26.
 
+## Phase 30 — Game-thread overhead; the frame is an SPU job chain (2026-10-30)
+
+**Game thread profile** (`GT5P_SAMPLE`, `GT5P_SAMPLE_DLL=1`, race): ~45%
+blocked in the user-command wait, the rest spread thin over guest code
+(the hottest guest function, `func_002FD96C`, a vector loop, is 2%). Of
+its running time ~8% was `ZwSetEvent`, plus semaphore calls for every
+lightweight mutex and `SetThreadPriority` calls. Changes, each switchable:
+
+- `PS3_LWM_FUTEX` (on): `sys_lwmutex` lock/unlock is a compare-exchange
+  on a word in the slot, `WaitOnAddress` only when held; timed waits give
+  up without leaving a permit. Every lock and unlock was a semaphore system
+  call. Also used by `sys_lwcond_wait`.
+- `SPURS_KERN_WAKE_LAZY` (on): the kick stores the ready count first, then
+  signals the kernel event only while the kernel waits (a `pending` flag
+  makes a wake that lands during its scan count).
+  `SPURS_KICK_BUSY_SKIP` (on): no wake at all while the workload's lanes
+  run; the group's end clears `busy` and wakes the kernel after the store.
+- `PS3_PRIO_CACHE` (on): `sys_ppu_thread_set_priority` skips the three
+  host calls when the thread's host level is unchanged (creation always
+  applies).
+- `PPU_LOOKUP_CACHE` (on): a 1024-entry per-thread cache in front of the
+  PPU function table for indirect calls.
+
+Game thread CPU per frame (timeline `C`): 10.0-10.1 -> 9.3 ms. **FPS did
+not change** (51-52; `v1`-`v3`: 52.4, 48.2 with the known 2.6 s park,
+51.6): the game thread now waits that much longer.
+
+**What a cycle waits on** (user command to user command, scratch
+`tail.py`/`cyc.py`, timeline with new events: `B` = render-ring label
+writes 0x400-0x5FF, `A` = writes to a `SPU_ROWLOG` line). Mean of `gl6`:
+cycle 18.9 ms; game thread prepares its flip at 9.7, last workload-1 kick
+8.9, workload 1 ends 12.6, workload 0 7.9, **workload 4 ends 18.0**, user
+command ~0.9 ms later. Workload 4 (`PDI`, labels 72-79 = per-SPU output
+ring read positions) is kicked once per cycle by the game thread right
+after it wakes (its ready byte, set by inline atomics, is cleared by the
+job manager at pass end, pc 0x2C38). Its pass lasts until its last jobs,
+which follow workload 1's lists and the walker freeing ring space: in one
+cycle the walker sat idle 17-21 ms, then walked 5.6 ms of workload 4's
+draw-heavy output in one burst. ~28% of workload 4's busy time is its
+label-poll delay loop (now QPC reads in `spu_host_ns`); the rest is body
+`0x0196FF40` code (spread over ~30 functions) and ~20% SPU runtime
+(indirect branches, drain, DMA).
+
+Not the cause: lane stagger (`SPURS_LANE_STAGGER_MS=0` 52.2 FPS,
+`SPURS_LANE_STAGGER_US=300` 51.0, cycle unchanged), kernel idle cadence
+(a ready count of 4 counts as kicked).
+
+So the next lever is the SPU chain (workload 1 and 4 job code, the walk
+of workload 4's output), not game logic.
+
 ## Phase 29 — A cheaper FIFO walk; where a race frame waits (2026-10-29)
 
 Frame test (`gt5boot.ps1 -Route race -FrameTest -Settle 50`, 720p, warm
