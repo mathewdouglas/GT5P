@@ -85,6 +85,23 @@ waits for jobs; at boot three lanes were halted there and the load never
 finished. Most race runs show one such halt on 0x01AC0C80. Reads of up to
 one line now get the grace (`SPU_DMA_REPEAT_LINE=0`: 16 bytes).
 
+**Result** (`pq1`-`pq6`, all three fixes, 100 s frame test each): six of
+six reached the race and ran the window without a stall (3 s without a
+present) or a halted lane. Before, about one race in three froze or
+stalled.
+
+| Run | FPS | Median | p99 | Late (>20 ms) | Walk |
+| --- | --- | --- | --- | --- | --- |
+| pq1 | 38.0 | 23.4 ms | 72 ms | 73% | 13.3 ms |
+| pq2 | 52.1 | 17.1 ms | 56 ms | 20% | 8.7 ms |
+| pq3 | 52.3 | 17.1 ms | 58 ms | 20% | 8.7 ms |
+| pq4 | 52.0 | 17.1 ms | 62 ms | 20% | 8.6 ms |
+| pq5 | 40.0 | 19.5 ms | 122 ms | 47% | 10.7 ms |
+| pq6 | 52.5 | 17.4 ms | 53 ms | 23% | 9.0 ms |
+
+Four runs near 52 FPS, two slower (host load is not controlled). `pq5`
+has one 2.6 s frame, below the stall dump's 3 s, not yet explained.
+
 **Ring space** (`inf1`, with that mistaken mask only). Workload 4's
 three lanes spin at pc 0x04600 polling GCM labels 0x49-0x4B (guest
 0x03000490..), which semaphore releases in the command stream write. The
