@@ -56,6 +56,26 @@ The lane mask keeps the old bound: GT5's headers hold four 16-bit queue
 masks at +0x20..+0x2F (workload 5: `03FF 03FF 000F 000F`), so +0x2F is no
 SPU mask; read as one, workload 5 ran on one lane.
 
+**The 5-10 s stalls: a false park timeout** (`fix1`, `cv1`, `ww1`, `uc1`;
+every stall). Once the dropped job was fixed, races ran on but stopped
+presenting for 5-10 s a few times each. The game thread waits on an event
+object at `0x01AE7E80` (`func_00D320A8` sets byte +8 each frame,
+`func_00D32128` clears it from the user-command handler, on whichever
+thread the pump runs; `sys_cond_wait` with a 5 s timeout). At each stall
+user commands raised = delivered, but one to four fewer than frames
+presented: the walker had skipped some. Every stall follows
+`park at io ... unpatched for 500 ms: following put`. The park timeout
+(`GCM_PARK_TIMEOUT_MS`, from GT5P) measured a hold that only reset when
+the walker parked somewhere else or after a 100 ms gap. GT5's SPU lists
+are the same size every frame, so the walker parks at the same io each
+frame, briefly, and the hold added up across frames
+(`GCM_PARK_TIMEOUT_MS=0` printed one "held 67 s" while frames ran
+normally). At 500 ms the walker dropped a live list, user command
+included. The hold now also resets whenever a method has been walked
+since the last look (`GCM_PARK_PROGRESS=0`: old rule).
+New: `PS3_COND_TRACE_ID` signal lines name the thread and lr; the stall
+dump counts user commands raised and delivered.
+
 **Ring space** (`inf1`, with that mistaken mask only). Workload 4's
 three lanes spin at pc 0x04600 polling GCM labels 0x49-0x4B (guest
 0x03000490..), which semaphore releases in the command stream write. The
