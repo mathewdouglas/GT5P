@@ -39249,7 +39249,7 @@ index 0b235d02..4215de7d 100644
  #endif
 \ No newline at end of file
 diff --git a/runtime/spu/spu_coherency.c b/runtime/spu/spu_coherency.c
-index 7ac619f3..d5e8ff88 100644
+index 7ac619f3..88e09815 100644
 --- a/runtime/spu/spu_coherency.c
 +++ b/runtime/spu/spu_coherency.c
 @@ -15,6 +15,7 @@
@@ -39322,7 +39322,7 @@ index 7ac619f3..d5e8ff88 100644
            fflush(stderr); } }
  }
  
-@@ -155,11 +170,111 @@ void spu_coh_forget_range(uintptr_t lo, uintptr_t hi)
+@@ -155,11 +170,126 @@ void spu_coh_forget_range(uintptr_t lo, uintptr_t hi)
      spu_lockline_unlock();
  }
  
@@ -39332,10 +39332,16 @@ index 7ac619f3..d5e8ff88 100644
 + * as it stood after. spu_rowlog_dump prints them (the stall dump calls it).
 + * Built for the job lists' progress rows (Gran Turismo 5 Prologue's render
 + * lists, Phase 64), where tracing of any heavier kind hides the stall. */
-+#define ROWLOG_N 64
++/* SPU_ROWLOG_N=<n>: entries per line (default 64, about 5 ms on a busy
++ * render list; a freeze needs seconds). Each entry also keeps the writing
++ * thread's last SPU transfer PC (0 for a PPU store). SPU_ROWLOG_OUT=<file>
++ * sends the dump there instead of stderr. */
++#include "spu_context.h"
++typedef struct { unsigned long long t; unsigned long tid; uint32_t pc; unsigned char b[128]; } rl_ent;
 +static volatile int s_rl_n = -1;
++static unsigned s_rl_cap = 64;
 +static uint32_t s_rl_line[4];
-+static struct { unsigned long long t; unsigned long tid; unsigned char b[128]; } s_rl[4][ROWLOG_N];
++static rl_ent* s_rl[4];
 +static unsigned s_rl_i[4];
 +extern unsigned char* vm_base;
 +#if defined(_MSC_VER)
@@ -39351,19 +39357,30 @@ index 7ac619f3..d5e8ff88 100644
 +{
 +    int n = 0;
 +    const char* e = getenv("SPU_ROWLOG");
++    const char* c = getenv("SPU_ROWLOG_N");
++    if (c && atoi(c) > 0) s_rl_cap = (unsigned)atoi(c);
 +    while (e && *e && n < 4) {
 +        char* end; unsigned long v = strtoul(e, &end, 16);
 +        if (end == e) break;
++        s_rl[n] = (rl_ent*)calloc(s_rl_cap, sizeof(rl_ent));
++        if (!s_rl[n]) break;
 +        s_rl_line[n++] = (uint32_t)v & ~127u;
 +        if (*end != ',') break;
 +        e = end + 1;
 +    }
 +    s_rl_n = n;
 +}
++static void rl_put(int k, unsigned long tid, uint32_t pc)
++{
++    rl_ent* r = &s_rl[k][s_rl_i[k]++ % s_rl_cap];
++    r->t = rl_now(); r->tid = tid; r->pc = pc;
++    memcpy(r->b, vm_base + s_rl_line[k], 128);
++}
 +/* With SPU_ROWLOG, a thread compares each listed line every millisecond with
 + * the last write logged for it. A difference is a write that bypassed the
 + * lock-line lock and the notify (the lifter's stvx, stvlx, stvrx and dcbz
-+ * store straight into guest memory): logged with host tid 1. */
++ * store straight into guest memory, and SPU PUTs to lines nobody has
++ * reserved skip the notify): logged with host tid 1. */
 +#if defined(_MSC_VER)
 +static DWORD WINAPI rowlog_poll(LPVOID unused)
 +{
@@ -39373,11 +39390,8 @@ index 7ac619f3..d5e8ff88 100644
 +        spu_lockline_lock();
 +        for (int k = 0; k < s_rl_n; k++) {
 +            const unsigned n = s_rl_i[k];
-+            if (n && memcmp(s_rl[k][(n - 1) % ROWLOG_N].b, vm_base + s_rl_line[k], 128) != 0) {
-+                unsigned i = s_rl_i[k]++ % ROWLOG_N;
-+                s_rl[k][i].t = rl_now(); s_rl[k][i].tid = 1;
-+                memcpy(s_rl[k][i].b, vm_base + s_rl_line[k], 128);
-+            }
++            if (n && memcmp(s_rl[k][(n - 1) % s_rl_cap].b, vm_base + s_rl_line[k], 128) != 0)
++                rl_put(k, 1, 0);
 +        }
 +        spu_lockline_unlock();
 +    }
@@ -39393,37 +39407,38 @@ index 7ac619f3..d5e8ff88 100644
 +#endif
 +    }
 +    for (int k = 0; k < s_rl_n; k++)
-+        if (s_rl_line[k] == line && vm_base) {
-+            unsigned i = s_rl_i[k]++ % ROWLOG_N;
-+            s_rl[k][i].t = rl_now(); s_rl[k][i].tid = rl_tid();
-+            memcpy(s_rl[k][i].b, vm_base + line, 128);
-+        }
++        if (s_rl_line[k] == line && vm_base)
++            rl_put(k, rl_tid(), g_spu_pch_n ? g_spu_pch[(g_spu_pch_n - 1) & 7u] : 0);
 +}
 +void spu_rowlog_dump(void)
 +{
 +    if (s_rl_n <= 0) return;
++    FILE* out = stderr;
++    const char* fn = getenv("SPU_ROWLOG_OUT");
++    if (fn && *fn) { FILE* f = fopen(fn, "w"); if (f) out = f; }
 +    spu_lockline_lock();
 +    const unsigned long long f = rl_freq(), now = rl_now();
 +    for (int k = 0; k < s_rl_n; k++) {
-+        const unsigned n = s_rl_i[k], first = n > ROWLOG_N ? n - ROWLOG_N : 0;
-+        fprintf(stderr, "[rowlog] line %08X: %u writes, last %u (ms ago, host tid, +0x30..+0x7F; '.' = unchanged 16 bytes)%c", 10,
-+                s_rl_line[k], n, n - first);
++        const unsigned n = s_rl_i[k], first = n > s_rl_cap ? n - s_rl_cap : 0;
++        fprintf(out, "[rowlog] line %08X: %u writes, last %u (ms ago, host tid, spu pc, +0x30..+0x7F; '.' = unchanged 16 bytes)%c",
++                s_rl_line[k], n, n - first, 10);
 +        const unsigned char* prev = NULL;
 +        for (unsigned j = first; j < n; j++) {
-+            const unsigned i = j % ROWLOG_N;
-+            fprintf(stderr, "[rowlog]   -%8.3f %6lu", (double)(now - s_rl[k][i].t) * 1000.0 / (double)f, s_rl[k][i].tid);
++            const rl_ent* r = &s_rl[k][j % s_rl_cap];
++            fprintf(out, "[rowlog]   -%9.3f %6lu %05X", (double)(now - r->t) * 1000.0 / (double)f, r->tid, r->pc);
 +            for (int o = 0x30; o < 0x80; o += 16) {
-+                if (prev && !memcmp(prev + o, s_rl[k][i].b + o, 16)) { fprintf(stderr, " ."); continue; }
-+                fprintf(stderr, " ");
-+                for (int b = 0; b < 16; b += 2) fprintf(stderr, "%s%02X%02X", b ? " " : "", s_rl[k][i].b[o + b], s_rl[k][i].b[o + b + 1]);
-+                fprintf(stderr, " |");
++                if (prev && !memcmp(prev + o, r->b + o, 16)) { fprintf(out, " ."); continue; }
++                fprintf(out, " ");
++                for (int b = 0; b < 16; b += 2) fprintf(out, "%s%02X%02X", b ? " " : "", r->b[o + b], r->b[o + b + 1]);
++                fprintf(out, " |");
 +            }
-+            fprintf(stderr, "%c", 10);
-+            prev = s_rl[k][i].b;
++            fprintf(out, "%c", 10);
++            prev = r->b;
 +        }
 +    }
 +    spu_lockline_unlock();
-+    fflush(stderr);
++    fflush(out);
++    if (out != stderr) fclose(out);
 +}
 +
  int spu_coh_is_reserved(uint32_t addr)
@@ -39436,7 +39451,7 @@ index 7ac619f3..d5e8ff88 100644
  }
  
  /* A DMA PUT is issued BY an SPU, and hardware does not take that SPU's own
-@@ -175,6 +290,7 @@ int spu_coh_is_reserved(uint32_t addr)
+@@ -175,6 +305,7 @@ int spu_coh_is_reserved(uint32_t addr)
  void spu_coh_notify_write_except(uint32_t ea, const void* self)
  {
      uint32_t line = ea & ~127u;
@@ -39444,7 +39459,7 @@ index 7ac619f3..d5e8ff88 100644
      for (int i = 0; i < SPU_COH_MAX_CTX; i++) {
          spu_context* c = s_coh_ctxs[i];
          if (!c || (const void*)c == self) continue;
-@@ -190,6 +306,7 @@ void spu_coh_notify_write_except(uint32_t ea, const void* self)
+@@ -190,6 +321,7 @@ void spu_coh_notify_write_except(uint32_t ea, const void* self)
  void spu_coh_notify_write(uint32_t ea)
  {
      uint32_t line = ea & ~127u;

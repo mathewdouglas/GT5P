@@ -91,8 +91,10 @@ open_d = {}
 passes = collections.defaultdict(list)
 kick_lat = collections.defaultdict(list)
 last_kick = {}
+# Only a kick that arrives while the workload is idle waits for a dispatch;
+# kicks during a pass add jobs the running lanes take themselves.
 for us, tid, k, a, b in ev:
-    if k == 'K': last_kick.setdefault(a, us)
+    if k == 'K' and a not in open_d: last_kick.setdefault(a, us)
     if k == 'D':
         open_d[a] = us
         if a in last_kick: kick_lat[a].append(us - last_kick.pop(a))
