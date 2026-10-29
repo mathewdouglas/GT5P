@@ -39921,7 +39921,7 @@ index 8d8e4aac..49da6e60 100644
                  ((ctx)->event_status & (ctx)->event_mask))      \
                  _tf = spu_take_interrupt((ctx), _tf);          \
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221e..becab3d5 100644
+index 90f3221e..5fee5abf 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -20,6 +20,7 @@
@@ -40163,7 +40163,7 @@ index 90f3221e..becab3d5 100644
                const uint8_t* q = spu->ls + (s_wlsa & SPU_LS_MASK);
                fprintf(stderr, "[watchlsa] n=%lu spu%u cmd=0x%02X ea=0x%08X"
                                " lsa=0x%05X size=%u pc=0x%05X ->"
-@@ -1176,18 +1327,61 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1176,18 +1327,68 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * pages on demand the counter never advanced and a spinning job simply hung
       * the chain walker instead. Count repeats whether or not the transfer
       * succeeds, and halt at a known pc rather than hanging silently. */
@@ -40182,10 +40182,17 @@ index 90f3221e..becab3d5 100644
 +      static _Thread_local uint64_t s_rep_t0; static uint32_t s_rep_ms = 0;
 +      if (!s_rep_ms) { const char* e = getenv("SPU_DMA_REPEAT_MS");
 +                       s_rep_ms = e ? (uint32_t)strtoul(e, 0, 0) : 120000u; if (!s_rep_ms) s_rep_ms = 1; }
++      /* SPU_DMA_REPEAT_LINE (on; =0: 16 bytes): reads of up to one 128-byte
++       * line get the grace too. The WWS job manager polls its job queue's
++       * line that way (Gran Turismo 5: 0x80 bytes at 0x40016000, pc 0x2534)
++       * while it waits for jobs; halting it there dropped the lane and the
++       * boot load stopped (GT5 Phase 23). */
++      static int s_line = -1;
++      if (s_line < 0) { const char* e = getenv("SPU_DMA_REPEAT_LINE"); s_line = !(e && *e == '0'); }
        if ((uint32_t)ea == s_last_ea && lsa == s_last_lsa) {
 -          if (++s_rep >= s_limit) {
 +          if (s_rep == 0) s_rep_t0 = ((uint64_t)time(NULL) * 1000u);
-+          if (++s_rep >= s_limit && mfc_is_get(cmd) && size <= 16 && (uint32_t)ea != 0 &&
++          if (++s_rep >= s_limit && mfc_is_get(cmd) && size <= (s_line ? 128u : 16u) && (uint32_t)ea != 0 &&
 +              ((uint64_t)time(NULL) * 1000u) - s_rep_t0 < s_rep_ms) {
 +              /* still inside the grace period */
 +          } else if (s_rep >= s_limit) {

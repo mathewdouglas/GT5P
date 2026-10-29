@@ -76,6 +76,15 @@ since the last look (`GCM_PARK_PROGRESS=0`: old rule).
 New: `PS3_COND_TRACE_ID` signal lines name the thread and lr; the stall
 dump counts user commands raised and delivered.
 
+**Boot load stuck: lanes halted as "wedged"** (`pp1`, also `pt3` on
+2026-10-28). The runtime halts an SPU after 256 identical DMA transfers in
+a row (`SPU_DMA_REPEAT_LIMIT`), with a 120 s grace for small reads that
+poll a label, up to 16 bytes. The job manager (image 1, pc 0x2534) polls its
+job queue's 128-byte line (workload 4: 0x40016000) the same way while it
+waits for jobs; at boot three lanes were halted there and the load never
+finished. Most race runs show one such halt on 0x01AC0C80. Reads of up to
+one line now get the grace (`SPU_DMA_REPEAT_LINE=0`: 16 bytes).
+
 **Ring space** (`inf1`, with that mistaken mask only). Workload 4's
 three lanes spin at pc 0x04600 polling GCM labels 0x49-0x4B (guest
 0x03000490..), which semaphore releases in the command stream write. The
