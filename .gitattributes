@@ -1,0 +1,3 @@
+# The runtime has a few mixed-newline headers. Preserve the patch's literal
+# context bytes; normalizing CRLF during commit/checkout breaks clean installs.
+patches/ps3recomp-4e8f3ca8-local.patch -text
