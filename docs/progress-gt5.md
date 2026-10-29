@@ -33,8 +33,13 @@ glyph-mask redirect turns the stencil fills into a colour target at
 - **Pipelines still compiling.** The label draws are made in one frame
   only, and replay leaves out any draw whose pipeline is still being built
   in the background (`dpso=NULL fp_pending=1`). Draws into offscreen targets
-  now wait for theirs, up to `RSX_PSO_WAIT_OFFSCREEN_MS` (500; 0: leave
-  out). Measured waits: 0-16 ms.
+  smaller than the screen now wait for theirs: at most
+  `RSX_PSO_WAIT_OFFSCREEN_MS` (500; 0: leave out) per frame in all, and a
+  draw whose wait once ran out is not waited for again. Measured waits:
+  15-16 ms. The first version waited for every offscreen draw, the race
+  scene's 1280x720 target included, up to 500 ms each: 2.6-3.0 s hitches
+  in three of three races; scoped as above, 53.6 FPS with a 240 ms worst
+  frame (`ab2`, against `ab0` 52.8 FPS / 1.0 s with no wait).
 - **16 render target slots.** A race frame already uses 16 before the
   labels; `off_rt_get_impl` then returned -1 and labels 2-9 had no target.
   `MAX_OFF_RTS` is 64 and `RSX_RT_SLOTS` (default 48; 16 = old) the number
