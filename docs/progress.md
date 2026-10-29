@@ -9,6 +9,31 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 136 - Measure asset/shader/pipeline coverage (2026-10-30)
+
+Added a read-only developer audit on `feature/shader-coverage-audit`; see
+[shader coverage](shader-coverage.md) for commands, evidence and limitations.
+Two short real race runs (High Speed Ring and Daytona, 1080p/2x MSAA) recorded
+553 and 586 fragment-program files, with 484 and 535 structural matches to the
+existing extracted SHDS catalogue. Inline constant changes and trailing padding
+account for most matches; 69 and 51 remain unmatched. These percentages are
+program-corpus coverage, not precompiled-pipeline coverage or full-race coverage.
+
+The asset snapshot has 8,069 bounded payloads / 5,864 instruction identities;
+73 payloads fail END/constant bounds. The audit walk was compared to a newly
+compiled production decoder: 9,208 real inputs agreed, with the same 73 rejected.
+Synthetic checks cover constant variants, unknown/malformed programs, damaged
+recipe/code dependencies, checksums, profiles and membership indices.
+
+All 49,060 accumulated recipe envelopes had expected-size DXBC dependencies
+present. A 64-recipe sample additionally passed renderer checksums. Native GPU
+pipeline creation/current-version compatibility was not checked. Existing
+recipes, raw shader corpora and pooled profiles do not record a reliable join
+from PS3 program + translation state to DXBC + native pipeline. This provenance
+gap is the next implementation target; vertex/material/pass extraction remains
+absent. No gameplay renderer, settings or release behavior changed. Reports and
+all shader-derived data remain ignored and local.
+
 ## Phase 135 - Upgrade to pinned ps3recomp v0.18.0 (2026-10-27)
 
 Branch: `upgrade/ps3recomp-v0.18.0`. The upstream pin is

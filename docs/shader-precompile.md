@@ -1,5 +1,8 @@
 # Offline game shader preparation
 
+For measured asset/raw-program coverage, recipe dependency checks and the
+remaining provenance gap, see [shader coverage audit](shader-coverage.md).
+
 `scripts/precompile_shaders.py` reads embedded `SHDS` fragment programs from
 the local executable and unpacked game assets, then runs the production
 translator/compiler before guest entry. It writes ordinary DXBC entries to
