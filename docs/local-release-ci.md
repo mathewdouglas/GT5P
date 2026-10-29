@@ -1,5 +1,8 @@
 # Building a player ZIP on this PC after pushes to main
 
+Port release version: **v0.1**, from `VERSION`. Artifact/ZIP names include that
+version and the triggering commit, while the game-data version stays 03.00.
+
 Prepared on `feature/player-setup`, without running a compiler, test, game,
 runner installer or service while Claude is working. The workflow/script have
 had static review only; the first isolated workflow run still needs validation.

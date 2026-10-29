@@ -31,6 +31,17 @@ endif()
 
 add_subdirectory(${PS3RECOMP_DIR} ps3recomp EXCLUDE_FROM_ALL)
 
+# clang-cl interprets bare -Wall as MSVC /Wall (Clang -Weverything), flooding
+# runtime builds with pointer-usage/style diagnostics. Request Clang's normal
+# -Wall group explicitly; keep the other runtime diagnostics enabled.
+if(MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    get_target_property(GT5P_RUNTIME_WARNINGS ps3recomp_runtime COMPILE_OPTIONS)
+    if(GT5P_RUNTIME_WARNINGS)
+        list(TRANSFORM GT5P_RUNTIME_WARNINGS REPLACE "^-Wall$" "/clang:-Wall")
+        set_property(TARGET ps3recomp_runtime PROPERTY COMPILE_OPTIONS "${GT5P_RUNTIME_WARNINGS}")
+    endif()
+endif()
+
 # =============================================================================
 # Game build
 # =============================================================================

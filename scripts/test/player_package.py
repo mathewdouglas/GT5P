@@ -25,6 +25,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='gt5p-package-fixture-') as temp:
         root = Path(temp)
         package.ROOT = root / 'repo'
+        put(package.ROOT / 'VERSION', b'0.1\n')
         pe = b'MZ' + bytes(58) + (64).to_bytes(4, 'little') + b'PE\0\0\x64\x86'
         elf = b'\x7fELF\x02\x02' + bytes(12) + b'\x00\x15'
         build = root / 'build'
@@ -94,6 +95,8 @@ def main():
             assert not any(n.lower().endswith(('.elf', '.self', '.toml')) for n in names)
             assert all(b'sentinel' not in z.read(n) for n in names)
             manifest = z.read('release.ini').decode()
+            assert 'port_version=0.1\n' in manifest
+            assert 'version=03.00\n' in manifest
             assert 'elf_sha256=' + package.sha(root/'EMAIN.ELF') in manifest
             assert 'game_sha256=' + package.sha(build/'gt5p.exe') in manifest
         print('allowlist, exclusion and digest checks: passed')

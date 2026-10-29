@@ -10,6 +10,15 @@ import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def port_version():
+    version = (ROOT / 'VERSION').read_text(encoding='ascii').strip()
+    if not re.fullmatch(r'\d+\.\d+(?:\.\d+)?', version):
+        raise ValueError('VERSION must contain a numeric port version, such as 0.1')
+    return version
+
+
 RUNTIME = ('SDL2.dll', 'avcodec-61.dll', 'avutil-59.dll', 'swresample-5.dll')
 VC_REQUIRED = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 VC_OPTIONAL = ('msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll',
@@ -61,6 +70,7 @@ def main():
     ap.add_argument('--notices-dir', required=True, type=Path)
     ap.add_argument('--output', required=True, type=Path)
     args = ap.parse_args()
+    version = port_version()
     output = args.output.resolve()
     if output.exists():
         raise ValueError('Refusing to overwrite an existing release ZIP')
@@ -115,6 +125,7 @@ def main():
         raise ValueError('Glyph manifest or asset license is missing')
     # Bind both local inputs to this release; never include either user's ELF.
     release = ('[release]\nschema=1\ntarget=BCUS98158\nversion=03.00\n'
+               f'port_version={version}\n'
                f'elf_sha256={sha(elf)}\ngame_sha256={sha(files["runtime/gt5p.exe"])}\n')
     # Snapshot files before writing, so a build updating the EXE mid-package is
     # detected rather than producing a manifest for a different binary.

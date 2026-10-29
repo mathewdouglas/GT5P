@@ -43,6 +43,9 @@ def main():
     actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     if actual != sha:
         raise ValueError('Checkout does not match the triggering commit')
+    version = (ROOT/'VERSION').read_text(encoding='ascii').strip()
+    if not re.fullmatch(r'\d+\.\d+(?:\.\d+)?', version):
+        raise ValueError('Invalid port VERSION')
     cfg = json.loads(args.config.read_text(encoding='utf-8-sig'))
     paths = {key: Path(cfg[key]).resolve() for key in ('private_inputs', 'runtime_cache', 'vc_runtime_dir', 'notices_dir')}
     for path in paths.values():
@@ -131,11 +134,14 @@ def main():
         '/Fo'+str(launcher/'probe.obj'), '/Fe'+str(launcher/'probe.exe'), 'scripts/test/launcher_probe.cpp')
     run(sys.executable, 'scripts/test/launcher_native.py', '--launcher', launcher/'GT5P.exe', '--probe', launcher/'probe.exe')
     run(sys.executable, 'scripts/test/player_package.py')
-    output = ROOT/'out/ci-player'/f'GT5P-windows-x64-{sha}.zip'
+    output = ROOT/'out/ci-player'/f'GT5P-v{version}-windows-x64-{sha}.zip'
     run(sys.executable, 'scripts/release/package_player.py', '--build-dir', ROOT/'build',
         '--launcher-exe', launcher/'GT5P.exe', '--elf', ROOT/'input/EMAIN.ELF',
         '--vc-runtime-dir', paths['vc_runtime_dir'], '--notices-dir', paths['notices_dir'], '--output', output)
     print(f'Player ZIP ready for artifact upload: {output.name}')
+    if os.environ.get('GITHUB_OUTPUT'):
+        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+            f.write(f'release_version=v{version}\n')
 
 
 if __name__ == '__main__':

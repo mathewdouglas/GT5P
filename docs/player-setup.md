@@ -1,5 +1,10 @@
 # Player ZIP and first-run setup
 
+The port release is **v0.1**, recorded in the root `VERSION` file. Player ZIPs
+include `port_version=0.1` in `release.ini`; its separate `version=03.00` field
+identifies the supported disc build. ps3recomp v0.18.0 is the runtime dependency,
+not the port release version. CI names ZIPs `GT5P-v0.1-windows-x64-<commit>.zip`.
+
 Implementation branch: `feature/player-setup`, based on the v0.18.0 upgrade.
 Worktree: `../GT5P-player-setup`. The shared working tree, runtime checkouts,
 generated sources and existing build were left alone. Initial implementation
