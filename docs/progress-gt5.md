@@ -20,6 +20,56 @@ Seen before the Phase 23 fixes; not caused by them.
 4. ~~After a collision the hit car's textures break into rainbow colours.~~
    Fixed, Phase 26.
 
+## Phase 29 — A cheaper FIFO walk; where a race frame waits (2026-10-29)
+
+Frame test (`gt5boot.ps1 -Route race -FrameTest -Settle 50`, 720p, warm
+cache), one run each, same build line:
+
+| Change | FPS | Median | Late (>20 ms) | Walk ms/frame |
+| --- | --- | --- | --- | --- |
+| before (`pf1`) | 43.6 | 19.5 ms | 47% | 14.1 |
+| volatile textures copied once a frame (`pf3`) | 47.0 | 18.7 ms | 37% | 10.9 |
+| + method runs (`mr1`) | 47.9 | 18.2 ms | 31% | 10.0 |
+| + DRAW_INDEX_ARRAY coalescing (`dc1`) | 48.8 | 17.9 ms | 28% | 8.8 |
+| ceiling: every draw skipped, `RSX_VTX_SKIP=1` (`vs1`) | 54.5 | 17.5 ms | 23% | 3.8 |
+
+- **Volatile texture snapshots** (`tex_snap_draw`): a texture seen changing
+  between uploads is copied at record time, and the copy was redone at
+  every draw that binds it. GT5 streams textures, so many are volatile;
+  the memcpy was ~15% of the walker. Now once per frame per texture
+  (`RSX_TEX_SNAP_EVERY=1`: old). The first copy is also the one a later
+  NV0039 copy must not replace (Phase 28), which the re-copy undid.
+- **Method runs** (`rsx_process_method_run`): `RSX_METHPROF=1` (new) gives
+  the method mix: ~150-200k words a frame, a third vertex-program microcode
+  (GT5 re-sends each draw's program, `0x0B80`-`0x0BFC`), a third transform
+  constants. The walker now hands a header's microcode and constant words
+  to one call instead of one dispatch each. Rewriting microcode with the
+  same words no longer advances `vp_ucode_gen`, so the VS lookup memo
+  survives the re-send (`RSX_VP_SAME=0`: old). `RSX_METHOD_RUNS=0`: off.
+- **Draw coalescing** (`rsx_process_draw_index_run`): libgcm splits a draw
+  into 256-index `DRAW_INDEX_ARRAY` words, ~3 a GT5 draw, and each paid the
+  backend's whole per-call recording. Contiguous triangle-list words of one
+  header now go as one call of up to 1024 indices (the indexed path's
+  limit): backend calls ~3,900 -> ~1,700 a frame for ~1,170 records.
+  `RSX_DRAW_COALESCE=0`: off. Window shots unchanged.
+
+**Where the frame waits** (`PS3_TIMELINE` + scratch `crit.py`). The game
+thread (`gFKsE`) works ~10 ms a frame, then waits in `sys_cond_wait` for a
+user command near the end of its frame's commands (~8-9 ms). With draws
+recorded, the walker is busy for ~6 of those ms. With every draw skipped
+(walk 3.8 ms) the wait is still 7.8 ms and the walker idle most of it:
+the critical path is then workload 4 (`PDI`, a WWS job list): kicked when
+the game thread wakes, its pass takes 8-25 ms, its list is walked and the
+user command follows. Its lanes are ~77% idle; a hot loop at LS 0x4540-
+0x4600 in body `0x0196FF40` DMAs a value, compares it with three bounds
+and delays 2,400 decrementer reads between tries: it waits for the
+command stream to pass a label. Which label, and what holds it, is next.
+
+Ruled out: shader work (all from cache; `RSX_SHADER_WARMUP=1` preloads
+7,325 pipelines and the per-5 s frame pattern is unchanged, so the dips
+follow the track), user-command delivery (raise to handler 0.3 ms mean),
+`SPURS_LANE_PIN=0` (34 FPS, multi-second stalls).
+
 ## Phase 28 — One-frame texture flashes: copies ordered with replay (2026-10-29)
 
 User video stills of the flash: the road as purple noise, grass texture on
