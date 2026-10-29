@@ -10,10 +10,39 @@ Seen before the Phase 23 fixes; not caused by them.
 
 1. About 18 s into the race (and during the rolling start) the screen
    flickers and the road turns blue for a split second.
-2. A dark band lies across the road some distance ahead and moves ahead
-   with the car (distant lighting or shadow?).
+2. ~~A dark band lies across the road ahead.~~ Fixed, Phase 25.
 3. ~~The position list shows numbers but no names.~~ Fixed, Phase 24.
 4. After a collision the hit car's textures break into rainbow colours.
+
+Also open: occasional 0.4-3 s hitches in a race, a FIFO park held while a
+few new shaders compile (`db3`: 2.7 s at 40 s into the race; `pn1`-`pn3`
+2.6-3.0 s; `ab2` 0.24 s). Under the 3 s park timeout, so no dropped list.
+
+## Phase 25 — Dark band ahead of the car (2026-10-29)
+
+`RSX_SHADOW=0` (every shadow compare passes) removed it, so it was the
+shadow lookup. Two faults:
+
+- **Z16 clears read as D24S8.** The shadow map (`0x05380000`, surface
+  format 0x128: depth format 1, Z16) is cleared with value `0x0000FFFF`,
+  far. The clear decoded every value as D24S8 (depth = bits 8-31, stencil
+  = bits 0-7): depth 1/65536, stencil 255. The scene compares with GEQUAL
+  (unit address bits 28-30 = 6: lit where stored >= reference), so
+  everywhere without a caster read as shadowed. Z16 clears now take the
+  depth from the low 16 bits (`RSX_Z16_CLEAR=0`: as before;
+  `rsx_commands.c`).
+- **Three buffers for one shadow map.** GT5 stacks three cascades in the
+  1024x2048 surface (rows 0-682, 682-1365, 1365-2048), each drawn with the
+  target capped at its own scissor bottom, so the depth-only buffers were
+  keyed 1024x682, 1024x1365 and 1024x2048; the lookup bound one, holding
+  only its own cascade. A larger buffer for the same surface now serves
+  smaller requests (`RSX_ZB_SHARE=0`: one per size). Alone, this made it
+  worse (all three cascades present, all cleared "near"): the clear above
+  had been hiding behind the missing data.
+
+Road brightness (mean of open road, near/mid/far): no shadows 70/72/101;
+before 80/87/71 (the band); shared buffer only 43/49/47; both fixes
+73/74/107, with car shadows still cast.
 
 ## Phase 24 — Race position list names (2026-10-29)
 
