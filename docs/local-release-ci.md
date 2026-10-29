@@ -64,8 +64,25 @@ dispatch on main. It is disabled until repository variable
    artifact, retained for 14 days. Download it from the workflow run's Artifacts
    area. This does not automatically create or update a GitHub Release.
 
-This uses a clean build per run. Expect a full native build rather than a
-seconds-long repack. A single registered runner executes one job at a time;
+This uses a clean checkout with a private incremental build cache outside it.
+The initial cold build still compiles all translated code. Later runs restore
+unchanged generated code and Ninja outputs, then build changed dependencies.
+The cache fingerprints the ELF, captured jobs, runtime pin/patch, lift scripts,
+target/seeds/derived-registry inputs, Python/capstone and compiler/toolchain.
+Changed lift/toolchain inputs require a fresh cache; ordinary native code edits
+use Ninja's dependency tracking. New source files are never overwritten by the
+cache. Identical tracked files have their prior timestamps restored only after
+content-hash comparison, avoiding recompiles caused solely by checkout mtimes.
+
+Cache data defaults to `C:\GT5P-CI\incremental-cache` (next to runtime-cache),
+keyed by the absolute runner workspace and input fingerprint. A successful
+native build updates it before packaging. Partial saves have no ready marker
+and are not reused. It stays local and contains private derived game code;
+never upload it. Set `GT5P_CI_CACHE=0` in the runner environment, or
+`"incremental": false` in runner.json, for a cold diagnostic run. Cache locations
+can be overridden with `build_cache` in runner.json, outside the checkout.
+
+A single registered runner executes one job at a time;
 there is no concurrency cancellation that deliberately discards older pushes.
 The patched runtime source is cached outside the checkout. Generated code,
 private inputs, build directories, logs and the runtime are never artifact paths.

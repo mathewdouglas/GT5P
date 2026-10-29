@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import sys
 
+from ci_cache import BuildCache, lift_key
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -24,7 +26,7 @@ def copy_file(source, destination):
     if not source.is_file() or source.is_symlink():
         raise ValueError(f'Missing private build input or unexpected link: {source}')
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, destination)
+    shutil.copy2(source, destination)
 
 
 def main():
@@ -47,6 +49,7 @@ def main():
     if not re.fullmatch(r'\d+\.\d+(?:\.\d+)?', version):
         raise ValueError('Invalid port VERSION')
     cfg = json.loads(args.config.read_text(encoding='utf-8-sig'))
+    cache_enabled = cfg.get('incremental', True) and os.environ.get('GT5P_CI_CACHE', '1') != '0'
     paths = {key: Path(cfg[key]).resolve() for key in ('private_inputs', 'runtime_cache', 'vc_runtime_dir', 'notices_dir')}
     for path in paths.values():
         if path == ROOT or ROOT in path.parents or path in ROOT.parents:
@@ -108,25 +111,35 @@ def main():
     for name in list(os.environ):
         if name.startswith(('PPU_', 'SPU_', 'GT5P_')) and name not in ('GT5P_TARGET',):
             os.environ.pop(name, None)
-    (ROOT/'analysis').mkdir(exist_ok=True)
-    run(sys.executable, 'scripts/jumptables.py', '--write')
-    run(sys.executable, tools/'find_functions.py', 'input/EMAIN.ELF', '--json',
-        '--seed-json', 'config/extra_seeds_bcus98158.json', '--output', 'analysis/functions.json')
-    functions = json.loads((ROOT/'analysis/functions.json').read_text())
-    (ROOT/'analysis/functions_code.json').write_text(json.dumps([x for x in functions if int(x['start'],16) < 0xE3EC24]))
-    run(sys.executable, 'scripts/gen_hle_stubs.py', 'input/EMAIN.ELF', 'analysis/hle_stubs.json')
-    run(sys.executable, tools/'ppu_lifter.py', 'input/EMAIN.ELF', '--functions',
-        'analysis/functions_code.json', '--output', 'generated', '--code-end', '0xE3EC24',
-        '--header-name', 'ppu_recomp.h', '--source-name', 'ppu_recomp.c', '--hle-stubs', 'analysis/hle_stubs.json')
-    run(sys.executable, 'scripts/lift_spu_jobs.py')
-    for script in ('setjmp_patch.py', 'spin_patch.py', 'ui_mask_patch.py', 'spu_native_patch.py'):
-        run(sys.executable, Path('scripts')/script)
-    run(sys.executable, tools/'gen_hle_nids.py', '--all', '--out', 'src/gen/ppu_hle_nids.cpp')
     clang = cfg.get('clang_cl', 'C:/Program Files/LLVM/bin/clang-cl.exe')
+    cache = None
+    if cache_enabled:
+        key = lift_key(ROOT, identity, elf_hash, sorted((ROOT/'analysis/spu/dump').glob('*.bin')), clang)
+        cache = BuildCache(ROOT, Path(cfg.get('build_cache', paths['runtime_cache'].parent/'incremental-cache')), key)
+        print(f'Local incremental cache key: {key[:16]}', flush=True)
+    if not cache or not cache.restore():
+        print('No matching incremental cache; regenerating translated sources.', flush=True)
+        (ROOT/'analysis').mkdir(exist_ok=True)
+        run(sys.executable, 'scripts/jumptables.py', '--write')
+        run(sys.executable, tools/'find_functions.py', 'input/EMAIN.ELF', '--json',
+            '--seed-json', 'config/extra_seeds_bcus98158.json', '--output', 'analysis/functions.json')
+        functions = json.loads((ROOT/'analysis/functions.json').read_text())
+        (ROOT/'analysis/functions_code.json').write_text(json.dumps([x for x in functions if int(x['start'],16) < 0xE3EC24]))
+        run(sys.executable, 'scripts/gen_hle_stubs.py', 'input/EMAIN.ELF', 'analysis/hle_stubs.json')
+        run(sys.executable, tools/'ppu_lifter.py', 'input/EMAIN.ELF', '--functions',
+            'analysis/functions_code.json', '--output', 'generated', '--code-end', '0xE3EC24',
+            '--header-name', 'ppu_recomp.h', '--source-name', 'ppu_recomp.c', '--hle-stubs', 'analysis/hle_stubs.json')
+        run(sys.executable, 'scripts/lift_spu_jobs.py')
+        for script in ('setjmp_patch.py', 'spin_patch.py', 'ui_mask_patch.py', 'spu_native_patch.py'):
+            run(sys.executable, Path('scripts')/script)
+        run(sys.executable, tools/'gen_hle_nids.py', '--all', '--out', 'src/gen/ppu_hle_nids.cpp')
     run('cmake', '-S', ROOT, '-B', ROOT/'build', '-G', 'Ninja',
         '-DGT5P_TARGET=BCUS98158', '-DCMAKE_BUILD_TYPE=Release',
         f'-DPS3RECOMP_DIR={runtime.as_posix()}', f'-DCMAKE_C_COMPILER={clang}', f'-DCMAKE_CXX_COMPILER={clang}')
     run('cmake', '--build', ROOT/'build', '--parallel', jobs)
+    if cache:
+        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode('utf-8').split('\0')
+        cache.save([name for name in tracked if name])
     launcher = ROOT/'out/launcher'
     # No interpolated command text; the batch file receives a controlled path.
     run('cmd.exe', '/d', '/c', 'scripts\\release\\build_launcher.cmd', launcher)
