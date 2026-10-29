@@ -7,9 +7,16 @@ had static review only; the first isolated workflow run still needs validation.
 ## Branch layout
 
 The original `origin/main` is preserved at `65c75d61ade58efb4f6af5f099c3b78b64c0a8e6`
-as **`archive/original-main`**, already pushed. `main` itself has not moved.
+as **`archive/original-main`**, already pushed.
 Current GT5P work descends from that commit, so no history rewrite/force push is
 needed. Leave `gt5` separate: it is a different game, not a GT5P update branch.
+
+On 2026-10-29, at the user's request, the current GT5P upgrade branch
+(`980329a`) was merged into `feature/player-setup` as `134ce60` for promotion
+to main. Its code baseline was already included; the merge adds the cleanup
+records. The GT5 worktree and GT5P development worktree were left on their
+existing branches. No builds/tests were run for this integration. The workflow
+still requires the documented runner provisioning and enable variable.
 
 After Claude finishes and commits/pushes its work, merge the GT5P branches into
 the integration branch and review any conflicts there. At the time of preparation,
