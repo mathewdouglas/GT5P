@@ -3,6 +3,7 @@ name: Local Windows player ZIP
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -13,15 +14,20 @@ jobs:
     # Deliberately never run PR/fork code on the PC holding private build inputs.
     if: >-
       github.repository == 'mathewdouglas/GT5P' &&
-      github.ref == 'refs/heads/main' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
       vars.GT5P_LOCAL_RELEASE_ENABLED == 'true'
     runs-on: [self-hosted, Windows, X64, gt5p-release]
     timeout-minutes: 180
+    outputs:
+      release_version: ${{ steps.build.outputs.release_version }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           clean: true
+          fetch-depth: 0
       - name: Build and validate the player ZIP
         id: build
         shell: cmd
@@ -33,6 +39,7 @@ jobs:
           if errorlevel 1 exit /b 1
           "%GT5P_CI_PYTHON%" scripts\release\ci_build.py --config "%GT5P_CI_CONFIG%"
       - name: Upload only the finished player ZIP
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: GT5P-${{ steps.build.outputs.release_version }}-windows-x64-${{ github.sha }}.zip
@@ -41,3 +48,60 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+  publish:
+    # The Windows build keeps a read-only token; publishing runs on GitHub's host.
+    needs: player
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.player.outputs.release_version }}
+      TRIGGER_TAG: ${{ github.ref_name }}
+      BUILD_SHA: ${{ github.sha }}
+      ARTIFACT_ID: ${{ needs.player.outputs.artifact_id }}
+      ARTIFACT_DIGEST: ${{ needs.player.outputs.artifact_digest }}
+    steps:
+      - name: Download and verify the finished ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
+          [[ "$RELEASE_TAG" == "$TRIGGER_TAG" ]]
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          ZIP="GT5P-${RELEASE_TAG}-windows-x64-${BUILD_SHA}.zip"
+          # archive:false uploads the player ZIP itself, without an outer archive.
+          # curl strips credentials when GitHub redirects to the storage host.
+          curl --fail --location --retry 3 --max-time 300 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GH_REPO/actions/artifacts/$ARTIFACT_ID/zip" \
+            --output "$ZIP"
+          printf '%s  %s\n' "$ARTIFACT_DIGEST" "$ZIP" | sha256sum --check
+          unzip -tq "$ZIP"
+          sha256sum "$ZIP" > "$ZIP.sha256"
+      - name: Publish the versioned release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="GT5P-${RELEASE_TAG}-windows-x64-${BUILD_SHA}.zip"
+          # A published version is never overwritten. A failed draft upload can
+          # be retried by rerunning this job without rebuilding on the PC.
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > draft-state.txt; then
+            [[ "$(cat draft-state.txt)" == true ]] || { echo 'Release already published; use a new version.'; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "GT5P $RELEASE_TAG" --generate-notes \
+              --notes "Windows x64 player build. Extract the full ZIP and run GT5P.exe. Original BCUS98158 v03.00 game files are required and are not included."
+          fi
+          gh release upload "$RELEASE_TAG" "$ZIP" "$ZIP.sha256" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
+          gh release view "$RELEASE_TAG" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"

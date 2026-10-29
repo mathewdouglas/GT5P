@@ -3,9 +3,10 @@
 Port release version: **v0.1**, from `VERSION`. Artifact/ZIP names include that
 version and the triggering commit, while the game-data version stays 03.00.
 
-Prepared on `feature/player-setup`, without running a compiler, test, game,
-runner installer or service while Claude is working. The workflow/script have
-had static review only; the first isolated workflow run still needs validation.
+The dedicated local runner is provisioned and validated. The first cold build
+took 17m21s; a cached build including checks, packaging and upload took 1m10s.
+The Windows runner uses private inputs and a private incremental cache outside
+the development worktrees.
 
 ## Branch layout
 
@@ -181,7 +182,8 @@ release-ready. Later main pushes use the same process automatically.
 This repository is public. GitHub recommends private repositories for
 self-hosted runners because untrusted workflow code can execute on the host.
 This workflow deliberately has no PR trigger, checks the origin/main ref,
-pins its actions, uses a read-only token, and never persists checkout credentials.
+pins its actions, keeps the Windows build token read-only, and never persists checkout credentials.
+A separate GitHub-hosted publishing job has release-write permission only for version tags.
 Only trusted maintainers should be able to push main or change workflows.
 These measures do not isolate a malicious trusted commit from the PC: use a
 dedicated Windows account/host if it contains other sensitive work. The existing
@@ -190,3 +192,28 @@ dedicated Windows account/host if it contains other sensitive work. The existing
 References: [adding a self-hosted runner](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners),
 [workflow artifacts](https://docs.github.com/en/actions/tutorials/store-and-share-data),
 [upload-artifact](https://github.com/actions/upload-artifact).
+
+## Automatic GitHub Releases (version tags only)
+
+Main pushes and manual main builds produce Actions artifacts. To publish a
+fixed release, set `VERSION` to the desired number, commit and push main, then
+push the matching annotated tag. For example, for the first release:
+
+```powershell
+git checkout main
+git pull --ff-only origin main
+# VERSION must contain 0.1, and all intended changes must already be committed.
+git tag -a v0.1 -m "GT5P v0.1"
+git push origin v0.1
+```
+
+The tag starts the same cached local build and validation. A separate job on
+GitHub's Ubuntu runner downloads only the finished ZIP, verifies its SHA-256,
+and publishes it with a checksum and generated notes on the Releases page.
+The local runner must be online. Tags must match `VERSION` exactly and their
+commits must belong to main's history. No game inputs or build cache are uploaded.
+
+For the next release, change `VERSION` to `0.2`, commit/push it with the changes,
+and push `v0.2`. Published releases are not overwritten; use a new version for
+changes. An interrupted publishing job can leave a draft; rerun that job to
+finish its upload and publication. Ordinary main builds never publish releases.

@@ -35,8 +35,10 @@ def main():
     args = ap.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true' or Path(os.environ.get('GITHUB_WORKSPACE', '')).resolve() != ROOT:
         raise ValueError('Run only inside the dedicated GitHub Actions checkout')
-    if os.environ.get('GITHUB_REPOSITORY') != 'mathewdouglas/GT5P' or os.environ.get('GITHUB_REF') != 'refs/heads/main':
-        raise ValueError('Only the trusted origin main branch may build a release')
+    ref = os.environ.get('GITHUB_REF', '')
+    if os.environ.get('GITHUB_REPOSITORY') != 'mathewdouglas/GT5P' or not (
+            ref == 'refs/heads/main' or re.fullmatch(r'refs/tags/v\d+\.\d+(?:\.\d+)?', ref)):
+        raise ValueError('Only trusted main commits or numeric version tags may build')
     if os.environ.get('VSCMD_ARG_TGT_ARCH', '').lower() != 'x64':
         raise ValueError('An x64 VS compiler environment is required')
     sha = os.environ['GITHUB_SHA']
@@ -48,6 +50,11 @@ def main():
     version = (ROOT/'VERSION').read_text(encoding='ascii').strip()
     if not re.fullmatch(r'\d+\.\d+(?:\.\d+)?', version):
         raise ValueError('Invalid port VERSION')
+    if ref.startswith('refs/tags/'):
+        if ref != f'refs/tags/v{version}':
+            raise ValueError('Release tag must match VERSION exactly')
+        # Full checkout history is required: tags must name reviewed main history.
+        run('git', 'merge-base', '--is-ancestor', sha, 'origin/main')
     cfg = json.loads(args.config.read_text(encoding='utf-8-sig'))
     cache_enabled = cfg.get('incremental', True) and os.environ.get('GT5P_CI_CACHE', '1') != '0'
     paths = {key: Path(cfg[key]).resolve() for key in ('private_inputs', 'runtime_cache', 'vc_runtime_dir', 'notices_dir')}
