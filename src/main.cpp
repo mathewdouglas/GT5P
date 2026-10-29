@@ -1018,6 +1018,12 @@ int main(int argc, char* argv[])
     { const char* nat = getenv("GT5P_RENDER_NATIVE");
       if (res_hi && !(nat && nat[0] == '0') && !getenv("RSX_RENDER_HEIGHT"))
           _putenv_s("RSX_RENDER_HEIGHT", res1440 ? "1440" : "2160"); }
+    /* GT5 at 1080p draws its race into a 1280x1080 surface and stretches it
+     * to 1920: soft, stair-stepped edges. With the scaling paths on at 1080
+     * rows (no extra rows) the backend draws that surface 1920 wide
+     * (RSX_RACE_FULLWIDTH; =0 keeps 1280). docs/progress-gt5.md, Phase 27. */
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && res == 1080 && !getenv("RSX_RENDER_HEIGHT"))
+        _putenv_s("RSX_RENDER_HEIGHT", "1080");
 
     lv2_register_all_syscalls(&g_lv2_syscalls);
 

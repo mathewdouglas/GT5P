@@ -20,6 +20,22 @@ Seen before the Phase 23 fixes; not caused by them.
 4. ~~After a collision the hit car's textures break into rainbow colours.~~
    Fixed, Phase 26.
 
+## Phase 27 — 1080p race drawn at full width (2026-10-29)
+
+User report: antialiasing looks bad at 1080p. At 1080p GT5 draws the race
+into a 1280x1080 surface (`0x01980000`, surface AA mode 3, 2x side by side,
+which the backend does multisample) and stretches it to 1920, as on the
+console: soft, stair-stepped edges. GT5P's `RSX_RACE_FULLWIDTH` makes a
+2/3-width race surface full width, but only with native scaling on
+(`RSX_RENDER_HEIGHT` above the guest height: 1440p, 4K). The backend now
+accepts `RSX_RENDER_HEIGHT` equal to the guest height (scaling paths on, no
+extra rows), and GT5 sets it to 1080 at 1080p (`src/main.cpp`; an explicit
+`RSX_RENDER_HEIGHT` or `RSX_RACE_FULLWIDTH=0` overrides). The scene target
+becomes 1920x1080; HUD, mirror and list unchanged; lamp posts and barrier
+edges visibly cleaner (`scratch/pv/aa_crop.png`). One run each: 48.7 FPS
+(1280) against 45.8 (1920). The menu is not affected; its wavy grandstands
+are the same either way (depth of field or haze, not investigated).
+
 ## Phase 26 — Rainbow noise on damaged cars (2026-10-29)
 
 Reproduced with the chase camera (`gt5boot.ps1 -ExtraHold
