@@ -42033,6 +42033,67 @@ index 0fca7f55..1817a85d 100644
 +#endif
 +
 +#endif /* SPU_HELPERS_H */
+diff --git a/runtime/spu/spu_interp.c b/runtime/spu/spu_interp.c
+index e9f59deb..9c992836 100644
+--- a/runtime/spu/spu_interp.c
++++ b/runtime/spu/spu_interp.c
+@@ -259,7 +259,29 @@ static int spu_step(spu_context* ctx) {
+     case SPU_mpys:  DST = spu_mpys(A,B); break;
+     case SPU_mpyhh: DST = spu_mpyhh(A,B); break;
+     case SPU_mpyhhu:DST = spu_mpyhhu(A,B); break;
+-    case SPU_mpyhha:DSTC = spu_mpyhha(A,B,T); break;  /* RRR */
++    /* mpyhha/mpyhhau are RR with rt as the accumulator: rc is part of the
++     * opcode there, so writing it hit a stray register (GT5 Phase 23). */
++    case SPU_mpyhha: DST = spu_mpyhha(A,B,DST); break;
++    case SPU_mpyhhau:DST = spu_mpyhhau(A,B,DST); break;
++    /* Missing until GT5 Phase 23: a WWS job resumed at an interrupt point
++     * inside a function has no lifted entry and runs here; `mpyui` trapped,
++     * the job was dropped and the race froze waiting for it. */
++    case SPU_mpyui:  DST = spu_mpyui(A,I); break;
++    case SPU_rothmi: DST = spu_rothmi(A,(int)I); break;
++    case SPU_rotmahi:DST = spu_rotmahi(A,(int)I); break;
++    case SPU_bgx:    DST = spu_bgx(A,B,DST); break;
++    case SPU_dfa:    DST = spu_dfa(A,B); break;
++    case SPU_dfs:    DST = spu_dfs(A,B); break;
++    case SPU_dfm:    DST = spu_dfm(A,B); break;
++    case SPU_dfma:   DST = spu_dfma(A,B,DST); break;
++    case SPU_dfms:   DST = spu_dfms(A,B,DST); break;
++    case SPU_dfnms:  DST = spu_dfnms(A,B,DST); break;
++    case SPU_dfnma:  DST = spu_dfnma(A,B,DST); break;
++    case SPU_dfceq:  DST = spu_dfceq(A,B); break;
++    case SPU_dfcgt:  DST = spu_dfcgt(A,B); break;
++    case SPU_dfcmeq: DST = spu_dfcmeq(A,B); break;
++    case SPU_dfcmgt: DST = spu_dfcmgt(A,B); break;
++    case SPU_dftsv:  DST = spu_dftsv(A,I); break;
+     /* rotate / shift extras */
+     case SPU_rothm:    DST = spu_rothm(A,B); break;
+     case SPU_rotqmbi:  DST = spu_rotqmbi(A,B); break;
+@@ -336,10 +358,10 @@ void spu_trace_dump(uint32_t at) {
+ }
+ 
+ uint32_t spu_interp_run(spu_context* ctx, uint32_t start_lsa) {
+-    return spu_interp_run_until(ctx, start_lsa, 0);
+-}
+-
+-uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa) {
++    return spu_interp_run_until(ctx, start_lsa, 0);
++}
++
++uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa) {
+     ctx->pc = start_lsa & 0x3FFFC;
+     ctx->status = SPU_STATUS_RUNNING;
+     uint64_t steps = 0;
+@@ -375,8 +397,8 @@ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t sto
+          * functions (image_id >= 0). image_id < 0 = pure interpretation: an
+          * un-lifted image (e.g. a title's raw SPU jobs) must never rejoin
+          * another image's functions that happen to share an LS address. */
+-        /* ponytail: pc-only match; a recursive call through the same site would stop early -- compare r1 too if one shows up. */
+-        if (ctx->image_id >= 0 && ((stop_lsa && ctx->pc == stop_lsa) || spu_lifted_lookup(ctx, ctx->pc))) { g_spu_interp_steps = steps; g_spu_interp_last_pc = ctx->pc; return ctx->pc; }  /* rejoin fast path */
++        /* ponytail: pc-only match; a recursive call through the same site would stop early -- compare r1 too if one shows up. */
++        if (ctx->image_id >= 0 && ((stop_lsa && ctx->pc == stop_lsa) || spu_lifted_lookup(ctx, ctx->pc))) { g_spu_interp_steps = steps; g_spu_interp_last_pc = ctx->pc; return ctx->pc; }  /* rejoin fast path */
+         g_spu_interp_last_pc = ctx->pc;
+         if (_g1>0) {
+             int inr = (ctx->pc >= 0x26E80u && ctx->pc < 0x26F14u);
 diff --git a/runtime/spu/spu_interp.h b/runtime/spu/spu_interp.h
 index 0266d469..f8205296 100644
 --- a/runtime/spu/spu_interp.h

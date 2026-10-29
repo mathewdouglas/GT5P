@@ -21,22 +21,42 @@ its own 10.9 ms.
 each entry now carries the writer's last SPU PC, and `SPU_ROWLOG_OUT=<file>`
 sends the dump to a file. 131072 entries cover about 30 s of a render list.
 
-**Shape 1: a lane leaves with its job in flight** (`fz1`). On list
-`40240080`, SPU 3's slot (+0xA) took job 0x1D (pc 0x3334) and never wrote
-0xFFFF; the other lanes all leave through 0x3334 -> 0xFFFF. The stall dump
-has SPU 3's context mid-job (pc 0x063E0, interrupts on, waiting on the
-list-stall event) while the pool counts its lane as returned: the job
-manager suspended the job and went back to the kernel, and nothing sent the
-lane back in. `SPURS_LANE_INFLIGHT=1` (GT5P Phase 63) re-enters such a lane,
-but its address bound (`< 0x40000000`) skipped GT5's lists at 0x402xxxxx.
-`wws_addr_ok` now accepts any committed page below 0xC0000000, queried and
-never committed (`SPURS_WWS_LOW=1`: old bound).
+**The freeze: a dropped job** (`fz1`, `infl1`; both at the same place,
+about 85 s into the frame test). On list `40240080` one SPU's slot took a
+job (pc 0x3334) and never wrote 0xFFFF; the other lanes all leave through
+0x3334 -> 0xFFFF. Just before, the log has
+
+    [spu_interp] unimplemented op 'mpyui' (0x75340384) at LS 0x063E0
+    [SPU] BRANCH-TO-0 unresolved pc=0x063E0 image=1 lr=0x0A99C
+
+The job manager (pc trail ending 0x2C38, the job allocation) resumed a
+job at 0x063E0, mid-function in body `0x016AD700` (0x63A8-0x63F8, after
+an `mpyh`), where nothing is lifted. Such a resume point is an interrupt
+taken while the SPU interpreter ran (it saves a precise SRR0; lifted code
+only at transfers). The interpreter lacked `mpyui`, the lane's module was
+abandoned with the job in its slot, and the game waited on that slot for
+ever. Fixes:
+
+- **Interpreter:** `mpyui`, `rothmi`, `rotmahi`, `mpyhhau`, `bgx` and the
+  double-precision ops were decoded but had no case. `mpyhha` wrote its
+  result to `rc`, which in its RR format is part of the opcode; it now
+  accumulates into `rt`, as the lifter does.
+- **Lifted entries:** the interpreter ran at all because body
+  `0x016D2700`'s switches (LS 0x10BA8, 0x10D00, 0x11024 table) add a load
+  offset they compute (`r79 = r11 - r12`) instead of r126, which
+  `pic_tables` required. It now accepts any register when a `bi` follows
+  (`SPU_PIC_ANYREG=0` at lift time: r126 only); 65 new entries in that body.
+- `SPURS_LANE_INFLIGHT=1` (GT5P Phase 63, off) re-entered the lane, which
+  left again within microseconds: the module had dropped the job. Its
+  address bound (`< 0x40000000`) skipped GT5's lists at 0x402xxxxx;
+  `wws_addr_ok` now accepts any committed page below 0xC0000000, queried
+  and never committed (`SPURS_WWS_LOW=1`: old bound).
 
 The lane mask keeps the old bound: GT5's headers hold four 16-bit queue
 masks at +0x20..+0x2F (workload 5: `03FF 03FF 000F 000F`), so +0x2F is no
 SPU mask; read as one, workload 5 ran on one lane.
 
-**Shape 2: ring space** (`inf1`, with that mistaken mask). Workload 4's
+**Ring space** (`inf1`, with that mistaken mask only). Workload 4's
 three lanes spin at pc 0x04600 polling GCM labels 0x49-0x4B (guest
 0x03000490..), which semaphore releases in the command stream write. The
 FIFO is drained (get = put) and the game thread waits on workload 4's

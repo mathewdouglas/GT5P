@@ -52,6 +52,7 @@ REGCACHE = os.environ.get("SPU_REGCACHE", "0") == "1"
 # Seed the targets of position-independent jump tables (pic_tables below).
 # SPU_PIC_TABLES=0 lifts without them, as before Phase 47.
 PIC_TABLES = os.environ.get("SPU_PIC_TABLES", "1") != "0"
+PIC_ANYREG = os.environ.get("SPU_PIC_ANYREG", "1") != "0"
 
 # Resume entries (Phase 66): a job the job manager suspends at an interrupt
 # point and a later run resumes has no host frames, so it returns up its guest
@@ -261,7 +262,13 @@ def pic_tables(raw, lsa):
             continue
         if not any(nxt >> 21 == 0x0C0 and {(nxt >> 7) & 0x7F, (nxt >> 14) & 0x7F} == {rt, 126}
                    for nxt in words[i + 1:i + 9]):         # a rY, rT, r126
-            continue
+            # GT5's 0x016D2700 adds a load offset it computes (r79 = r11 - r12)
+            # instead of r126, then `bi` within a few instructions (switches
+            # at LS 0x10BA8 and 0x10D00, GT5 Phase 23). SPU_PIC_ANYREG=0: r126 only.
+            if not (PIC_ANYREG and any(nxt >> 21 == 0x0C0 and rt in ((nxt >> 7) & 0x7F, (nxt >> 14) & 0x7F)
+                                       for nxt in words[i + 1:i + 9])
+                    and any(x >> 21 == 0x1A8 for x in words[i + 1:i + 17])):   # bi
+                continue
         targets = []
         for k in range(off // 4, min(len(words), off // 4 + 512)):
             e = words[k] - (1 << 32) if words[k] >> 31 else words[k]
