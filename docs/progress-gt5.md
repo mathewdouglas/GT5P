@@ -20,6 +20,47 @@ Seen before the Phase 23 fixes; not caused by them.
 4. ~~After a collision the hit car's textures break into rainbow colours.~~
    Fixed, Phase 26.
 
+## Phase 32 — The 2.5 s race freeze: a stalled job-count decrement (2026-10-30, open)
+
+**Shape.** Roughly every second race has one or more freezes of 2.4-2.85 s
+(near-constant length) at varying track points. Independent of vsync
+(happens with `RSX_PRESENT_SYNC=0`) and of the SPU interpreter (new: every
+interpreter run over 50 ms is printed as `[spu-interp]`; none in a frozen
+run). The walker sits parked on an unfilled SPU command block; it is not
+the park timeout (the block fills by itself).
+
+**What the dumps show** (`GT5P_STALL_MS=1000`, five frozen runs):
+
+- Every time, one workload-0 lane is inside job body `0x01697100` in the
+  routine at LS 0x89F8 (called from 0x5F40, lr 0x5F44): GETLLAR the line
+  at `0x48E64080`, decrement its first word, PUTLLC, retry from 0x8A1C on
+  failure. Its job index lags the list head (e.g. 0x0C9 vs head 0x0EB).
+- That word is a per-frame job countdown: the game thread (`gFKsE`, PPU
+  store) sets it to 0x20 every frame and workload-0 jobs decrement it
+  (`SPU_ROWLOG=48E64080 SPU_ROWLOG_FROM=0`). Normally all 32 decrements
+  land within ~5 ms. Before a freeze the count stops part-way (0x10, 0x0F)
+  and **nothing writes the line for ~2.5 s**, then it resumes.
+- So the stuck lane's PUTLLC is not losing to another writer. Between two
+  snapshots 1.5 s apart the lane advanced only ~1,000 drain steps: it is
+  not spinning hot either, which points to it being blocked in the
+  runtime around the GETLLAR/PUTLLC (the global lock-line lock,
+  `spu_lockline_lock`, is a candidate) rather than in guest code. Not yet
+  proven.
+
+**Next step (prepared, not yet run to a result).** The stall dump now
+prints each SPURS pool lane's host call stack (`[stall] lane-stack`,
+tids from `g_spurs_lane_tid`); run
+`scripts	estzhunt.ps1 -N 6 -Prefix fu GT5P_STALL_DUMPS=3 GT5P_STALL_SECOND_MS=300`
+(race runs with `RSX_PRESENT_SYNC=0 GT5P_STALL_MS=1000`, stops at the first
+gap over 1 s), resolve the stack offsets against `build/gt5.map`, and see
+what the lane in 0x8A1C-0x8A54 is blocked in, and who holds it.
+
+New diagnostics: `[spu-interp]` long interpreter runs; `SPU_ROWLOG_FROM`
+(first offset shown); `GT5P_STALL_DUMPS` / `GT5P_STALL_SECOND_MS`
+(repeated snapshots); `[stall] body@4000` (resident job body header, match
+against `analysis/spu/body_*.bin`); `[stall] lane-stack`; lane threads log
+`wid=`/`lane=` at start.
+
 ## Phase 31 — Native hooks in workload 4; a profiler artifact (2026-10-30)
 
 **Correction to Phase 30.** "~28% of workload 4's busy time is its

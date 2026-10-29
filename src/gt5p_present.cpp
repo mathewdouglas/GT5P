@@ -21,6 +21,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
 #include <tlhelp32.h>
 #include <io.h>          /* _dup2: the stall dump's log file */
 #include <fcntl.h>
@@ -618,6 +620,7 @@ extern "C" void gt5p_debug_snapshot(FILE* out)
     __try { rsx_d3d12_debug_dump_to(out); }
     __except(EXCEPTION_EXECUTE_HANDLER) { fprintf(out, "Renderer snapshot unavailable\n"); }
 }
+extern "C" volatile unsigned long g_spurs_lane_tid[16][8];   /* cellSpurs.c: pool lane host threads */
 extern "C" void gt5p_memsnap_write(void);   /* gt5p_settings_ui.cpp */
 static void stall_dump_check(unsigned presents_total)
 {
@@ -636,7 +639,16 @@ static void stall_dump_check(unsigned presents_total)
         if (threshold < 100u) threshold = 100u;
         if (threshold > 8000u) threshold = 8000u;
     }
-    if (dumped >= 2 || presents_total < 200 || now - last_ms < (dumped ? 8000u : threshold)) return;
+    /* GT5P_STALL_DUMPS=<n> (default 2) snapshots per stall, the later ones
+     * GT5P_STALL_SECOND_MS apart (default 8000): repeated snapshots tell a
+     * lane that is stuck from one that is busy. */
+    static unsigned ndumps = 0, second = 0;
+    if (!ndumps) { const char* e = getenv("GT5P_STALL_DUMPS"); ndumps = e && atoi(e) > 0 ? (unsigned)atoi(e) : 2u;
+                   const char* f = getenv("GT5P_STALL_SECOND_MS"); second = f && atoi(f) > 0 ? (unsigned)atoi(f) : 8000u; }
+    static ULONGLONG last_dump = 0;
+    if ((unsigned)dumped >= ndumps || presents_total < 200 || now - last_ms < threshold) return;
+    if (dumped && now - last_dump < second) return;
+    last_dump = now;
     dumped++;
     /* GT5P_STALL_LOG (on; =0 off): a game started by hand has its stderr on
      * a console or nowhere, so a freeze someone reports came with no dump.
@@ -662,6 +674,39 @@ static void stall_dump_check(unsigned presents_total)
     fprintf(stderr, "[stall] no present for %llu ms after %u presents\n",
             (unsigned long long)(now - last_ms), presents_total);
     dump_threads_now(1);
+    /* Each SPURS pool lane's host call stack (offsets from the executable
+     * base, or module!offset), so a lane that holds still between snapshots
+     * shows what it is blocked in. Resolve with scripts/diag/maplook.py's map. */
+    { const unsigned long long base = (unsigned long long)GetModuleHandleA(NULL);
+      for (int w = 0; w < 16; w++) for (int l = 0; l < 8; l++) {
+          const DWORD tid = g_spurs_lane_tid[w][l];
+          if (!tid) continue;
+          HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+          if (!th) continue;
+          char line[1024]; int n = snprintf(line, sizeof line, "[stall]   lane-stack wid=%d lane=%d tid=%lu:", w, l, tid);
+          if (SuspendThread(th) != (DWORD)-1) {
+              CONTEXT c; memset(&c, 0, sizeof c); c.ContextFlags = CONTEXT_FULL;
+              if (GetThreadContext(th, &c)) {
+                  for (int f = 0; f < 14 && c.Rip && n < (int)sizeof line - 40; f++) {
+                      HMODULE m = NULL; char mn[64] = "";
+                      if (c.Rip >= base && c.Rip < base + 0x10000000ull)
+                          n += snprintf(line + n, sizeof line - n, " +%llX", c.Rip - base);
+                      else if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                  (LPCSTR)c.Rip, &m) && GetModuleBaseNameA(GetCurrentProcess(), m, mn, sizeof mn))
+                          n += snprintf(line + n, sizeof line - n, " %s!%llX", mn, c.Rip - (unsigned long long)m);
+                      else n += snprintf(line + n, sizeof line - n, " ?%llX", c.Rip);
+                      DWORD64 ib = 0;
+                      PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(c.Rip, &ib, NULL);
+                      if (!rf) { c.Rip = *(DWORD64*)c.Rsp; c.Rsp += 8; continue; }
+                      void* hd = NULL; DWORD64 ef = 0;
+                      RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, rf, &c, &hd, &ef, NULL);
+                  }
+              }
+              ResumeThread(th);
+          }
+          CloseHandle(th);
+          fprintf(stderr, "%s\n", line);
+      } }
     cellSpurs_debug_dump();
     spurs_pm_debug_dump();
     cellGcm_debug_dump();
