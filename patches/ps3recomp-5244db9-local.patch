@@ -34445,7 +34445,7 @@ index 9cc36701..5ca4416a 100644
          if (s_export_reg[i].nid == nid) {
              s_export_reg[i].guest_addr = guest_addr;
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 0b235d02..17179558 100644
+index 0b235d02..46f4c42c 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,70 +1,103 @@
@@ -34616,7 +34616,7 @@ index 0b235d02..17179558 100644
  /* Called after an SPU atomic commits a 128-byte line, with the lock-line lock
   * released. cellSpurs sets it so a PPU blocked in cellSpursEventFlagWait wakes
   * when a task sets the flag, instead of on its next 2 ms poll. */
-@@ -105,2667 +138,2967 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -105,2667 +138,2998 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -37535,6 +37535,37 @@ index 0b235d02..17179558 100644
 +{
 +    /* The decrementer straight to its case: delay loops read it thousands of
 +     * times a poll (SPU_DEC_FAST=0: through the checks below). */
++    /* SPU_DEC_HIST=1: every 5 s, the ten (image, pc) that read the
++     * decrementer most (who spins on the clock). */
++    if (channel == SPU_RdDec) {
++        static int dh = -1;
++        if (dh < 0) dh = getenv("SPU_DEC_HIST") ? 1 : 0;
++        if (dh) {
++            static struct { uint32_t key; uint64_t n; } t[256]; static volatile LONG lk; static ULONGLONG t0;
++            const uint32_t key = ((uint32_t)(ctx->image_id & 0x3FFF) << 18) | (ctx->pc & SPU_LS_MASK);
++            while (InterlockedExchange(&lk, 1)) YieldProcessor();
++            uint32_t k = (key * 2654435761u) >> 24;
++            for (int j = 0; j < 256; j++, k = (k + 1) & 255) {
++                if (t[k].key == key) { t[k].n++; break; }
++                if (!t[k].n) { t[k].key = key; t[k].n = 1; break; }
++            }
++            const ULONGLONG now = GetTickCount64();
++            if (!t0) t0 = now;
++            if (now - t0 >= 5000) {
++                t0 = now;
++                fprintf(stderr, "[dec-hist] 5 s:");
++                for (int r = 0; r < 10; r++) {
++                    int b = -1; for (int j = 0; j < 256; j++) if (t[j].n && (b < 0 || t[j].n > t[b].n)) b = j;
++                    if (b < 0) break;
++                    fprintf(stderr, " img%u@%05X x%llu", t[b].key >> 18, t[b].key & SPU_LS_MASK, (unsigned long long)t[b].n);
++                    t[b].n = 0; t[b].key = 0;
++                }
++                fprintf(stderr, "%c", 10);
++                memset(t, 0, sizeof t);
++            }
++            InterlockedExchange(&lk, 0);
++        }
++    }
 +    if (channel == SPU_RdDec && spu_dec_fast() && !spu_rd_diag_on()) {
 +        if (!ctx->dec_base_ns) ctx->dec_base_ns = spu_host_ns();
 +        const uint64_t elapsed = spu_host_ns() - ctx->dec_base_ns;

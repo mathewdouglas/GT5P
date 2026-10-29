@@ -126,3 +126,43 @@ void gt5p_spu_sorted_walk_end(spu_context* ctx)
                     ctx->gpr[7]._u32[0], t_expect, 10);
     }
 }
+
+/* ---------------------------------------------------------------------------
+ * Gran Turismo 5 (Phase 31): a loop in workload 4's job body 0x0196FF40.
+ */
+
+#ifdef _WIN32
+#include <windows.h>
+#include <intrin.h>
+#endif
+static volatile long long s_clears, s_clear_words;
+static void native_report2(void)
+{
+    if (!s_stats) return;
+    static volatile long long t0;
+    long long now = (long long)GetTickCount64(), was = t0;
+    if (!was) { InterlockedCompareExchange64(&t0, now, 0); return; }
+    if (now - was < 5000 || InterlockedCompareExchange64(&t0, now, was) != was) return;
+    fprintf(stderr, "[spu-native] GT5 table clears %lld (%lld words)%c",
+            InterlockedExchange64(&s_clears, 0), InterlockedExchange64(&s_clear_words, 0), 10);
+}
+/* LS 0x4C14: zeroes words r15, r15+4, ... up to r6 (1280) at local store
+ * r83 + r15 (lqx, cwx, shufb of r7 = 0, stqx; ~3% of the lane time). Here the
+ * words up to the last are zeroed natively and r15 is moved to the last one,
+ * so the lifted loop's final iteration leaves r15, r69-r72 as before. Only
+ * when r7 is zero and the counter is word aligned below the end. */
+void gt5p_spu_clear_words(spu_context* ctx)
+{
+    if (!native_mode()) return;
+    const uint32_t r15 = ctx->gpr[15]._u32[0], end = ctx->gpr[6]._u32[0], base = ctx->gpr[83]._u32[0];
+    const u128* r7 = &ctx->gpr[7];
+    if ((r15 & 3) || (end & 3) || r15 + 4 >= end || end - r15 > SPU_LS_SIZE) return;
+    if (r7->_u32[0] | r7->_u32[1] | r7->_u32[2] | r7->_u32[3]) return;
+    const int check = native_mode() == 2;
+    for (uint32_t a = r15; a + 4 < end; a += 4) {
+        uint8_t* p = &ctx->ls[(a + base) & SPU_LS_MASK & ~3u];
+        if (!check) memset(p, 0, 4);
+    }
+    if (!check) for (int i = 0; i < 4; i++) ctx->gpr[15]._u32[i] += (end - 4) - r15;
+    if (s_stats) { InterlockedIncrement64(&s_clears); InterlockedAdd64(&s_clear_words, (end - 4 - r15) / 4); native_report2(); }
+}

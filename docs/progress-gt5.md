@@ -20,6 +20,33 @@ Seen before the Phase 23 fixes; not caused by them.
 4. ~~After a collision the hit car's textures break into rainbow colours.~~
    Fixed, Phase 26.
 
+## Phase 31 — Native hooks in workload 4; a profiler artifact (2026-10-30)
+
+**Correction to Phase 30.** "~28% of workload 4's busy time is its
+label-poll delay loop (QPC reads in `spu_host_ns`)" is wrong. A native hook
+on that loop (LS 0x4600 in body `0x0196FF40`) never ran, and
+`SPU_DEC_HIST=1` (new: the (image, pc) that read the decrementer most, every
+5 s) shows every decrementer read in the race comes from the job manager
+(image 1: 0x25F8, 0x2C50, 0x19F0, and the stub at 0x40DC-0x4094 every body
+carries), ~300k a second, about 0.1 ms of lane time a frame. The sampler had
+charged lane threads' samples inside a system call to a stale return address
+(`spu_host_ns (dll)`). Treat `(dll)` buckets of lane threads as unreliable;
+the delay hook was removed.
+
+**Table clear, LS 0x4C14** (`gt5p_spu_clear_words`, `spu_native_hooks` in
+`config/targets.json` for BCUS98114-v104; run `scripts/spu_native_patch.py`
+after every SPU lift): the body zeroes 320 words of local store one at a
+time, ~370 times a frame (`GT5P_SPU_NATIVE_STATS=1`). Done natively up to
+the last word, which the lifted loop then writes, so its registers end as
+before. `GT5P_SPU_NATIVE=0`: off. A/B (vsync off, two runs each): 44.1 and
+47.7 FPS on, 51.1 and 48.0 off; both "on" runs had the known 2.8 s walker
+park (also seen with it off, `ab0`), medians 19.1/19.1 against 18.1/19.4 ms.
+Within run-to-run noise, as expected for ~3% of one workload's lane time.
+
+Note: while the display sleeps, vsync presents are throttled to ~4 FPS
+(every frame "waited ~250 ms for the GPU"); `RSX_PRESENT_SYNC=0` measures
+normally.
+
 ## Phase 30 — Game-thread overhead; the frame is an SPU job chain (2026-10-30)
 
 **Game thread profile** (`GT5P_SAMPLE`, `GT5P_SAMPLE_DLL=1`, race): ~45%
@@ -58,10 +85,10 @@ after it wakes (its ready byte, set by inline atomics, is cleared by the
 job manager at pass end, pc 0x2C38). Its pass lasts until its last jobs,
 which follow workload 1's lists and the walker freeing ring space: in one
 cycle the walker sat idle 17-21 ms, then walked 5.6 ms of workload 4's
-draw-heavy output in one burst. ~28% of workload 4's busy time is its
-label-poll delay loop (now QPC reads in `spu_host_ns`); the rest is body
+draw-heavy output in one burst. Workload 4's busy time is mostly body
 `0x0196FF40` code (spread over ~30 functions) and ~20% SPU runtime
-(indirect branches, drain, DMA).
+(indirect branches, drain, DMA). (A "28% label-poll delay loop" reading
+here was a profiler artifact; see Phase 31.)
 
 Not the cause: lane stagger (`SPURS_LANE_STAGGER_MS=0` 52.2 FPS,
 `SPURS_LANE_STAGGER_US=300` 51.0, cycle unchanged), kernel idle cadence
