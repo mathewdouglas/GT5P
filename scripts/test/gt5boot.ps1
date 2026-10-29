@@ -17,11 +17,13 @@
 #   the -Settle window after -SampleDelay s (default 20), to
 #   scratch\pv\<t>.frames.txt. -Cpu adds per-thread CPU over the window.
 #   Each screen milestone reached is printed with its time after the menu.
+#   -ExtraHold "<presses>": appended to the PAD_HOLD script (e.g. a camera
+#   change: "@RaceStart+3000-3200:TRIANGLE").
 #   -> scratch\pv\<t>.out/.err, <t>.menu<N>.png
 [CmdletBinding(PositionalBinding = $false)]
 param([string]$Tag = "gt5", [int]$Settle = 60, [int]$Gap = 10, [switch]$Fresh, [switch]$FreshSave, [switch]$Movie,
       [ValidateSet("menu", "carlist", "grid", "race")][string]$Route = "menu", [string]$ShotsFrom = "",
-      [switch]$FrameTest, [int]$SampleDelay = 20, [switch]$Cpu,
+      [switch]$FrameTest, [int]$SampleDelay = 20, [switch]$Cpu, [string]$ExtraHold = "",
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot\milestone.ps1"
 Add-Type -AssemblyName System.Drawing
@@ -41,6 +43,7 @@ if ($Route -eq "grid") { $set.PAD_HOLD = $GT5GridHold; if (-not $ShotsFrom) { $S
 if ($Route -eq "race") { $set.PAD_HOLD = $GT5RaceHold; if (-not $ShotsFrom) { $ShotsFrom = "RaceStart" } }
 if ($Movie) { $set.Remove("PAD_HOLD") }
 if ($FrameTest) { $set.GT5P_FRAME_LOG = "$dir\$Tag.frames.csv"; $set.PAD_HOLD += ",@RaceStart+1000-900000:CROSS" }
+if ($ExtraHold) { $set.PAD_HOLD += ",$ExtraHold" }
 foreach ($v in $Vars) { if (-not $v) { continue }; $k, $val = "$v" -split "=", 2; $set[$k] = $val }
 function Stop-GT5 { Get-Process gt5 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
 try {

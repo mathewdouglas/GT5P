@@ -17,7 +17,33 @@ Seen before the Phase 23 fixes; not caused by them.
    at the start) leaves a frame without its road, sky colour behind.
 2. ~~A dark band lies across the road ahead.~~ Fixed, Phase 25.
 3. ~~The position list shows numbers but no names.~~ Fixed, Phase 24.
-4. After a collision the hit car's textures break into rainbow colours.
+4. ~~After a collision the hit car's textures break into rainbow colours.~~
+   Fixed, Phase 26.
+
+## Phase 26 — Rainbow noise on damaged cars (2026-10-29)
+
+Reproduced with the chase camera (`gt5boot.ps1 -ExtraHold
+"@RaceStart+3000-3200:SELECT"`, new): every car hit showed rows of
+coloured noise on its body. RenderDoc pixel history (`RSX_RDOC=1`) put the
+body on a draw sampling a 256x512 map whose top half held scratches and
+whose bottom half was noise. Each car has such a map (`0x0xxx9100`, guest
+unit 8): cleared opaque black at race load, and on a hit the game blends
+the damage over it (program `0x06A41401`, viewport the whole map).
+
+- **The map was created from main memory.** A new render target is filled
+  from guest memory first; the address came from `cellGcmResolveOffset`,
+  which prefers the IO mapping, and GT5 maps main memory to IO from offset
+  0: the target at local `0x06A99100` was filled from `0x46A99100`. The
+  damage, blended over that, left the rest as noise. Targets are now
+  filled from local memory (`RSX_RT_INIT_LOCAL=0`: as before), as the
+  eviction write-back already writes (Phase 21's car paint).
+- **Units 4-15 read guest memory, never the live target** (the scale
+  constants exist for units 0-3 only). Unit 8 now binds the target when it
+  is an exact match: whole, same size, single-sample, not texel-addressed,
+  not the draw's own target (`RSX_RT_TEX_HI=0`: units 0-3 only).
+
+`RSX_CAP_RT=~<hex>` (new) captures the first frame drawing (not clearing)
+to any surface whose low 16 bits match (`~9100`: any car's map).
 
 Also open: occasional 0.4-3 s hitches in a race, a FIFO park held while a
 few new shaders compile (`db3`: 2.7 s at 40 s into the race; `pn1`-`pn3`
