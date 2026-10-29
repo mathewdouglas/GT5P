@@ -36,14 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-27, Phase 135)
+## Start here: state of play (2026-10-30, Phase 137)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 135 is the latest).
+has the evidence, newest phase first (Phase 137 is the latest).
 
 ### What works now
 
+- **Shader provenance diagnostic (Phases 136/137):** branch
+  `feature/shader-coverage-audit` adds a local asset/corpus audit and opt-in
+  `RSX_PSO_PROVENANCE=<ignored directory>` recording of actual per-draw shader
+  inputs, generated sources, translation state and pipeline-request IDs.
+  See [docs/shader-coverage.md](docs/shader-coverage.md). Keep recording off for
+  normal play/performance tests. This is not a complete portable precompile
+  catalogue. The implementation was compiled/tested in an isolated runtime;
+  the shared runtime and its other local changes were left untouched.
 - **Runtime upgrade (Phase 135):** this branch pins ps3recomp v0.18.0
   (`4e8f3ca8`) plus GT5P compatibility adapters. Use the isolated checkout
   and setup instructions below. At 1080p/2x MSAA/VSync the upgraded Acura

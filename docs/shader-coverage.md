@@ -67,25 +67,119 @@ of prepared or reconstructable pipelines.
 
 ## Missing link to full preparation
 
-Current recipes associate a native pipeline descriptor with compiled VS/PS
-bytecode. The raw fragment corpus is recorded separately. Fragment profiles
-are also pooled without per-program provenance. No existing record reliably
-joins the original program, its exact translation state, resulting bytecode
-and pipeline. Vertex-program and material/pass extraction are absent too.
-
-The next implementation step is an opt-in provenance recorder at actual shader
-translation/pipeline creation: record raw program identities and relevant
-translation state together with the resulting VS/PS and pipeline identifiers.
-Keep it off during normal play. That will allow the next audit to identify
-which asset-backed programs and state combinations reconstruct actual pipelines,
-then narrow unmatched programs by their owning draws/materials. A hash alone
-cannot reconstruct an unavailable program.
+Legacy recipes associate a native pipeline descriptor with compiled VS/PS
+bytecode but lack the original input mapping. The optional recorder below now
+captures that mapping for new diagnostic runs. Authored vertex-program and
+material/pass extraction and independent reconstruction remain absent. A hash
+alone cannot reconstruct an unavailable program.
 
 Once those mappings are verified, derive states from the game's material/pass
 logic rather than compiling the full shader/state cross-product. Automated
 content loading can then validate coverage without manually racing every car.
 This work is not yet a distributable complete catalogue or a guarantee of zero
 first-use compilation.
+
+## Optional pipeline provenance recorder (Phase 137)
+
+Apply this branch's runtime overlay with `scripts/setup_runtime.py` and build
+against that runtime. Merely checking out the audit Python script does not add
+recording to an older EXE. There is no new F1 setting; normal play leaves this
+diagnostic off.
+
+Set **`RSX_PSO_PROVENANCE` to a local output directory**, preferably an absolute
+path under ignored `scratch/`, before launching the game. Its parent must
+already exist. Unset it or use `0` to disable it. For example, substitute your
+actual checkout path:
+
+```powershell
+$capturePath = "$PWD/scratch/provenance-hsr"
+scripts/test/race.ps1 -Track HighSpeedRing -Tag provenance-hsr -Seconds 25 -RaceShots 20 PS3_VERBOSE=0 "RSX_PSO_PROVENANCE=$capturePath"
+```
+
+Each process creates its own `links_<pid>_<clock>.jsonl`, flushed per link. The
+following `.bin` files are deduplicated by the renderer's 64-bit content hash:
+
+- `fp_…`: bounded fragment input snapshot used for translation, including inline
+  constants. Snapshotting happens only on misses with recording enabled.
+- `vp_…`: vertex input range passed to the per-draw translator, including any
+  trailing microcode store. The link separately records the identity extent
+  used by the vertex cache and whether GPU input fetching was selected.
+- `fphlsl_…` / `vphlsl_…`: final generated source submitted to compilation.
+
+Links record those input/source identifiers, compiler-cache keys, pixel compile
+flags, shader-affecting key state (including sampler/texture masks), resulting
+VS/PS DXBC identifiers and the native pipeline request identifier. The bytecode
+and native descriptor remain in the normal `warmup-v1` recipes. Compiler date
+is diagnostic build metadata, not a stable renderer version identifier.
+
+Only actual per-draw guest-FP pipeline requests are recorded. Pending shader
+compiles, translation failures and independent fixed/internal pipelines are not
+complete links. The legacy primary VS fallback has no per-draw input provenance;
+it is represented by zero vertex identifiers, never guessed from current state.
+`queued` means driver creation was requested asynchronously; `ready` means the
+request returned successfully. The first record is retained, so a queued record
+does not later become ready in the log. The audit checks the resulting recipe
+independently; a queued request alone is not pipeline-creation success.
+
+`RSX_PSO_PROVENANCE_LIMIT` bounds unique links per process (default 8192,
+clamped to 1..16384). Duplicate pipeline/program/vertex combinations are
+suppressed. Reaching the cap or an I/O failure logs an incomplete-capture warning.
+Vertex blobs can also be written for successful VS compiles before a linked
+pixel shader is ready; their count is bounded by the existing vertex cache.
+This diagnostic performs hashing, copying and disk writes and must stay off
+when judging normal-play performance. Nothing is added to the release ZIP.
+
+After closing the game, add one or more captures to the audit:
+
+```powershell
+.venv/Scripts/python scripts/shader_coverage.py --catalog shadercache/library-v1/all --live scratch/provenance-hsr --cache shadercache --provenance scratch/provenance-hsr --output scratch/provenance-report
+```
+
+The audit verifies input/source-blob hashes, compares each fragment input to
+assets, and joins each pipeline to its recipe and exact VS/PS identifiers.
+Missing recipes, absent dependencies, bytecode mismatches and malformed records
+are separate statuses. Full recipe/bytecode checksum verification still requires
+`--verify-hashes`. The report keeps the original captured fields for analysis.
+It retains only metadata while checking source blobs rather than keeping all
+HLSL payloads in memory.
+
+**A verified recipe link is not full asset reconstruction.** It can still depend
+on a locally recorded vertex input or HLSL. The next step is to locate those
+vertex programs and material/pass states in authored assets, then rebuild a
+small sample independently and compare its resulting bytecode/pipeline keys.
+
+Checks: `scripts/test/pso_provenance.ps1 -Runtime <patched-runtime>` exercises the
+real serializer without a GPU/game: default-off, explicit `0`, valid JSON,
+duplicate suppression and a one-link cap. `scripts/test/shader_coverage.py`
+also checks provenance joins, missing recipes, mismatched bytecode IDs, damaged
+input blobs, invalid identifiers and truncated JSON.
+
+### Recorder validation on 2026-10-30
+
+An isolated backend compile/relink produced a separate test EXE; the normal
+development binary and Claude's shared runtime were not replaced. Initial
+1080p/2x-MSAA HSR and Daytona samples recorded 1,763 / 1,943 links. The audit
+detected 2 / 7 raw-fragment checksum mismatches, exposing a hash/write race
+against guest memory in the first implementation. Those initial captures are
+retained as diagnostic evidence, not treated as clean preparation inputs.
+
+The final pre-translation snapshot implementation was recompiled and checked
+with another HSR race sample (15 seconds of sampling after the introduction).
+Its **1,497 links all joined verified recipe identifiers/dependencies, with
+zero input/source integrity failures**. All had captured vertex inputs; 1,204
+links also had a structural fragment match in the asset catalogue. Four new
+recipes absent from the preceding inventory were separately copied and checked
+with full recipe/bytecode checksums, then included in the join. The remaining
+recipe inventory used the earlier envelope/size/DXBC-signature checks. These
+numbers do not imply full-cache checksum verification or complete race coverage.
+
+Final local report in this worktree:
+`scratch/provenance-snapshot-hsr-20261030/audit-final.json`. The preceding
+two-route audit is `scratch/shader-provenance-audit-20261030/report.json`.
+Window shots with racing HUDs and logs are under the development checkout's
+`scratch/pv/provenance-{hsr,daytona,snapshot-hsr}-20261030.*`. Native serializer
+checks cover off/unset, explicit `0`, duplicate suppression, a one-link cap and
+JSON parsing. No complete precompile catalogue is packaged by this change.
 
 Synthetic checks: `.venv/Scripts/python scripts/test/shader_coverage.py`.
 

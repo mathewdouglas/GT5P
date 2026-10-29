@@ -79,6 +79,41 @@ with tempfile.TemporaryDirectory() as folder:
     recipe.write_bytes(payload + struct.pack('<Q', m.fnv64(payload)))
     (recipes / f'code_{code_hash:016x}.dxbc').unlink()
     assert m.audit_recipes(recipes)['counts'] == {'dependency_error': 1}
+    # A queued translation request only becomes a verified link after the
+    # matching pipeline recipe and its exact shader identifiers exist.
+    (recipes / f'code_{code_hash:016x}.dxbc').write_bytes(code)
+    recipe_report = m.audit_recipes(recipes, True)
+    trace = root / 'trace'; trace.mkdir()
+    def blob(kind, data):
+        digest = f'{m.fnv64(data):016x}'
+        (trace / f'{kind}_{digest}.bin').write_bytes(data)
+        return digest
+    item = dict(schema=1, build='synthetic', pipeline='000000000000007b',
+                vs=f'{code_hash:016x}', ps=f'{code_hash:016x}', request='queued',
+                fp_raw=blob('fp', base), fp_identity='0000000000000001', fp_bytes=len(base),
+                fp_hlsl=blob('fphlsl', b'synthetic pixel source'), fp_cache='0000000000000002', fp_flags=0,
+                vp_raw=blob('vp', bytes(16)), vp_bytes=16, vp_identity_bytes=16, vp_gpu=0,
+                vp_hlsl=blob('vphlsl', b'synthetic vertex source'), vp_cache='0000000000000003',
+                state={key: 0 for key in ('blend','nrt','rtfmt','exp32','cmask','cull','stencil',
+                                         'unnorm','cube','vmask','ghi','shd','unhi')})
+    item['state']['samplers'] = '0000000000000000'
+    log = trace / 'links_synthetic.jsonl'
+    log.write_text(json.dumps(item) + '\n')
+    linked = m.audit_provenance(trace, programs, sources, recipe_report)
+    assert linked['verified_links'] == linked['asset_fragment_links'] == linked['vertex_input_links'] == 1
+    assert linked['records'][0]['request'] == 'queued'
+    assert m.audit_provenance(trace, programs, sources, {'records': []})['counts'] == {'recipe_missing': 1}
+    wrong_recipe = json.loads(json.dumps(recipe_report))
+    wrong_recipe['records'][0]['ps'] = '0000000000000004'
+    assert m.audit_provenance(trace, programs, sources, wrong_recipe)['counts'] == {'recipe_bytecode_mismatch': 1}
+    (trace / f"fp_{item['fp_raw']}.bin").write_bytes(changed)
+    assert m.audit_provenance(trace, programs, sources, recipe_report)['counts'] == {'invalid': 1}
+    (trace / f"fp_{item['fp_raw']}.bin").write_bytes(base)
+    item['fp_raw'] = '../not-a-hash'
+    log.write_text(json.dumps(item) + '\n')
+    assert m.audit_provenance(trace, programs, sources, recipe_report)['counts'] == {'invalid': 1}
+    log.write_text('{truncated')
+    assert m.audit_provenance(trace, programs, sources, recipe_report)['counts'] == {'invalid': 1}
     # Exercise the complete CLI, including the ignored-output rule and refusal
     # to overwrite a previous report; the input cache must remain unchanged.
     scratch = m.ROOT / 'scratch'

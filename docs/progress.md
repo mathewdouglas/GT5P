@@ -9,6 +9,48 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 137 - Record shader-input to pipeline provenance (2026-10-30)
+
+Branch `feature/shader-coverage-audit`. The runtime overlay now includes an
+opt-in `RSX_PSO_PROVENANCE=<directory>` recorder; see
+[shader coverage](shader-coverage.md#optional-pipeline-provenance-recorder-phase-137).
+It records per-draw vertex input ranges and generated source at successful VS
+compilation, then links bounded FP input snapshots, generated source, compiler
+keys/flags and translation-key state to VS/PS DXBC identifiers and native
+pipeline request IDs. Missing primary-VS provenance is represented explicitly.
+Pending driver requests are labeled queued; recording is not creation success.
+
+The present-thread diagnostic deduplicates pipeline/program/vertex combinations,
+flushes JSONL links, and bounds link count (8192 default, configurable 1..16384).
+Default-off and explicit `0` perform no output initialization/input reads in the
+serializer regression. The audit verifies input/source blob hashes and joins
+requests to recipe IDs and exact VS/PS identifiers, with distinct missing,
+mismatched and invalid statuses. Full asset vertex/material reconstruction and
+pipeline replay are still unimplemented; this does not eliminate stutters.
+
+The patched backend was compiled in an isolated runtime and linked to a separate
+test EXE using existing development objects; the normal development EXE, shared
+runtime sources and their local changes were not overwritten. The regenerated
+overlay preserves unrelated patch sections byte-for-byte and applies/checks in
+a fresh pinned checkout. Native serializer and synthetic provenance/corruption
+checks passed. Two short instrumented 1080p/2x-MSAA race samples reached racing
+HUDs; a further HSR sample validates the final pre-translation snapshot change.
+Local records, sources, bytecode and reports are ignored and not distributable.
+
+The initial captures contained 1,763 HSR / 1,943 Daytona requests. The audit
+caught 2 / 7 raw-FP checksum mismatches: the first implementation hashed and
+wrote live guest bytes separately. The final implementation snapshots a
+bounded FP on a pipeline miss and uses that snapshot for translation and
+recording. Its follow-up HSR sample produced **1,497 / 1,497 verified recipe
+links, zero invalid input blobs**, all with captured vertex inputs; 1,204 links
+also matched fragment programs in the extracted asset catalogue. These are
+pipeline request links, not unique shaders or proof of independent replay.
+Four recipes created during that final run were checked separately with their
+bytecode checksums and added to the previous inventory before the final join.
+Evidence: audit-worktree `scratch/provenance-snapshot-hsr-20261030/audit-final.json`,
+`scratch/provenance-snapshot-recipe-check/checks.json`, and the development
+checkout's `scratch/pv/provenance-snapshot-hsr-20261030.*` logs/window shots.
+
 ## Phase 136 - Measure asset/shader/pipeline coverage (2026-10-30)
 
 Added a read-only developer audit on `feature/shader-coverage-audit`; see

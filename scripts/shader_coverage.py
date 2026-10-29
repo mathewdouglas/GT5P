@@ -219,6 +219,99 @@ def audit_profiles(folder, programs):
                 records=records)
 
 
+def audit_provenance(folder, programs, sources, recipes):
+    """Join actual translation requests to local raw inputs and saved recipes.
+
+    Input blobs always get integrity checks. A recipe link verifies identifiers
+    and dependencies, not that this run completed GPU creation or can recreate
+    the shaders from authored materials without recorded local data.
+    """
+    by_pipeline = {r['pipeline']: r for r in recipes['records'] if 'pipeline' in r}
+    blobs = {}
+    records = []
+    hash_fields = ('pipeline', 'vs', 'ps', 'fp_raw', 'fp_identity', 'fp_hlsl', 'fp_cache',
+                   'vp_raw', 'vp_hlsl', 'vp_cache')
+    state_fields = ('blend', 'nrt', 'rtfmt', 'exp32', 'cmask', 'cull', 'stencil',
+                    'unnorm', 'cube', 'vmask', 'ghi', 'shd', 'unhi')
+
+    def blob(kind, digest):
+        key = (kind, digest)
+        if key not in blobs:
+            data = bounded_read(folder / f'{kind}_{digest}.bin', MAX_CODE)
+            if f'{fnv64(data):016x}' != digest:
+                raise ValueError(f'{kind} input checksum mismatch')
+            # Retain metadata, not every HLSL/VP payload, for large captures.
+            metadata = dict(bytes=len(data))
+            if kind == 'fp':
+                metadata['info'] = fp_identity(data)
+            blobs[key] = metadata
+        return blobs[key]
+
+    for path in sorted(folder.glob('links_*.jsonl')):
+        with path.open('rb') as stream:
+            number = 0
+            while line := stream.readline(65537):
+                number += 1
+                record = dict(file=path.name, line=number)
+                try:
+                    if len(line) > 65536:
+                        raise ValueError('oversized trace record')
+                    item = json.loads(line)
+                    if item['schema'] != 1 or item['request'] not in ('queued', 'ready'):
+                        raise ValueError('unsupported provenance schema/request')
+                    if any(not isinstance(item[f], str) or not re.fullmatch('[0-9a-f]{16}', item[f])
+                           for f in hash_fields):
+                        raise ValueError('invalid provenance identifier')
+                    for field in ('fp_bytes', 'vp_bytes', 'vp_identity_bytes', 'vp_gpu', 'fp_flags'):
+                        if type(item[field]) is not int or not 0 <= item[field] <= 0xffffffff:
+                            raise ValueError('invalid provenance size/flags')
+                    state = item['state']
+                    if any(type(state[f]) is not int or not 0 <= state[f] <= 0xffffffff for f in state_fields):
+                        raise ValueError('invalid translation state')
+                    if not re.fullmatch('[0-9a-f]{16}', state['samplers']):
+                        raise ValueError('invalid sampler state')
+                    raw = blob('fp', item['fp_raw'])
+                    if raw['bytes'] != item['fp_bytes']:
+                        raise ValueError('fragment input size mismatch')
+                    info = raw['info']
+                    matches = programs.get(info['identity'], [])
+                    blob('fphlsl', item['fp_hlsl'])
+                    vertex = item['vp_raw'] != '0000000000000000'
+                    if vertex:
+                        data = blob('vp', item['vp_raw'])
+                        if data['bytes'] != item['vp_bytes'] or not 0 < item['vp_identity_bytes'] <= data['bytes']:
+                            raise ValueError('vertex input extent mismatch')
+                        blob('vphlsl', item['vp_hlsl'])
+                    elif item['vp_bytes'] or item['vp_identity_bytes'] or item['vp_hlsl'] != '0000000000000000':
+                        raise ValueError('inconsistent unavailable vertex input')
+                    record.update(pipeline=item['pipeline'], vs=item['vs'], ps=item['ps'],
+                                  request=item['request'], vertex_input_available=vertex,
+                                  fragment_asset_match=bool(matches), identity=info['identity'],
+                                  payloads=[m['payload'] for m in matches],
+                                  source_files=sorted({s['file'] for m in matches for s in sources[m['payload']]}),
+                                  capture=item)
+                    recipe = by_pipeline.get(item['pipeline'])
+                    if not recipe:
+                        record['status'] = 'recipe_missing'
+                    elif recipe['vs'] != item['vs'] or recipe['ps'] != item['ps']:
+                        record['status'] = 'recipe_bytecode_mismatch'
+                    elif recipe['status'] != 'dependencies_present':
+                        record['status'] = 'recipe_dependencies_missing'
+                    else:
+                        record['status'] = 'recipe_link_verified'
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    record.update(status='invalid', reason=str(exc))
+                records.append(record)
+                if len(line) > 65536:
+                    break  # Do not reinterpret fragments of an oversized line.
+    linked = [r for r in records if r['status'] == 'recipe_link_verified']
+    return dict(folder=str(folder), records=records, counts=dict(Counter(r['status'] for r in records)),
+                verified_links=len(linked), unique_linked_pipelines=len({r['pipeline'] for r in linked}),
+                asset_fragment_links=sum(r['fragment_asset_match'] for r in linked),
+                vertex_input_links=sum(r['vertex_input_available'] for r in linked),
+                note='Links retain local inputs/HLSL; asset vertex/material reconstruction and GPU completion remain unproven.')
+
+
 def summary(report):
     lines = ['Shader coverage audit',
              f"Asset payloads: {report['assets']['payloads']}; instruction identities: "
@@ -230,7 +323,11 @@ def summary(report):
     lines.append(f"Pipeline recipes: {recipes['files']}; {recipes['counts']}; "
                  f"unique compiled VS/PS: {recipes['unique_vs']}/{recipes['unique_ps']}")
     lines.append(f"Learned fragment profiles: {report['profiles']['files']}; {report['profiles']['counts']}")
-    lines.append('Full asset-to-pipeline reconstruction: UNKNOWN (no recorded raw-program/state-to-DXBC link).')
+    for trace in report.get('provenance', []):
+        lines.append(f"Provenance {trace['folder']}: {trace['verified_links']} verified recipe links; "
+                     f"asset-backed FP {trace['asset_fragment_links']}; vertex inputs {trace['vertex_input_links']}; "
+                     f"{trace['counts']}")
+    lines.append('Full asset-to-pipeline reconstruction: UNKNOWN (vertex/material extraction and replay not validated).')
     lines.append('Matches exclude inline constant values; they do not prove successful translation or complete state coverage.')
     lines.append('Recipe checks cover envelopes and bytecode dependencies, not current renderer/GPU compatibility.')
     return '\n'.join(lines) + '\n'
@@ -243,8 +340,10 @@ def main():
     ap.add_argument('--cache', type=Path, required=True, help='Cache containing warmup-v1 recipes')
     ap.add_argument('--output', type=Path, required=True, help='New report directory inside gitignored storage')
     ap.add_argument('--verify-hashes', action='store_true', help='Verify renderer FNV checksums too (slower)')
+    ap.add_argument('--provenance', type=Path, action='append', default=[],
+                    help='RSX_PSO_PROVENANCE directory; verify input blobs and join to recipes')
     args = ap.parse_args()
-    for path in [args.catalog, *args.live, args.cache / 'warmup-v1']:
+    for path in [args.catalog, *args.live, *args.provenance, args.cache / 'warmup-v1']:
         if not path.is_dir():
             ap.error(f'Input directory not found: {path}')
     output = args.output.resolve()
@@ -253,7 +352,7 @@ def main():
         ap.error('Reports must be written to gitignored storage such as scratch/; they contain local identifiers')
     if output.exists():
         ap.error('Choose a new output directory; existing reports are never overwritten')
-    for source in [args.catalog, *args.live, args.cache]:
+    for source in [args.catalog, *args.live, *args.provenance, args.cache]:
         source = source.resolve()
         if output == source or output in source.parents or source in output.parents:
             ap.error('Output must be separate from input catalogue/capture/cache directories')
@@ -264,16 +363,20 @@ def main():
     print('Checking pipeline dependencies (large caches can take several minutes)...', flush=True)
     recipes = audit_recipes(args.cache / 'warmup-v1', args.verify_hashes,
                             lambda text: print(text, flush=True))
+    print('Joining provenance records...', flush=True)
+    provenance = [audit_provenance(folder, programs, sources, recipes) for folder in args.provenance]
     report = dict(schema=1, created_utc=datetime.now(timezone.utc).isoformat(),
                   assets=dict(catalog=str(args.catalog.resolve()), payloads=sum(map(len, programs.values())),
                               indexed_payloads=len(sources), instruction_identities=len(programs),
                               rejected=len(rejected), failures=rejected),
                   live=live, recipes=recipes,
                   profiles=audit_profiles(args.cache / 'fp-profiles-v2', programs),
-                  full_pipeline_reconstruction='unknown_missing_provenance',
+                  provenance=provenance,
+                  full_pipeline_reconstruction='unknown_vertex_material_reconstruction' if provenance
+                                               else 'unknown_missing_provenance',
                   limitations=['No vertex-program or material-state extraction.',
                                'Live corpora contain unique recorded programs, not draw counts or exhaustive track coverage.',
-                               'No association between raw programs, profiles and compiled pipeline bytecode.',
+                               'Provenance links require an explicit capture; legacy recipes have no original input mapping.',
                                'Structural matches do not validate semantic equivalence or compiler acceptance.',
                                'Existing recipe sets may include previous renderer versions/settings.'])
     output.mkdir(parents=True)
