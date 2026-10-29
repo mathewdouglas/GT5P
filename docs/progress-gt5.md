@@ -20,6 +20,30 @@ Seen before the Phase 23 fixes; not caused by them.
 4. ~~After a collision the hit car's textures break into rainbow colours.~~
    Fixed, Phase 26.
 
+## Phase 28 — One-frame texture flashes: copies ordered with replay (2026-10-29)
+
+User video stills of the flash: the road as purple noise, grass texture on
+the road, noise in the mirror, each for one frame, with "Compiling
+shaders" up. The FIFO walker performs GT5's NV0039 copies (texture moves
+in VRAM, Phase 21) as it walks, but replay reads texture bytes later; a
+copy in frame N+1 changed textures that frame N (still replaying) or the
+earlier draws of frame N+1 itself had bound. Measured: with
+`RSX_COPY_SNAP_DBG=1`, many copies of 0x55580 bytes each race land on
+textures of the frame being replayed.
+
+`rsx_d3d12_before_guest_copy` (called by the NV0039 path before it copies):
+waits for the frame being replayed if it binds a texture in the range (at
+most `RSX_COPY_SNAP_WAIT_MS`, 30; uncapped, waits behind a replay's
+pipeline wait made 0.6-0.7 s hitches), and copies every texture the frame
+being recorded binds there into its `snap` list (`RSX_TEX_SNAP`'s
+mechanism; `TEX_SNAP_MAX` 16 -> 128). Each frame keeps a list of its
+distinct textures (`FrameSet.ts`) so the check is cheap. `RSX_COPY_SNAP=0`:
+off. Cost: walker +2 ms/frame, about 1-2 FPS (`cs11`-`cs13`: 45.2/46.9 on,
+47.1 off); the waits are the game's copies of the same ranges every frame,
+which the console also runs in order. Not reproduced here before or after
+(cold shader cache, 720p and 1080p 2x, shots every 40 ms: `fl0`-`fl3`); the
+user's run compiled 7,000+ shaders, far more replay lag than these.
+
 ## Phase 27 — 1080p race drawn at full width (2026-10-29)
 
 User report: antialiasing looks bad at 1080p. At 1080p GT5 draws the race
