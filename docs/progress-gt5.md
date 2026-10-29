@@ -81,10 +81,12 @@ unexplained 2.6 s frame; `cs0` (before the pool) had one of 2.8 s. Open.
 Also tried, kept as switches: `SPU_DEC_FAST` (on; decrementer reads
 without 64-bit divisions, ~70 -> ~15 ns), `SPU_COH_MIRROR` (on; a packed
 copy of each context's reserved line so notifies skip contexts),
-`SPURS_KICK_SAME_WAKE=1` (old; a kick storing the count already there no
-longer signals the kernel), `SPURS_LANE_PRIO_WIDS=<wids>` (off; lanes
-above normal). Together the game thread's CPU per frame fell ~0.5 ms; no
-FPS change measured from any of them alone.
+`SPURS_KICK_SAME_WAKE=0` (experiment; a kick storing the count already
+there skips the kernel wake: an idle workload keeps its count, so its next
+kick waited for the 1 ms poll, kick->dispatch 0.01 -> 0.1 ms; default stays
+wake-always), `SPURS_LANE_PRIO_WIDS=<wids>` (off; lanes above normal). No
+FPS change measured from any of them alone. Current build (`fin1`): 51.7
+FPS, median 18.2 ms, p99 37 ms, longest 105 ms.
 
 **Where the frame waits** (`PS3_TIMELINE` + scratch `crit.py`). The game
 thread (`gFKsE`) works ~10 ms a frame, then waits in `sys_cond_wait` for a
