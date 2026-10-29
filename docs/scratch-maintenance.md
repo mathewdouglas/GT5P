@@ -1,5 +1,63 @@
 # Scratch cleanup record
 
+## 2026-10-29
+
+### Resolved-bug runs
+
+At the user's request, matched old outputs against documented fixes and recycled
+a further 1,028 files / 3,395,411,649 bytes (3.16 GiB). This leaves approximately
+22.32 GiB in scratch (79,233 files before the final summary manifest).
+
+- Phase 118: superseded tunnel exposure/reflection runs and two older tunnel
+  GPU captures; kept `tunnel118g`, `tunrefl118b_frame9640.rdc`,
+  `graphics94-manual_frame10650.rdc` and `meter118_frame6123.rdc`.
+- Phase 113: superseded barrier/road saturation experiments; kept `satcold2`,
+  `satvis4` and both saturation GPU captures for reference.
+- Phases 75/79/80/81: old depth, font, mip-view and normal-map runs;
+  kept representative 1080p validation and fixed depth captures.
+- Phases 72/76/82/83: old pit-crew, crowd, opening-logo and flicker runs;
+  kept the later crew/crowd captures, logo control/fix outputs and
+  `flickerunhigpu_frame2037.rdc`.
+- Phases 123/125/126/130/132: superseded ultrawide dim-layer captures,
+  cockpit-mirror and label runs; kept `uwdim3`, `cock4` and `lblfix2`.
+
+Golf rim captures remain: Phase 96 still lacks final visual acceptance. Also
+preserved the RPCS3 reference captures, current upgrade validation, outstanding
+freeze/stutter evidence, shader caches, rollback trees, scripts and original
+`logs/debug/` exports. No game or build/test process was launched.
+
+Targets were checked for absolute containment, reparse points, matching size
+and modification time, moved into a checked scratch staging folder, then sent
+to the Recycle Bin as `_resolved-runs-recycle-20261029`. All original target
+paths were verified absent, and 15 named retained artifacts/directories checked
+present. Audit files: `scratch/cleanup-20261029-resolved-{plan,result,summary}.json`.
+The recycled folder retains its `pv/` and `rdoc/` structure for recovery.
+Disk space is not reclaimed until the Recycle Bin is emptied.
+
+### Reproducible fixtures
+
+Recycled 71 reproducible test-output directories containing 2,829 files /
+2,950,404,433 bytes (2.75 GiB). These were `debug-export-test-*`,
+`audio-native-*`, `audio-math-*`, `cond-callback-*` and `spurs-arg-*`
+fixtures; their canonical sources remain under `scripts/test/`. Every selected
+directory predated October 28 and was checked again for changes before recycling.
+
+After cleanup, `scratch/` contained 80,257 files / 27,356,550,288 bytes
+(25.48 GiB), before writing the final small summary manifest. Recycled data
+remains recoverable; disk space is reclaimed only when the Recycle Bin is emptied.
+
+Preserved all GPU captures, reference frames, race reports, shader caches,
+unique diagnostic helpers and investigation outputs. In particular,
+`upgrade-v018/` (including runtime worktrees and rollback files),
+`gen-prerelift/`, `rdoc/`, `renderdoc/`, `pv/` and `shader89/` remain intact.
+No builds, tests or game launches were performed during cleanup.
+
+Every target was resolved beneath the exact workspace `scratch/` directory,
+restricted to the fixture prefixes above, and checked for reparse points and
+protected capture/cache files. File counts and sizes were matched against the
+plan, and all 71 target paths were verified absent afterwards. Local audit files
+are `scratch/cleanup-20261029-{plan,result,summary}.json` (gitignored).
+
 ## 2026-10-19
 
 The user requested removal of unneeded scratch data. The folder contained
