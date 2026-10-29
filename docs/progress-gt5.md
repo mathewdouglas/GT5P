@@ -4,6 +4,68 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Phase 22 — Performance: first measurements (2026-10-29)
+
+**Frame test.** `gt5boot.ps1 -Route race -FrameTest [-Cpu] -Settle 60`
+holds Cross from RaceStart, logs every present (`GT5P_FRAME_LOG`) and
+reports FPS, median/p99 interval, late share and FIFO walk over the window.
+Its in-script window filter sometimes keeps only part of the log; the
+reliable numbers below are over the log's last 55 s.
+
+| Run | FPS | Median | p99 | Late (>20 ms) |
+| --- | --- | --- | --- | --- |
+| baseline (`perf0`) | 43.9 | 18.4 ms | 60 ms | 39% |
+| inline memory on (`perf1`) | 35.3 | 24.8 ms | 91 ms | 81% |
+| same build, `VM_INLINE=0` (`perf1b`) | 38.3 | 24.8 ms | 54 ms | 95% |
+| + SPURS SPU count fixed (`perf2`) | 43.8 | 21.0 ms | 57 ms | 62% |
+
+Run-to-run noise is large (the host has 26% background load); one pair is
+not a verdict.
+
+**Inline guest memory.** The sampler (`GT5P_SAMPLE=4`) had the busy guest
+threads mostly in out-of-line `vm_read32`/`vm_write64`: this build's cache
+had `GT5P_VM_INLINE=OFF`, though the option defaults to ON. Rebuilt ON (exe
+244 MB). The one A/B within the build was 3 FPS worse inline. Unresolved:
+re-measure, and look for guest spin loops that inlining makes hotter.
+
+**SPURS SPU count (fixed).** `_cellSpursAttributeInitialize` is the library
+export with `(attr, revision, sdkVersion, nSpus, ...)`; the runtime
+forwarded it as `(attr, nSpus, ...)`, so the revision (2) became the SPU
+count. GT5 asks for 5 (`"PDI"`, render) and 1 (`"sgx-spurs-"`, audio):
+`PS3_HLE_ARGS=95180230`. Both ran as 2-SPU instances, which the policy
+module and `cellSpursGetNumSpuThread` report. `SPURS_ATTR_OLD_ARGS=1`:
+old reading.
+
+**Where a frame goes** (`PS3_TIMELINE=112,6` + `tl.py --sum`, 278 frames,
+21.5 ms mean):
+
+- The game thread (`gFKsE`, guest tid 27, the one calling
+  `cellGcmSetPrepareFlip`) blocks about 9 ms a frame in a condition wait
+  until the present thread has presented and walked the FIFO. In a 34.7 ms
+  frame that wait was one 21 ms present call.
+- The FIFO walk is about 11 ms of CPU a frame; replay about 11 ms on its
+  own thread.
+- Render workloads 0-2 (`Wws_Job/ElemSetRenderHP`, `ElemSetRender`,
+  `ElemSetUpdate`) wait 14-20 ms on average from kick to dispatch;
+  4 and 5 dispatch within 0.3 ms. Not yet explained.
+
+**Freezes.** About one race in three stops presenting.
+
+- **Permanent kind** (`perf0`, `pp1`): `gFKsE` (and `9qstY`) spin in
+  `0x00C350C4`, a loop over `func_00D1AB10` (yield `0x00C450C0` between
+  tries). That function takes the minimum of a job list's progress row:
+  +0x40 + 16 x queue, with +2 completed and +4.. one slot per lane, 0xFFFF
+  when idle. It waits for that minimum to reach a target. In `pp1`
+  workload 1's row was one short (0x669 for 0x66A): a lane slot that
+  never cleared.
+- **Recoverable kind** (`perf1`, `spin1`): a few seconds, then frames
+  resume.
+- `SPU_ROWLOG=40240080,40232080` caught a slot sitting at 0x0740 while
+  the others advanced. Its 64-write ring covers only about 5 ms, too short
+  to see the moment a slot freezes; a longer history is the next tool. This
+  is the family of GT5P Phases 64 and 92 (`SPURS_PM_ARG64` is on and does
+  not cover it).
+
 ## Phase 21 — The race runs; a faster route there (2026-10-28)
 
 **Status.** Arcade → High Speed Ring → race, at 30 fps on the grid screen
