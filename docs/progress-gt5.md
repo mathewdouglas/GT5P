@@ -53,6 +53,39 @@ cache), one run each, same build line:
   limit): backend calls ~3,900 -> ~1,700 a frame for ~1,170 records.
   `RSX_DRAW_COALESCE=0`: off. Window shots unchanged.
 
+**Texture pool: the streaming stretch.** One 5 s stretch of every run
+(the same place on the track) ran at ~100-130 frames, replay 27-38 ms a
+frame. `RSX_TEXUPSTAT=1` (new: uploads per frame, new or changed, bytes,
+held-texture checksum time, resource creation time, the most uploaded
+textures) showed GT5 streaming the next section in: ~22-35 new textures a
+frame, each creating a committed texture and a committed staging buffer,
+~0.24 ms per creation, ~9 ms of replay a frame. Released texture and
+staging resources now go to a pool and are reused for the same
+description (`RSX_TEX_POOL=0`: off; `RSX_TEX_POOL_MB`, default 192, a
+quarter of it for staging; unused 600 frames: freed). The replay drains the
+GPU before recording, so pooled resources are idle. Creation in that
+stretch: 22.6 -> ~1 M cycles a frame (89% pool hits).
+
+| Run | FPS | Median | p99 | Late | Longest |
+| --- | --- | --- | --- | --- | --- |
+| before (`ck1`) | 48.8 | 18.0 ms | 82 ms | 28% | 237 ms |
+| pool (`tp1`) | 50.0 | 18.4 ms | 35 ms | 32% | 1229 ms |
+| pool (`tp2`) | 45.5 | 18.5 ms | 41 ms | 35% | 2643 ms |
+| pool (`tp3`) | 52.2 | 18.1 ms | 34 ms | 29% | 75 ms |
+
+The cluster of 150-260 ms hitches every earlier run had at 137-145 s is
+gone. `tp2`'s two 2.6 s gaps are the walker parked on an unfilled SPU
+block (`park at io 01055080 held 2563 ms`), the shape of Phase 23's
+unexplained 2.6 s frame; `cs0` (before the pool) had one of 2.8 s. Open.
+
+Also tried, kept as switches: `SPU_DEC_FAST` (on; decrementer reads
+without 64-bit divisions, ~70 -> ~15 ns), `SPU_COH_MIRROR` (on; a packed
+copy of each context's reserved line so notifies skip contexts),
+`SPURS_KICK_SAME_WAKE=1` (old; a kick storing the count already there no
+longer signals the kernel), `SPURS_LANE_PRIO_WIDS=<wids>` (off; lanes
+above normal). Together the game thread's CPU per frame fell ~0.5 ms; no
+FPS change measured from any of them alone.
+
 **Where the frame waits** (`PS3_TIMELINE` + scratch `crit.py`). The game
 thread (`gFKsE`) works ~10 ms a frame, then waits in `sys_cond_wait` for a
 user command near the end of its frame's commands (~8-9 ms). With draws
