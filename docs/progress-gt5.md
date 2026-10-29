@@ -47,7 +47,21 @@ the park timeout (the block fills by itself).
   `spu_lockline_lock`, is a candidate) rather than in guest code. Not yet
   proven.
 
-**Next step (prepared, not yet run to a result).** The stall dump now
+**Result (`fu2`, lane host stacks).** Every workload-0 lane thread is in
+`spu_lockline_lock` (the stuck one via `spu_wrch` from
+`gt5p_b01697100_spu_func_00008A24`, the GETLLAR; the others from the job
+manager). So no lane holds the global lock-line lock: another thread holds
+it for ~2.5 s. Hypothesis, to verify next: priority inversion. Waiters spin
+with `_mm_pause` and `SwitchToThread` (which only yields to threads on the
+same CPU) at above-normal priority on pinned cores, starving a lower-priority
+holder (e.g. a PPU thread inside `VM_WRITE_COH` or a coherent atomic) until
+Windows' starvation boost runs it after a few seconds, which fits the
+near-constant freeze length. Next: record the holder's thread id in
+`spu_lockline_lock` and print it in the stall dump; then make waiters
+block (e.g. `WaitOnAddress` after a short spin, with a switch) instead of
+spinning.
+
+**How the stack was captured.** The stall dump now
 prints each SPURS pool lane's host call stack (`[stall] lane-stack`,
 tids from `g_spurs_lane_tid`); run
 `scripts	estzhunt.ps1 -N 6 -Prefix fu GT5P_STALL_DUMPS=3 GT5P_STALL_SECOND_MS=300`
