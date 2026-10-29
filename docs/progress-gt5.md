@@ -4,6 +4,64 @@ This log records measurements for the retail US disc build of Gran Turismo 5,
 separately from both GT5 Prologue targets. The working branch is `gt5`.
 Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 
+## Open race rendering bugs (user report, 2026-10-29)
+
+Seen before the Phase 23 fixes; not caused by them.
+
+1. About 18 s into the race (and during the rolling start) the screen
+   flickers and the road turns blue for a split second.
+2. A dark band lies across the road some distance ahead and moves ahead
+   with the car (distant lighting or shadow?).
+3. ~~The position list shows numbers but no names.~~ Fixed, Phase 24.
+4. After a collision the hit car's textures break into rainbow colours.
+
+## Phase 24 — Race position list names (2026-10-29)
+
+**How GT5 draws a name.** At the start of a race, for each of the list's
+rows, in one frame: target a 256x48 label (`0x0F445180` + 0xC000 per row,
+zeta `0x01100000`) and clear it; fill each glyph's outline into the stencil
+of the 2048x1080 depth surface at `0x01100000` (ZERO with write mask 0xFE
+over its box, then INVERT with mask 0x80); then draw the name into the
+label with program `0x0581FD41`, which samples that surface as A8R8G8B8
+(remap 0xAAFF: every channel from B, the stencil byte) and uses its alpha
+as coverage. The list then samples the labels every frame. The backend's
+glyph-mask redirect turns the stencil fills into a colour target at
+`0x01100000`; that part worked (its first row shows the glyphs).
+
+**Three faults, each enough to empty the labels:**
+
+- **Pipelines still compiling.** The label draws are made in one frame
+  only, and replay leaves out any draw whose pipeline is still being built
+  in the background (`dpso=NULL fp_pending=1`). Draws into offscreen targets
+  now wait for theirs, up to `RSX_PSO_WAIT_OFFSCREEN_MS` (500; 0: leave
+  out). Measured waits: 0-16 ms.
+- **16 render target slots.** A race frame already uses 16 before the
+  labels; `off_rt_get_impl` then returned -1 and labels 2-9 had no target.
+  `MAX_OFF_RTS` is 64 and `RSX_RT_SLOTS` (default 48; 16 = old) the number
+  used. Targets 16 and up keep their SRVs at heap slot 32 onward
+  (`RT_SRV_SLOT`; slots 21-23 are taken), and the per-draw windows moved
+  up to `DRAW_SRV_BASE` 80.
+- **Stale targets, once the slots stopped churning.** With 48 slots a menu
+  target at `0x05A81100` (800x452) outlived its screen, and the race HUD's
+  images later loaded into that memory sampled its picture: the HUD's
+  labels and gauge panels disappeared. A target nothing has drawn to for
+  `RSX_RT_RETIRE_FRAMES` frames (120; 0: never) is now retired through the
+  eviction write-back: its pixels reach guest memory if that still holds
+  what the target was made from (the labels, which the list then samples
+  from memory), and it is dropped if the title has put something else
+  there (the HUD's images).
+
+Also: GT5 now waits 3 s for an unpatched FIFO park
+(`GCM_PARK_TIMEOUT_MS=3000` from `src/main.cpp`; the runtime keeps 500 for
+GT5P). A genuine 500 ms hold during a burst of shader compiles dropped a
+list and cost a 5 s stall.
+
+New tools: `RSX_CAP_RT=<surface>` (capture the first frame drawing to it),
+`RSX_RDOC=2` with it (RenderDoc frame capture of exactly that frame),
+`RSX_SKIPDBG_RT=<surface>`, `RSX_FP_OUT=<fp>:<hlsl>` (replace a program's
+output, to read intermediate values from a target), `RSX_DBG_VP_FP=<fp>`,
+`GCM_FTRACE_ARGS=1`, `GCM_VAL_WATCH_FT=<n>` / `_FT_HIT=<k>`.
+
 ## Phase 23 — Race freezes: two shapes (2026-10-29)
 
 **The kick-to-dispatch delay was a measuring error.** `tl.py` charged the

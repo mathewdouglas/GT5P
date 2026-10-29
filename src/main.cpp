@@ -880,6 +880,14 @@ int main(int argc, char* argv[])
      * GCM_SUBCH1_M2MF=0 for the old routing. */
     if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("GCM_SUBCH1_M2MF"))
         _putenv_s("GCM_SUBCH1_M2MF", "1");
+    /* A walker parked at an SPU list's write head gives up after
+     * GCM_PARK_TIMEOUT_MS and drops the rest of the list, with the frame's
+     * user command: the game then waits out a 5 s timeout. GT5's job passes
+     * can take over 500 ms (the runtime's default; workload 6 reached 665 ms,
+     * and longer while shaders compile), so it waits 3 s
+     * (docs/progress-gt5.md, Phase 23). */
+    if (!strcmp(GT5P_TITLE_ID, "BCUS98114") && !getenv("GCM_PARK_TIMEOUT_MS"))
+        _putenv_s("GCM_PARK_TIMEOUT_MS", "3000");
 
     /* SPU render lanes on cores of their own (strict pinning): 1.14 times
      * faster lanes, Ferrari at a median 28.2 fps against 24.8 free, and no
