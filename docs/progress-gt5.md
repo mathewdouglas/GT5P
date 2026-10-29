@@ -9,7 +9,12 @@ Machine-specific dump and RPCS3 paths are in the ignored `AGENTS.local.md`.
 Seen before the Phase 23 fixes; not caused by them.
 
 1. About 18 s into the race (and during the rolling start) the screen
-   flickers and the road turns blue for a split second.
+   flickers and the road turns blue for a split second. Not reproduced
+   after Phases 23-25: window shots every 60-80 ms over the first 40 s
+   after RaceStart (`scratch/burst/bf1`, `bf2`, ~370 shots) show only the
+   intro camera, START and the bridge's shadow. Hypothesis, untested: a
+   dropped SPU display list (the false park timeouts of Phase 23, frequent
+   at the start) leaves a frame without its road, sky colour behind.
 2. ~~A dark band lies across the road ahead.~~ Fixed, Phase 25.
 3. ~~The position list shows numbers but no names.~~ Fixed, Phase 24.
 4. After a collision the hit car's textures break into rainbow colours.
