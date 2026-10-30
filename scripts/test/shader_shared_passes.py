@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from shader_shared_passes import bank_pairs, named_pair
+from prepare_shared_shaders import enumerate_banks
 
 
 def fixture(base=0):
@@ -70,3 +71,9 @@ for data in (b'SHDS', fixture()[:1000]):
     else:
         raise AssertionError('truncated bank accepted')
 print(f'{checks} named shared-pair checks passed')
+combined = fixture() + b'junk' + fixture() + b'SHDS'
+pairs, rejected = enumerate_banks(combined)
+assert len(pairs) == 4 and len(rejected) == 1
+assert {p['header'] for p in pairs} == {0, 1028}
+assert all(p['vertex_input_mask'] == 0 for p in pairs)
+print('Automatic multi-bank enumeration and unsupported-header isolation passed')

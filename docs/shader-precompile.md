@@ -4,8 +4,31 @@ For measured asset/raw-program coverage, recipe dependency checks and the
 remaining provenance gap, see [shader coverage audit](shader-coverage.md).
 
 Phase 160 adds [named shared-pass selection and isolated state checks](shader-reconstruction.md#named-shared-passes-phase-160).
-This is developer reconstruction work; shared texture/target context and native
-CPU vertex layout still need recovery before independent pipeline preparation.
+This is developer reconstruction work. Phase 162 derives the CPU input layout;
+shared texture/target context remains open before independent pipeline preparation.
+
+## Automatic shared vertex preparation (developer only)
+
+Phase 162 adds a capture-free step toward shared-pass preparation. It scans the
+original ELF automatically, selects only authored named SHDS pairs, deduplicates
+their supported vertex programs and prepares the CPU VS cache. No game run,
+manual bank offset or pass name is needed:
+
+```powershell
+.venv\Scripts\python scripts\prepare_shared_shaders.py `
+  --elf ../GT5P/input/EMAIN.ELF --decoder scratch\reconstruction-build\decoder.dll `
+  --output scratch\shared-vertex-preparation
+```
+
+The measured disc ELF supplies 46 pairs across five supported banks and 14
+distinct CPU vertex programs, all compiled successfully. Two unhandled banks
+remain reported/excluded. The output contains source-keyed runtime DXBC and an
+ignored manifest of original offsets/hashes. No fragment profile or whole
+pipeline is guessed. This currently prepares vertex shaders only; shared
+resource/target/fragment-state context remains unresolved. It is not yet wired
+into the launcher or material precompiler, and does not establish stutter impact
+or compatibility with GT5's asset layouts. See
+[input-layout validation](shader-reconstruction.md#automatic-shared-vertex-preparation-phase-162).
 
 ## Automated route learning and preparation (developer only)
 

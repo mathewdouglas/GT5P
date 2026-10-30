@@ -36,13 +36,23 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 161)
+## Start here: state of play (2026-10-31, Phase 162)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 161 is the latest).
+has the evidence, newest phase first (Phase 162 is the latest).
 
 ### What works now
+
+- **Automatic shared vertex preparation (Phase 162):** capture-free embedded-bank
+  scanning enumerates 46 authored pairs across five banks and prepares 14 unique
+  CPU vertex programs, without bank offsets or pass names. Two unsupported banks
+  stay excluded. The original vertex wrapper supplies the input mask (59 native
+  emitter checks); independent CPU layouts match production for all 65,536 masks.
+  Three shader/native proofs replace captured input layouts; nine process checks
+  include zeroed captured elements, bad inputs and default-off gating. Shared
+  fragment profiles/resource/target context remain unresolved; no new complete
+  pipeline coverage or stutter reduction is claimed. No player defaults change.
 
 - **Automatic pipeline discovery (Phase 161):** developer
   `scripts/train_pipeline_cache.py` drives HSR/Daytona, learns real draw recipes

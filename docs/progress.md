@@ -9,6 +9,51 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 162 - Automatically prepare shared vertex programs and derive CPU layouts (2026-10-31)
+
+`scripts/prepare_shared_shaders.py` scans original ELF SHDS headers and bounded
+name tables automatically. No capture, route visit, bank offset, pass name or
+pipeline key is an input. It enumerates 46 authored pairs across five supported
+banks, deduplicates original vertex slices and compiles 14 CPU vertex programs
+with the production decoder/D3D compiler. Runtime source-keyed DXBC files are
+written only into ignored output. Two unhandled banks are reported explicitly;
+no shader cross product or guessed fragment profile is generated.
+
+The original vertex wrapper's +4 word is emitted unchanged as the attribute
+input mask by `00BDE360`: 21 poisoned synthetic and 38 authored-pair checks pass.
+Under default vertex packing and no later input-mask override, an independent
+layout constructor matches the production staging/layout path for all 65,536
+low masks (1,048,576 input elements). Mask zero retains the production full-mask
+fallback; attribute zero is always kept, active attributes are packed as float4
+and inactive semantics read offset zero. This is a conditional binding fact,
+not a claim of actual ownership for every draw.
+
+The explicit offline-only `RSX_PSO_RECONSTRUCT_INPUT=1` switch applies a fresh
+16-element CPU input layout from an original wrapper mask. Developer proof
+`--shared-cpu-inputs` requires named original-pair selection and CPU-path samples.
+Two `SimpleBias` and one `MenuShader_Color` samples rebuild shaders, replace
+captured input elements, match native keys and create D3D12 pipelines. Nine
+process checks pass, including erased captured element records, malformed/
+missing inputs, wrong masks and switch-off controls. The erased-layout control
+fails without replacement. Other translation/native descriptor state remains
+explicitly captured; these are not whole independent pipeline recipes.
+
+The isolated runtime is rebuilt and its compatibility patch passes reverse
+verification. Synthetic bank enumeration/reconstruction regressions pass.
+Normal play, launcher/release and player defaults are unchanged; the original
+checkout and its processes/cache/runtime remain untouched. No live performance
+test is run and no stutter improvement or complete pipeline coverage is claimed.
+
+Evidence: `scratch/shared-vertex-prep-20261031/report.json`,
+`scratch/shared-pass-native-214683a387794f788bc0d19d85fe9a4d/report.json`,
+`scratch/input-native-427eef69545f4b2eb1b5517872a415e7/report.json`,
+`scratch/shared-input-proof-20261031/report.json`, and
+`scratch/shared-input-menu-proof-20261031/report.json`. Commands and remaining
+scope are in [shader preparation](shader-precompile.md) and
+[reconstruction](shader-reconstruction.md#automatic-shared-vertex-preparation-phase-162).
+Next derive shared fragment resource/target contexts and pass overrides so these
+automatically enumerated pairs can generate independent native pipelines.
+
 ## Phase 161 - Automate route discovery and native pipeline preparation (2026-10-31)
 
 The practical workflow no longer requires finding/proving every pipeline by

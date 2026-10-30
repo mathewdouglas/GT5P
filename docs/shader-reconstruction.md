@@ -1,9 +1,46 @@
 # Asset shader reconstruction proof
 
-Phases 138-160, branch `feature/shader-coverage-audit`. The original proof is
+Phases 138-162, branch `feature/shader-coverage-audit`. The original proof is
 extended by a capture-free conditional subset preparer in Phase 157 below.
 This is not complete player first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
+
+## Automatic shared vertex preparation (Phase 162)
+
+`prepare_shared_shaders.py` automatically scans embedded SHDS banks, validates
+authored named pairs and compiles deduplicated CPU vertex shaders without capture
+input or manually chosen banks/passes. The measured ELF yields 46 pairs across
+five banks and 14 compiled vertex programs; two unhandled banks remain excluded.
+Its output is only a vertex cache and original-asset manifest. Shared fragment
+profiles, textures/aliases/gamma, output targets and pass ownership remain open.
+
+The +4 word of the original vertex wrapper supplies the attribute input mask;
+59 isolated real-emitter checks pass. Under default `RSX_VTX_MASK` and no later
+input-mask override, `rsx_input_reconstruct.h` independently constructs the
+normal CPU input layout. All 65,536 low masks match the production staging and
+layout block, including zero-mask fallback and sparse packed attributes.
+
+The developer proof accepts `--shared-cpu-inputs` with named-bank selection. It
+rereads the original mask slice with integrity checks and writes `input.state`;
+the default-off offline-only `RSX_PSO_RECONSTRUCT_INPUT=1` switch reconstructs
+the native input elements. CPU shader code and layout come from the original
+asset/renderer rules, while the remaining translation and native state stays
+captured. Three samples match shader bytecode/native keys and create pipelines.
+Nine process checks cover damaged requests/code, wrong keys, input rejection,
+switch controls and erased captured input elements. Erasing those elements
+succeeds only with the replacement enabled. No normal-play behavior changes.
+
+Repeat using the Phase 160 proof command below with `--shared-cpu-inputs`, or run:
+
+```powershell
+.venv\Scripts\python scripts\test\shader_input_native.py --runtime ../ps3recomp-gt5p-provenance
+.venv\Scripts\python scripts\test\shader_shared_passes_native.py `
+  --generated ../GT5P/generated --elf ../GT5P/input/EMAIN.ELF
+```
+
+These are partial reconstruction proofs and vertex preparation, not a complete
+shared-pipeline catalogue or measured stutter reduction. Target/resource context
+must be derived before these pairs can join independent pipeline preparation.
 
 ## Named shared passes (Phase 160)
 

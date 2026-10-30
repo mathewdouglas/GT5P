@@ -38,7 +38,7 @@ def main():
         'func_00831B78', 'func_00833290', 'func_0081FDA8'))
     libc = (args.generated / 'ppu_recomp_008.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(libc, 'func_' + n) for n in (
-        '00BC5540', '00BCFFA0', '00BCFEF8', '00BCC3A0'))
+        '00BC5540', '00BCFFA0', '00BCFEF8', '00BCC3A0', '00BDE360'))
     prefix = '''#define PPU_NO_INLINE_LOADS
 #define PPU_NO_INLINE_STORES
 #include "ppu_recomp.h"
@@ -86,6 +86,12 @@ void ps3_indirect_call(ppu_context* ctx) {
 '''
     suffix = '''
 extern "C" __declspec(dllexport) void load(uint32_t a,const void* p,uint32_t n) {bounds(a,n);memcpy(memory+a,p,n);}
+extern "C" __declspec(dllexport) uint32_t vertex_mask(uint32_t mask,uint32_t poison) {
+ ppu_context ctx={0};ctx.gpr[3]=0x1e70000;ctx.gpr[4]=0x1e26000;
+ for(unsigned i=0;i<32;i+=4)vm_write32(ctx.gpr[4]+i,poison);
+ vm_write16(ctx.gpr[4]+0x16,0);vm_write32(ctx.gpr[4]+4,mask);vm_write32(ctx.gpr[3]+8,0x1e71000);
+ func_00BDE360(&ctx);assert(vm_read32(0x1e71008)==0x81ff0);return vm_read32(0x1e7100c);
+}
 extern "C" __declspec(dllexport) uint32_t select_pair(uint32_t bank,uint32_t name,uint32_t tag,uint32_t* out) {
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[3]=bank;ctx.gpr[4]=name;ctx.gpr[5]=tag;
  vertex=fragment=0;g_trampoline_fn=0;func_00832BC8(&ctx);uint32_t record=ctx.gpr[3];
@@ -126,6 +132,13 @@ extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned ga
     dll.select_pair.restype = ctypes.c_uint32
     dll.colour_state.argtypes = [ctypes.c_uint32] * 4 + [ctypes.POINTER(ctypes.c_uint32)]
     dll.colour_state.restype = ctypes.c_uint32
+    dll.vertex_mask.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    dll.vertex_mask.restype = ctypes.c_uint32
+    mask_checks = 0
+    for mask in (0, 1, 9, 0x101, 0xffff, 0x10000, 0xffffffff):
+        for poison in (0, 0xffffffff, 0xa5a5a5a5):
+            assert dll.vertex_mask(mask, poison) == mask
+            mask_checks += 1
     # This disc's loaded regions use file offset + 0x10000. Private memory only.
     dll.load(0x10000, data, len(data))
     reports, checks = [], 0
@@ -138,6 +151,9 @@ extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned ga
         raise AssertionError('unsupported UI wrapper accepted')
     for base in (0x1328680, 0x134a580, 0x134d400):
         pairs = bank_pairs(data, base)
+        for pair in pairs:
+            assert dll.vertex_mask(pair['vertex_input_mask'], 0xa5a5a5a5) == pair['vertex_input_mask']
+            mask_checks += 1
         size = struct.unpack_from('>I', data, base + 4)[0]
         image = bytearray(data[base:base + size])
         # Relocate only the table/name pointers read by these routines. Upload
@@ -185,7 +201,7 @@ extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned ga
                     assert output[0] == 0x10000 + vt + colour['vertex_index'] * 40
                     assert output[1] == 0x10000 + ft + colour['fragment_index'] * 72
                     state_checks += 1
-    report = dict(elf_sha256=digest, checks=checks, colour_state_checks=state_checks, banks=reports,
+    report = dict(elf_sha256=digest, checks=checks, colour_state_checks=state_checks, vertex_mask_checks=mask_checks, banks=reports,
                   colour_commands=expected,
                   scope='Real lookup, pair indices and ColorCorrect state emission; controlled resource/target/gamma/upload boundaries. Texture and target facts unresolved.')
     (folder / 'report.json').write_text(json.dumps(report, indent=2))

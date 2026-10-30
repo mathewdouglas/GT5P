@@ -20,6 +20,9 @@ if b'gt5p.exe' in subprocess.run(['tasklist', '/FI', 'IMAGENAME eq gt5p.exe', '/
     raise SystemExit('Close the game before native proof checks')
 source = args.sample / 'pipeline'
 cases = ['truncated-recipe', 'damaged-code', 'wrong-pipeline-key']
+if (source / 'input.state').is_file():
+    cases += ['input-missing', 'input-malformed', 'input-wrong-mask', 'input-off',
+              'input-zeroed-oracle', 'input-zeroed-control']
 if (source / 'material.state').is_file():
     cases += ['material-missing', 'material-malformed', 'material-wrong-state', 'material-off']
 if (source / 'pass.state').is_file():
@@ -31,7 +34,7 @@ for case in cases:
     work = Path(tempfile.mkdtemp(prefix='reconstruct-negative-', dir=ROOT / 'scratch'))
     proof = work / 'pipeline'; proof.mkdir()
     for path in source.iterdir():
-        if path.name in ('request.recipe', 'material.state', 'pass.state', 'target.state') or path.suffix == '.dxbc':
+        if path.name in ('request.recipe', 'material.state', 'pass.state', 'target.state', 'input.state') or path.suffix == '.dxbc':
             shutil.copy2(path, proof / path.name)
     if case == 'truncated-recipe':
         (proof / 'request.recipe').write_bytes(b'bad')
@@ -41,6 +44,17 @@ for case in cases:
     elif case == 'wrong-pipeline-key':
         path = proof / 'request.recipe'; data = bytearray(path.read_bytes())
         data[16] ^= 1  # Keep envelope checksum valid so key checking is exercised.
+        struct.pack_into('<Q', data, len(data) - 8, fnv64(data[:-8])); path.write_bytes(data)
+    if case == 'input-missing':
+        (proof / 'input.state').unlink()  # Only this newly copied test input.
+    elif case in ('input-malformed', 'input-off'):
+        (proof / 'input.state').write_text('invalid')
+    elif case == 'input-wrong-mask':
+        (proof / 'input.state').write_text('GT5P_INPUT_V1 1\n')
+    elif case in ('input-zeroed-oracle', 'input-zeroed-control'):
+        path = proof / 'request.recipe'; data = bytearray(path.read_bytes())
+        assert len(data) == 2760
+        data[704:2752] = bytes(2048)  # Remove every captured input element/name.
         struct.pack_into('<Q', data, len(data) - 8, fnv64(data[:-8])); path.write_bytes(data)
     elif case == 'material-missing':
         (proof / 'material.state').unlink()  # Only the newly copied test fixture.
@@ -78,6 +92,8 @@ for case in cases:
         struct.pack_into('<Q', data, len(data) - 8, fnv64(data[:-8])); path.write_bytes(data)
     env = offline_env(args.game_root.resolve(), work / 'cache')
     env['RSX_PSO_RECONSTRUCT'] = str(proof)
+    if case.startswith('input-'):
+        env['RSX_PSO_RECONSTRUCT_INPUT'] = '0' if case in ('input-off', 'input-zeroed-control') else '1'
     if case.startswith('material-'):
         env['RSX_PSO_RECONSTRUCT_MATERIAL'] = '0' if case == 'material-off' else '1'
     if case.startswith('pass-'):
@@ -89,6 +105,13 @@ for case in cases:
         env['RSX_PSO_RECONSTRUCT_NATIVE'] = '0' if case in ('native-off', 'native-zeroed-control') else '1'
     run_offline(args.engine.resolve(), args.game_root.resolve(), env, work / 'run.log')
     result = json.loads((proof / 'result.json').read_text())
+    if case in ('input-off', 'input-zeroed-oracle'):
+        assert result['created'] and result['expected'] == result['actual'], (case, result)
+        assert result['input_applied'] == (case == 'input-zeroed-oracle')
+        print('Verified', case, '(guest entry never executed)')
+        continue
+    if case in ('input-missing', 'input-malformed'):
+        assert result['input_requested'] and not result['input_applied']
     if case == 'material-off':
         assert result['created'] and result['expected'] == result['actual']
         assert not result['material_requested'] and not result['material_applied']

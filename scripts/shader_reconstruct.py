@@ -176,7 +176,7 @@ def material_state_matches(values, capture):
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
                  prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None,
-                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None, material_fragment_control=False, independent_profile_path=None, shared_pair=None):
+                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None, material_fragment_control=False, independent_profile_path=None, shared_pair=None, shared_cpu_inputs=False):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
@@ -186,6 +186,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
     target_origin = None
     fragment_control_origin = None
     independent_origin = None
+    input_origin = None
     if prepared:
         from shader_material_state import prepare_state, decode_state
         raw = read_slice(prepared['source'])
@@ -303,6 +304,12 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
     proof = output / 'pipeline'; proof.mkdir()
     recipe = cache / 'warmup-v1' / f"pso_{capture['pipeline']}.recipe"
     shutil.copy2(recipe, proof / 'request.recipe')
+    if shared_cpu_inputs:
+        input_source = dict(shared_pair['vertex_input_source'], file=candidate['file'])
+        input_mask = struct.unpack('>I', read_slice(input_source))[0]
+        input_origin = dict(source=input_source, mask=input_mask,
+                            assumption='Original wrapper binding; default vertex packing; no later input-mask override')
+        (proof / 'input.state').write_text(f'GT5P_INPUT_V1 {input_mask:08x}\n', encoding='ascii')
     if prepared:
         (proof / 'material.state').write_text(
             f"GT5P_MATERIAL_V1 {values['blend']:x} {values['cmask']:x} {values['depth_bits']:x}\n", encoding='ascii')
@@ -315,6 +322,8 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
     (proof / f"code_{capture['ps']}.dxbc").write_bytes(ps)
     env = offline_env(game_root, output / 'proof-cache')
     env['RSX_PSO_RECONSTRUCT'] = str(proof)
+    if shared_cpu_inputs:
+        env['RSX_PSO_RECONSTRUCT_INPUT'] = '1'
     if prepared:
         env['RSX_PSO_RECONSTRUCT_MATERIAL'] = '1'
     if pass_origin:
@@ -327,6 +336,8 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         raise ValueError(f'Rebuilt pipeline key/creation failed: {result}')
     if prepared and not result.get('material_applied'):
         raise ValueError('engine did not replace native descriptor fields from material state')
+    if shared_cpu_inputs and not result.get('input_applied'):
+        raise ValueError('engine did not reconstruct the CPU vertex input layout')
     if pass_origin and not result.get('pass_applied'):
         raise ValueError('engine did not replace native cull fields from pass candidate')
     if target_origin and not result.get('native_applied'):
@@ -337,6 +348,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                 material_state=({**prepared, 'values': values} if prepared else None),
                 sampler_origin=sampler_origin, texture_shape_origin=shape_origin, object_pass_origin=pass_origin, native_target_origin=target_origin,
                 fragment_control_origin=fragment_control_origin, independent_profile_origin=independent_origin,
+                input_layout_origin=input_origin,
                 native_descriptor_origin='fresh independent construction' if target_origin else 'captured with reported replacements',
                 replaced_translation_fields=(['sampler_lanes'] if sampler_lanes else ['samplers'] if material_samplers else []) +
                                             (['texture_sampling_bits'] if material_texture_state else ['texture_shape_bits'] if material_texture_shapes else []) + (['output_gamma_bit'] if pass_origin else []) +
@@ -344,6 +356,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                                             (['export_precision'] if fragment_control_origin else []) +
                                             (['whole_translation_profile'] if independent_origin else []),
                 replaced_descriptor_fields=(['blend', 'colour_write_mask', 'depth_compare', 'depth_write_mask'] if prepared else []) +
+                                           (['input_layout'] if shared_cpu_inputs else []) +
                                            (['cull_mode', 'front_counter_clockwise'] if pass_origin else []) +
                                            (['all_other_native_descriptor_fields'] if target_origin else []),
                 state_origin=('independent conditional translation profile and fresh native descriptor' if independent_origin else
@@ -368,6 +381,8 @@ def main():
     ap.add_argument('--shared-elf', type=Path, help='Original ELF containing a named shared SHDS bank')
     ap.add_argument('--shared-bank-offset', type=lambda s: int(s, 0), help='Explicit SHDS file offset')
     ap.add_argument('--shared-pass', help='Explicit authored pass name (tag zero); draw state stays captured')
+    ap.add_argument('--shared-cpu-inputs', action='store_true',
+                    help='Reconstruct CPU input layout from the named vertex wrapper; default packing/no later override')
     ap.add_argument('--prepared-material-state', action='store_true',
                     help='Require material state and replace native blend/write-mask/depth fields')
     ap.add_argument('--material-samplers', action='store_true',
@@ -409,6 +424,8 @@ def main():
     if args.independent_profile_path and not (args.native_target_path and args.material_fragment_control and
                                               args.material_texture_state and args.material_samplers):
         ap.error('Independent profile requires native target, fragment control, texture state and complete samplers')
+    if args.shared_cpu_inputs and not shared_pair:
+        ap.error('--shared-cpu-inputs requires a named shared pass')
     if args.material_fragment_control and not args.materials:
         ap.error('Material fragment control requires --materials')
     if args.native_target_path and not args.object_pass_path:
@@ -552,6 +569,8 @@ def main():
         if row['status'] != 'recipe_link_verified' or not row.get('fragment_asset_match') or row['line'] < args.start_line:
             continue
         c = row['capture']; state = c['state']
+        if args.shared_cpu_inputs and c['vp_gpu']:
+            continue
         if args.native_target_path and not target_matches(native_target_fields(args.native_target_path), c):
             continue
         if c['vp_raw'] not in matches or c['fp_flags'] or state['unnorm']:
@@ -595,11 +614,12 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path, args.material_fragment_control, args.independent_profile_path, shared_pair)
+                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path, args.material_fragment_control, args.independent_profile_path, shared_pair, args.shared_cpu_inputs)
             result['pairing_origin'] = ('reparsed named SHDS record' if shared_pair else
                                         'reparsed direct material pointers' if material else 'captured shader pair')
             if shared_pair:
                 result['shared_pass'] = shared_pair
+                result['shared_cpu_inputs'] = args.shared_cpu_inputs
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])
             result['status'] = 'verified'

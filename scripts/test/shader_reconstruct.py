@@ -127,3 +127,6 @@ print('Authored fragment-control proof prerequisites passed')
 result = subprocess.run(command + ['--independent-profile-path', 'ordinary-uploads'], capture_output=True, text=True)
 assert result.returncode != 0 and 'Independent profile requires' in result.stderr
 print('Whole independent profile prerequisites passed')
+result = subprocess.run(command + ['--shared-cpu-inputs'], capture_output=True, text=True)
+assert result.returncode != 0 and 'requires a named shared pass' in result.stderr
+print('Authored shared CPU input-layout prerequisites passed')

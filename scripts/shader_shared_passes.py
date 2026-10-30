@@ -80,6 +80,9 @@ def bank_pairs(data, base):
         fo, fl = maps[descriptor]
         vb, fb = data[wrapper + code:wrapper + code + length], data[span(fo, fl):base + fo + fl]
         result.append(dict(name=name, tag=tag, header=base, record=base + entry,
+                           vertex_input_mask=struct.unpack_from('>I', data, wrapper + 4)[0],
+                           vertex_input_source=dict(offset=wrapper + 4, size=4,
+                               sha256=hashlib.sha256(data[wrapper + 4:wrapper + 8]).hexdigest()),
                            vertex_index=vi, fragment_index=fi,
                            vertex=dict(header=base, offset=wrapper + code, size=length,
                                        wrapper=wrapper, wrapper_size=vl, order='swap32',
