@@ -4,8 +4,8 @@ For measured asset/raw-program coverage, recipe dependency checks and the
 remaining provenance gap, see [shader coverage audit](shader-coverage.md).
 
 Phase 160 adds [named shared-pass selection and isolated state checks](shader-reconstruction.md#named-shared-passes-phase-160).
-This is developer reconstruction work. Phase 162 derives the CPU input layout;
-shared texture/target context remains open before independent pipeline preparation.
+This is developer reconstruction work. CPU inputs and one conditional shared-pass
+rule are now independently constructed; other shared resource/pass contexts remain open.
 
 ## Automatic shared vertex preparation (developer only)
 
@@ -24,15 +24,16 @@ The measured disc ELF supplies 46 pairs across five supported banks and 14
 distinct CPU vertex programs, all compiled successfully. Two unhandled banks
 remain reported/excluded. The output contains source-keyed runtime DXBC and an
 ignored manifest of original offsets/hashes. No fragment profile or whole
-pipeline is guessed. This currently prepares vertex shaders only; shared
-resource/target/fragment-state context remains unresolved. It is not yet wired
+pipeline is guessed. This command prepares vertex shaders only; use the explicit
+pipeline mode below for the supported rule. Other shared contexts remain unresolved. It is not yet wired
 into the launcher or material precompiler, and does not establish stutter impact
 or compatibility with GT5's asset layouts. See
 [input-layout validation](shader-reconstruction.md#automatic-shared-vertex-preparation-phase-162).
 
 Phase 163 adds the first complete conditional shared-pass rule. Add `--pipelines`
-with an isolated `--engine` and `--game-root`; `--context-set supported` enumerates
-12 explicit ColorCorrect contexts (the default `rgba16` set has eight):
+with an isolated `--engine` and `--game-root`. Phase 164 also enumerates explicit
+host depth attachment: `--context-set supported` has 24 ColorCorrect contexts
+and the default `rgba16` set has 16, using `--depth-context both`:
 
 ```powershell
 .venv\Scripts\python scripts\prepare_shared_shaders.py `
@@ -41,11 +42,13 @@ with an isolated `--engine` and `--game-root`; `--context-set supported` enumera
   --game-root ../GT5P --context-set supported
 ```
 
-This is offline only. Source/target read/write gamma and supported depth-backed
-target choices are explicit candidates; real draw ownership is unproven. The
+This is offline only. Source/target read/write gamma, format/samples and host
+depth attachment are explicit candidates; real draw ownership is unproven. Use
+`--depth-context backed` for the Phase 163 subset, or `colour-only` for targets
+without depth. The
 source must be a successfully initialized RGBA8 2D FrameBuffer, distinct from
 the destination, with no unexpected redirects or later overrides. Unknown
-resources and feedback are excluded. All 12 candidates create and persist, and
+resources and feedback are excluded. All 24 supported candidates create and persist, and
 repeat preparation reuses their driver blobs. They do not match the retained
 HSR snapshot, so no live coverage/stutter gain is claimed. Other pairs still
 receive vertex preparation only. No player defaults or launcher integration.

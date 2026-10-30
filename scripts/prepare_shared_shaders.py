@@ -46,10 +46,11 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
         raise ValueError('Colour-correction sampled units differ from supported rule')
     targets = ('rgba16-single', 'rgba16-msaa2') + (('rgba8-single',) if args.context_set == 'supported' else ())
     jobs = []
-    for target, output_gamma, read_gamma in itertools.product(targets, range(2), range(2)):
-        state = colour_correct_profile(pair, target, output_gamma, read_gamma)
+    depths = (True, False) if args.depth_context == 'both' else (args.depth_context == 'backed',)
+    for target, output_gamma, read_gamma, depth_backed in itertools.product(targets, range(2), range(2), depths):
+        state = colour_correct_profile(pair, target, output_gamma, read_gamma, depth_backed)
         context = dict(target_path=target, output_gamma=output_gamma, read_gamma=read_gamma,
-                       source='successful-rgba8-framebuffer-2d', source_equals_target=False)
+                       source='successful-rgba8-framebuffer-2d', source_equals_target=False, depth_backed=depth_backed)
         identity = dict(vertex=pair['vertex']['sha256'], fragment=f['sha256'],
                         input_mask=pair['vertex_input_mask'], state=state, context=context)
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -75,7 +76,7 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
         (proof / 'material.state').write_text('GT5P_MATERIAL_V1 0 f f0000000\n')
         (proof / 'pass.state').write_text('GT5P_PASS_V1 0\n')
         target = native_target_fields(job['context']['target_path'])
-        (proof / 'target.state').write_text(f"GT5P_TARGET_V1 {target['rtfmt']} {target['sample_count']}\n")
+        (proof / 'target.state').write_text(f"GT5P_TARGET_V2 {target['rtfmt']} {target['sample_count']} {int(job['context']['depth_backed'])}\n")
         (proof / 'input.state').write_text(f"GT5P_INPUT_V1 {pair['vertex_input_mask']:08x}\n")
         (proof / 'result.json').write_text('{"prepared":false,"pending":true}\n')
         requests.append(job)
@@ -83,6 +84,7 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
     if requests:
         env = offline_env(args.game_root.resolve(), cache)
         env.update(RSX_PSO_PREPARE_BATCH=str(root), RSX_PSO_PREPARE_MATERIAL='1',
+                   RSX_PSO_RECIPE_KEEP_DAYS='0',
                    RSX_PSO_RECONSTRUCT_MATERIAL='1', RSX_PSO_RECONSTRUCT_PASS='1',
                    RSX_PSO_RECONSTRUCT_NATIVE='1', RSX_PSO_RECONSTRUCT_INPUT='1')
         run_offline(args.engine.resolve(), args.game_root.resolve(), env, root / 'native.log')
@@ -110,6 +112,7 @@ def main():
     ap.add_argument('--engine', type=Path)
     ap.add_argument('--game-root', type=Path)
     ap.add_argument('--context-set', choices=('rgba16', 'supported'), default='rgba16')
+    ap.add_argument('--depth-context', choices=('backed', 'colour-only', 'both'), default='both')
     ap.add_argument('--resume', action='store_true', help='Revalidate/reuse matching output and driver cache')
     args = ap.parse_args()
     if args.pipelines and (not args.engine or not args.game_root):
@@ -127,7 +130,7 @@ def main():
     config = dict(elf_sha256=hashlib.sha256(data).hexdigest(),
                   decoder_sha256=hashlib.sha256(args.decoder.read_bytes()).hexdigest(),
                   engine_sha256=hashlib.sha256(args.engine.read_bytes()).hexdigest() if args.pipelines else None,
-                  pipelines=args.pipelines, context_set=args.context_set)
+                  pipelines=args.pipelines, context_set=args.context_set, depth_context=args.depth_context)
     if args.resume:
         previous = json.loads((output / 'report.json').read_text())
         if previous.get('config') != config:

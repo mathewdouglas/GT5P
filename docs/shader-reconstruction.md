@@ -1,9 +1,25 @@
 # Asset shader reconstruction proof
 
-Phases 138-163, branch `feature/shader-coverage-audit`. The original proof is
+Phases 138-164, branch `feature/shader-coverage-audit`. The original proof is
 extended by a capture-free conditional subset preparer in Phase 157 below.
 This is not complete player first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
+
+## Explicit host depth attachment (Phase 164)
+
+Shared candidate preparation accepts `--depth-context backed|colour-only|both`,
+with both as its developer default. Attachment is an explicit candidate choice,
+never selected from a captured descriptor. `rgba16`/`supported` enumerate 16/24
+ColorCorrect requests respectively; other shared rules remain unresolved.
+
+`GT5P_TARGET_V2 format samples depth` extends only the guarded offline native
+constructor. V1 remains depth-backed. A colour-only candidate sets DSV UNKNOWN,
+depth/stencil off and writes off, exactly matching the production bit-27 branch.
+The existing material-field writer rejects guest depth-enabled state against
+such a target. Twenty native whole-descriptor/parse checks and twenty older
+process reconstruction checks pass; all 24 requests persist and reuse cached
+driver blobs. No normal-play/default changes, complete live ownership proof or
+stutter reduction follows. See Phase 164 progress for evidence and commands.
 
 ## Conditional colour-correction pipelines (Phase 163)
 

@@ -9,6 +9,38 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 164 - Support explicit colour-only native targets (2026-10-31)
+
+The shared rule now enumerates depth attachment as an explicit context instead
+of assuming every host target has a DSV. `--depth-context both` is the developer
+default; `backed` and `colour-only` restrict the set. The existing `rgba16` and
+`supported` sets contain 16 and 24 conditional requests respectively with both
+depth contexts. Shader compilation deduplicates the attachment variants. Actual
+game ownership remains unresolved; no attachment mode is read from captures.
+
+Offline target schema `GT5P_TARGET_V2` explicitly supplies format, samples and
+depth attachment. V1 retains the original depth-backed contract. The fresh
+colour-only descriptor sets DSV format UNKNOWN, disables depth/stencil and
+disables depth writes, matching the production bit-27 no-DSV transform. The
+material-field writer permits this case only when guest depth is disabled;
+contradictory depth requests remain rejected. Existing reconstruction switches
+and precompile-only guard apply; normal play is unchanged.
+
+Twenty native descriptor/parse checks pass across supported format/sample
+contexts, poisoned descriptors and malformed/contradictory inputs. Twenty
+existing offline material/pass/native reconstruction checks also pass, including
+zeroed native descriptors and default-off controls. All 24 shared candidates
+create/persist from assets and independent state; a repeat accepts cached blobs
+for all 24. Recipe, bytecode and driver checksums validate. No whole-game or
+stutter gain is inferred; the shared pass's live ownership remains unproven.
+
+The isolated runtime builds and the compatibility patch reverse-check passes.
+No original checkout/runtime/process/cache changes and no cache deletion/move.
+Evidence: `scratch/shared-target-native-9ddc5ba04b6a4c41b255e98495749e20/report.json`,
+`scratch/shared-target-prep-20261031/report.json`, `validation.json` and
+`pipelines/native.log`; build log `scratch/pass-build/build-colour-target.log`.
+Next trace the shared copy/averaging passes used in exposure and post-processing.
+
 ## Phase 163 - Build the first independent shared-pass pipeline candidates (2026-10-31)
 
 `prepare_shared_shaders.py --pipelines` now constructs complete conditional

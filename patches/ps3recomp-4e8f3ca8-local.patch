@@ -36412,10 +36412,10 @@ index 00000000..c554abc4
 +}
 diff --git a/libs/video/rsx_material_reconstruct.h b/libs/video/rsx_material_reconstruct.h
 new file mode 100644
-index 00000000..62dac071
+index 00000000..2a68824a
 --- /dev/null
 +++ b/libs/video/rsx_material_reconstruct.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,40 @@
 +/* Offline-only partial descriptor reconstruction; called solely by the guarded
 + * reconstruction proof. Culling/pass/target/texture state remains captured. */
 +static int pso_material_apply(const char* dir, D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd)
@@ -36433,8 +36433,12 @@ index 00000000..62dac071
 +        for(int i=0;i<4;i++)if(!((factors[i]>=1&&factors[i]<=11)||factors[i]==14||factors[i]==15))return 0;
 +        if(((blend>>21)&7)<1||((blend>>21)&7)>5||((blend>>24)&7)<1||((blend>>24)&7)>5)return 0;
 +    } else if(blend)return 0;
-+    if(!pd->NumRenderTargets || pd->NumRenderTargets>8 || !pd->DepthStencilState.DepthEnable ||
++    if(!pd->NumRenderTargets || pd->NumRenderTargets>8 ||
 +       pd->DepthStencilState.StencilEnable)return 0;
++    /* A colour-only host target is supported only with guest depth disabled.
++     * Keep V1/material depth-backed behavior and reject contradictory requests. */
++    if(!pd->DepthStencilState.DepthEnable &&
++       (pd->DSVFormat!=DXGI_FORMAT_UNKNOWN || depth!=0xF0000000u))return 0;
 +    /* Replace every supported field, including disabled-blend factors. Merely
 +     * checking captured fields would not prove descriptor reconstruction. */
 +    for(UINT i=0;i<pd->NumRenderTargets;i++) {
@@ -36475,21 +36479,25 @@ index 00000000..f54990e7
 +}
 diff --git a/libs/video/rsx_native_reconstruct.h b/libs/video/rsx_native_reconstruct.h
 new file mode 100644
-index 00000000..7dd4238a
+index 00000000..80bd9b13
 --- /dev/null
 +++ b/libs/video/rsx_native_reconstruct.h
-@@ -0,0 +1,26 @@
-+/* Explicit offline GPU-fetch, depth-backed single colour-target candidate.
+@@ -0,0 +1,30 @@
++/* Explicit offline single colour-target base; CPU inputs may be applied later.
++ * V1 keeps the depth-backed contract. V2 explicitly selects depth attachment.
 + * This constructs a fresh descriptor. The recorded recipe is only an oracle. */
 +static int pso_native_base(const char* dir, D3D12_GRAPHICS_PIPELINE_STATE_DESC* pd)
 +{
 +    char path[640], text[80], extra;
-+    unsigned format, samples;
++    unsigned format, samples, depth=1;
 +    snprintf(path,sizeof path,"%s/target.state",dir);
 +    FILE* f=fopen(path,"rb"); if(!f)return 0;
 +    size_t n=fread(text,1,sizeof text-1,f); int complete=feof(f); fclose(f);
 +    if(!complete || !n)return 0; text[n]=0;
-+    if(memchr(text,0,n) || sscanf(text,"GT5P_TARGET_V1 %2u %1u %c",&format,&samples,&extra)!=2)return 0;
++    if(memchr(text,0,n))return 0;
++    if(!strncmp(text,"GT5P_TARGET_V2 ",15)) {
++        if(sscanf(text,"GT5P_TARGET_V2 %2u %1u %1u %c",&format,&samples,&depth,&extra)!=3 || depth>1)return 0;
++    } else if(sscanf(text,"GT5P_TARGET_V1 %2u %1u %c",&format,&samples,&extra)!=2)return 0;
 +    if(!((format==11 && (samples==1 || samples==2)) || (format==28 && samples==1)))return 0;
 +    D3D12_GRAPHICS_PIPELINE_STATE_DESC fresh={0};
 +    fresh.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;
@@ -36497,8 +36505,8 @@ index 00000000..7dd4238a
 +    fresh.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 +    fresh.NumRenderTargets=1;
 +    fresh.RTVFormats[0]=(DXGI_FORMAT)format;
-+    fresh.DSVFormat=DXGI_FORMAT_D24_UNORM_S8_UINT;
-+    fresh.DepthStencilState.DepthEnable=TRUE;
++    fresh.DSVFormat=depth?DXGI_FORMAT_D24_UNORM_S8_UINT:DXGI_FORMAT_UNKNOWN;
++    fresh.DepthStencilState.DepthEnable=depth?TRUE:FALSE;
 +    fresh.SampleDesc.Count=samples;
 +    /* The material/pass helpers fill all blend/write/depth/cull fields next.
 +     * GPU-fetch VSs have no D3D input layout, matching the production path. */

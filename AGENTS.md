@@ -36,13 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 163)
+## Start here: state of play (2026-10-31, Phase 164)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 163 is the latest).
+has the evidence, newest phase first (Phase 164 is the latest).
 
 ### What works now
+
+- **Explicit colour-only targets (Phase 164):** shared preparation enumerates
+  depth-backed and colour-only host targets explicitly (`--depth-context`). The
+  supported set creates/persists all 24 independent ColorCorrect candidates and
+  reuses all cached blobs. Twenty descriptor/parse checks match production's
+  no-DSV transform; twenty older reconstruction checks still pass. V1 keeps its
+  depth-backed contract; offline V2 selects attachment state. Unknown ownership
+  and contradictory guest depth remain excluded. No player/default or stutter
+  claims; shared program coverage remains conditional.
 
 - **First independent shared-pass recipes (Phase 163):** automatic shared
   preparation's explicit `--pipelines` mode builds 12 conditional ColorCorrect

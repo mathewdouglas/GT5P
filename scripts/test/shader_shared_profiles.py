@@ -19,6 +19,8 @@ for path, (format, samples) in TARGET_PATHS.items():
             assert state['samplers'] == '0000000000000009'
             assert state['stencil'] == 0xf0000000 and state['cull'] == state['blend'] == state['unnorm'] == 0
             assert state['cmask'] == 15 and state['exp32'] == 0
+            colour = colour_correct_profile(pair, path, write, read, depth_backed=False)
+            assert colour == dict(state, stencil=state['stencil'] | (1 << 27))
 for key, value in (('name', 'SimpleBias'), ('tag', 1), ('vertex_input_mask', 1),
                    ('global_count', 1), ('sampled_units', 2), ('samplers', [])):
     try:
@@ -34,6 +36,12 @@ for gamma in (-1, 2, None):
         pass
     else:
         raise AssertionError('Unresolved gamma accepted')
+try:
+    colour_correct_profile(pair, 'rgba16-single', 0, 0, depth_backed=None)
+except ValueError:
+    pass
+else:
+    raise AssertionError('Unresolved depth attachment accepted')
 for words, same, mode in (([], 0, 0), ([0] * 13, 2, 0), ([0] * 13, 0, -1)):
     try:
         colour_correct_descriptor(words, same, mode)
