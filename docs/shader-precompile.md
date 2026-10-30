@@ -7,6 +7,78 @@ Phase 160 adds [named shared-pass selection and isolated state checks](shader-re
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.
 
+## Identifier-only templates (Phase 166 checkpoint; validation unfinished)
+
+This adapts the hash/numeric-state design in [Project Pyrrhus's template patch](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2071-pipeline-template-prewarm.patch),
+[context/key correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2077-pso-key-vp-start-template-default.patch)
+and [session export correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2120-first-use-pipelines-hitch-count-own-template.patch).
+Its [known-issues measurements](https://github.com/undecuple/project-pyrrhus/blob/main/docs/KNOWN_ISSUES.md)
+concern a different game/renderer and are not GT5P evidence. No patch stack was imported.
+
+GT5P recipes already hold native state and local bytecode; shader packs reduce
+repeated disk reads, while menu/race prewarming prepares learned recipes. They
+cannot ship first-run shader contents. Templates bridge that gap with identifiers
+and numeric state. Original SHDS assets are available before guest boot; guest
+memory scanning would wait for uploads and repeatedly scan changing memory.
+This version uses bounded read-only asset lookup and the existing offline/native
+preparer. Runtime-generated/unrecognized programs stay unresolved. Asset lookup
+measured 48.93 s, so its cost must be included in any first-launch assessment.
+
+All examples are developer-only; use isolated copied game data, local original
+assets/catalogue and an isolated runtime EXE. First record representative play
+with `RSX_PSO_PROVENANCE=<new ignored directory>` and normal recipes enabled.
+Diagnostic recording is off during performance tests. Export each session:
+
+```powershell
+.venv/Scripts/python scripts/pipeline_template.py export `
+  --trace scratch/session-provenance --cache scratch/session-cache `
+  --elf ../GT5P/input/EMAIN.ELF --engine scratch/pass-build/gt5p.exe `
+  --decoder scratch/reconstruction-build/decoder.dll --output scratch/session-template.json
+.venv/Scripts/python scripts/pipeline_template.py merge --output scratch/starter-template.json `
+  scratch/session-template.json scratch/another-template.json
+.venv/Scripts/python scripts/pipeline_template.py prepare `
+  --template scratch/starter-template.json --catalog ../GT5P/shadercache/library-v1/all `
+  --elf ../GT5P/input/EMAIN.ELF --engine scratch/pass-build/gt5p.exe `
+  --decoder scratch/reconstruction-build/decoder.dll `
+  --game-root scratch/pipeline-training-20261031/game --output scratch/template-prepared
+```
+
+Templates contain hashes, translation state, numeric native state and canonical
+ATTR inputs. No game-derived shader bytes/source/binaries are included. Keep all
+experimental outputs ignored; no starter template is shipped yet. Full game,
+engine/decoder, schema/key/Windows x64 ABI compatibility is required. Rebuilt
+source and bytecode identifiers and exact native keys verify settings/root
+compatibility. Current export excludes branching vertices until their start-slot
+context can be represented. Unknown or conflicting records fail safely; a user
+can launch normally without template preparation. Individual missing/incompatible
+programs are reported and remain on the asynchronous demand path.
+
+The guarded offline persistence switch is `RSX_PSO_TEMPLATE_PREPARE=1`, default
+off. Rollback: omit preparation/use the normal launcher; `=0` disables this
+extension. No live draw policy or player defaults changed. Preparation uses the
+existing two compiler workers, bounded queues and sequential native device owner,
+then exits before play. Accepted recipes use the existing startup worker/resident
+caps/deduplication/shutdown. Limits and current evidence are in Phase 166.
+
+Fresh-cache paired validation is wired but **has not run**:
+
+```powershell
+.venv/Scripts/python scripts/test/pipeline_template_route.py `
+  --template scratch/starter-template.json --catalog ../GT5P/shadercache/library-v1/all `
+  --elf ../GT5P/input/EMAIN.ELF --engine scratch/pass-build/gt5p.exe `
+  --decoder scratch/reconstruction-build/decoder.dll `
+  --fixture scratch/shader-stutter-20261031/fixture --output scratch/template-route --trials 4
+```
+
+It prepares from original assets into an empty cache, then runs the existing
+control/prepared/prepared/control HSR route with distinct application caches.
+Reports separate preparation/lookup time, runtime shader compilation, native
+driver calls/cached calls, live demand jobs, warmup hits, frame hitches, grid
+loading and sampled memory. Five-second counters can omit the final interval.
+Inspect saved screenshots for missing draws before interpreting timing; OS and
+driver caches are retained. Add offline preparation to the first-launch wait.
+No shader/native coverage or stutter improvement is established by this checkpoint.
+
 ## Automatic shared vertex preparation (developer only)
 
 Phase 162 adds a capture-free step toward shared-pass preparation. It scans the
@@ -54,6 +126,11 @@ HSR snapshot, so no live coverage/stutter gain is claimed. Other pairs still
 receive vertex preparation only. No player defaults or launcher integration.
 Use the same command with `--resume` to revalidate/reuse matching output. All
 outputs remain local/ignored. See the [shared rule](shader-reconstruction.md#conditional-colour-correction-pipelines-phase-163).
+
+Phase 165 adds `Convolution_8`: `--context-set supported` now prepares 36 requests
+(24 ColorCorrect plus 12 convolution); `rgba16` has 24. All 36 persist; two
+convolution native keys match retained HSR evidence. Context assumptions remain.
+Earlier counts above describe Phase 164.
 
 ## Automated route learning and preparation (developer only)
 

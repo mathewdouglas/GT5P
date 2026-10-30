@@ -9,6 +9,89 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 166 - Checkpoint identifier-only pipeline templates (2026-10-31)
+
+User requested investigation of Project Pyrrhus's shared templates, then requested
+wrap-up before the end-to-end experiment finished. This is an implementation
+checkpoint, **not a completed/preferred player preparation path**.
+
+Reviewed Pyrrhus patches 2031/2071/2077/2120, its template merge tool and known
+issues. Useful design: identifiers plus numeric state, explicit schema/key ABI,
+verified local programs, final key recomputation and deduplication. Its guest
+memory scout and live-draw patch stack were not imported. GT5P already records
+native descriptors and local DXBC recipes, prepares SHDS fragment profiles,
+extracts CPU/GPU vertex programs, loads menu/race shader packs, and owns a bounded
+priority prewarm/demand queue. The extension reuses those paths before guest
+entry instead of adding a speculative concurrent translator/queue owner.
+
+`scripts/pipeline_template.py` exports/merges local provenance into JSON containing
+program SHA-256 identifiers, expected source/bytecode/native identifiers, all
+recorded translation fields, canonical numeric native descriptor words and ATTR
+input elements. No guest addresses, program bytes, source or compiled binaries
+are in templates. Windows x64 recipe ABI, key version, game ELF, executable and
+decoder hashes are pinned conservatively. Conflicting duplicate keys, unknown
+fields, pointer/stage payloads and incompatible versions are rejected. Branching
+VPs remain excluded: start-slot/branch context is not recorded sufficiently.
+
+Asset lookup reads the user's local SHDS catalogue and original bounded vertex
+wrappers before game boot. Preparation reconstructs both shader stages, verifies
+source/bytecode identifiers and native keys, then persists ordinary recipes and
+hardware-local driver blobs. `RSX_PSO_TEMPLATE_PREPARE=1` enables persistence only
+in the existing guarded offline path and requires the exact current native key,
+including the root signature; legacy keys are not accepted. Expected keys also
+protect target/settings/layout compatibility. Default translation is explicit;
+other renderer settings are not claimed compatible. Missing entries remain for
+the normal asynchronous demand path. No live draw policy/default changed.
+
+Limits: 32 MiB template, 4,096 records, 32 input elements, 32 KiB program slices,
+8,192 asset containers, 1 GiB mapped container limit and a 60 s between-container
+scan budget. Vertex source/code and fragment code pools each have 128 MiB caps;
+fragment compilation uses the existing two-worker/64-source queue. Offline
+preparation finishes/exits before a live game owns the device. Existing warmup
+ownership, priority, deduplication, resident caps and shutdown remain unchanged.
+
+Measured/checks: exported 1,494 records from retained HSR; three branching VP
+records excluded. Lookup visited 601 containers (2,894,781,056 addressable bytes,
+7,265 wrappers), found 210 VP and 430 FP identities in 48.93 s. This is lookup
+availability, **not prepared-pipeline coverage**. The full shader/native pass was
+stopped at the user's wrap-up request; no paired route/screenshot comparison ran.
+No runtime compile reduction, demand-build reduction, hitch benefit, loading or
+memory comparison is established. Metadata tests pass; isolated runtime builds;
+strict native smoke persists one valid key and rejects an altered key; runtime
+patch reverse-check passes. `pipeline_template_route.py` wires fresh preparation
+into the existing paired route test; it still needs execution and visual review.
+
+Evidence: `scratch/template-first-20261031/template-v2.json`,
+`scratch/template-preparation-20261031/report.json` (stopped),
+`scratch/template-native-smoke-20261031/validation.json`, `native.log`,
+`scratch/pass-build/build-template.log`. Templates/caches remain ignored/local.
+Next: finish reconstruction, investigate exclusions, run the paired empty-cache
+route with counters/memory/screenshots, then assess first-launch integration.
+No shipped starter template, launcher/default changes or stutter claim.
+
+## Phase 165 - Prepare conditional shared convolution pipelines (2026-10-31)
+
+The shared preparer also selects the original `Convolution_8` pair. The real
+initializer `00820A28` resolves its name/bindings; the full `00820C08` wrapper
+sets single-mip unnormalized 2D sampling, linear filtering and coupled source-read/
+output gamma. Clamp wrapping comes from the supported initialized FrameBuffer
+source. Tap count is argument ten, not gamma. Targets/depth attachments remain
+explicit candidates; distinct successful RGBA8 sources/no unexpected redirects
+and no later overrides remain conditions. Actual live ownership stays unproven.
+
+576 randomized native convolution checks pass alongside 1,152 colour-correction
+resource checks and earlier selection/state/input checks. Geometry, target
+activation, constants and draw submission are controlled in this isolated oracle.
+All 36 supported shared candidates (24 ColorCorrect, 12 convolution) create and
+persist from assets, with recipe/code/driver checksums validated. Comparing the
+frozen result afterwards finds two exact native-key matches among 1,497 retained
+HSR links (lines 16/20), both convolution. No whole-game/stutter gain is inferred.
+
+Evidence: `scratch/shared-convolution-prep-20261031/report.json`, `validation.json`,
+`pipelines/native.log`; native oracle
+`scratch/shared-pass-native-593517745aae42b098afb109bc4431b5/report.json`.
+No player defaults, original-checkout changes or cache deletion/move.
+
 ## Phase 164 - Support explicit colour-only native targets (2026-10-31)
 
 The shared rule now enumerates depth attachment as an explicit context instead

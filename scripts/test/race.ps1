@@ -167,6 +167,7 @@ try {
     $sampleLog = ""
     $tS0 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $rows = @()
+    $memoryRows = @()
     if ($Cpu) {
         $cpuA = @{}; foreach ($t in (Get-Process -Id $p.Id).Threads) { $cpuA[$t.Id] = $t.TotalProcessorTime.TotalSeconds }
         $cpuP = (Get-Process -Id $p.Id).TotalProcessorTime.TotalSeconds
@@ -175,6 +176,7 @@ try {
         $p.Refresh()
         if ($p.HasExited) { throw "Game exited during the race" }
         $sampleLog += Read-LogTail $profTail
+        $memoryRows += [pscustomobject]@{ Second=$s; WorkingSet=$p.WorkingSet64; PrivateBytes=$p.PrivateMemorySize64; PeakWorkingSet=$p.PeakWorkingSet64 }
         if ($RaceShots -gt 0 -and ($s % $RaceShots) -eq 0) {
             Save-RaceWindowShot $p (Join-Path $dir ("$Tag.race{0:D3}.png" -f $s))
         }
@@ -212,6 +214,7 @@ try {
        track = $Track; seconds = $Seconds; sample_delay = $SampleDelay } |
         ConvertTo-Json | Set-Content (Join-Path $dir "$Tag.window.json")
     $rows | Export-Csv "$dir/$Tag.fps.csv" -NoTypeInformation
+    $memoryRows | Export-Csv "$dir/$Tag.memory.csv" -NoTypeInformation
     if ($FrameTest) {
         Start-Sleep -Milliseconds 1500   # the log is flushed every 30 frames
         $fr = @(Get-Content (Join-Path $dir "$Tag.frames.csv") | ForEach-Object {

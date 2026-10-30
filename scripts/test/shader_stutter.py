@@ -49,6 +49,10 @@ def analyze_run(logs, tag, seed_keys=()):
                    whole_presented_route=(window['launch_ms'],window['sample_end_ms']))
     misses = re.findall(r'\[pso-time\] 5 s: (\d+) misses: hlsl ([\d.]+) ms, dxbc ([\d.]+) ms \((\d+) compiled so far\), pipeline ([\d.]+) ms',err)
     warm = re.findall(r'\[shader-warmup\].*?(?:loaded=|prepared )(\d+).*?rejected=(\d+)',err)
+    metrics = re.findall(r'\[pipeline-metrics\] shader_compiles=(\d+) driver_calls=(\d+) cached_calls=(\d+) demand_queued=(\d+) demand_done=(\d+) warm_loaded=(\d+) warm_hits=(\d+) resident=(\d+)', err)
+    metric_names = ('shader_compiles','driver_calls','cached_calls','demand_queued','demand_done','warm_loaded','warm_hits','resident')
+    memory_path = logs / f'{tag}.memory.csv'
+    memory = list(csv.DictReader(memory_path.open(encoding='utf-8-sig'))) if memory_path.exists() else []
     # The worker marks actually used recipes once per run; mere startup reads
     # leave an existing recipe's timestamp unchanged. No provenance recording.
     used = {p.stem[4:] for p in (logs.parent/'shadercache/warmup-v1').glob('pso_*.recipe')
@@ -62,6 +66,9 @@ def analyze_run(logs, tag, seed_keys=()):
                 grid_seconds=(grid-window['launch_ms'])/1000,
                 milestones=dict((n,int(t)) for n,t in re.findall(r'\[milestone\] (\w+) at (\d+) ms',out)),
                 warmup_summaries=warm,
+                pipeline_counters=dict(zip(metric_names,map(int,metrics[-1]))) if metrics else {},
+                memory_peak_sampled={k:max(int(r[k]) for r in memory) for k in ('WorkingSet','PrivateBytes','PeakWorkingSet')} if memory else {},
+                metrics_note='Cumulative counters sampled every five seconds; final partial interval can be omitted. Driver calls include startup preparation; demand_queued counts live async work.',
                 used_native_recipes=len(used), encountered_seed_keys=sorted(used & set(seed_keys)),
                 compiler_note='Five-second diagnostic summaries omit any final partial interval.',
                 period_note='Early period includes grid and intended 30-FPS rolling start; route includes loading transitions.')
@@ -128,6 +135,7 @@ def main():
                    RSX_SHADER_WARMUP_SCAN='1' if args.startup_policy == 'scan' else '0',
                    RSX_SHADER_WARMUP_BACKGROUND='1',RSX_PSO_ASYNC='1',RSX_SHADER_ASYNC='1',
                    RSX_RACE_PREWARM='0',RSX_PSO_PROVENANCE='0',PAD_HOLD_MERGE='0',RSX_PRESENT_SYNC='1')
+        env['RSX_PIPELINE_METRICS'] = '1'
         cmd = ['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',str(ROOT/'scripts/test/race.ps1'),
                '-Track','HighSpeedRing','-Tag',tag,'-FrameTest','-Seconds','90','-SampleDelay','0',
                '-RaceShots','20','-Engine',str(engine),'-GameRoot',str(game),'-OutputDirectory',str(logs),

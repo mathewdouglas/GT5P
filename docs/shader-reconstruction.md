@@ -1650,3 +1650,15 @@ is reproducible. Blanket scanning is not justified as a new player default.
 The next useful work is preparing shared critical passes and unresolved binding
 contexts, then measuring again; increasing catalogue key counts alone is not
 evidence of a smoother first run. Launcher/release/default behavior is unchanged.
+
+## Shared convolution (Phase 165)
+
+The independently expressed `Convolution_8` rule selects the original rect-sampler
+binding (kind 0x801), CPU input mask 0x101, coupled read/output gamma and unit-zero
+unnormalized conversion (profile 0x101). The full wrapper forces single mip and
+linear min/mag; clamp wrapping is conditional on initialized FrameBuffer input.
+576 randomized real initializer/wrapper/emitter checks pass with controlled draw,
+target and constant helpers. All 12 convolution contexts create/persist; two exact
+keys match retained HSR links after generation. See progress Phase 165 for bounds.
+This is a conditional independent recipe; Phase 166 templates instead record
+observed numeric state and must not be described as independent state recovery.

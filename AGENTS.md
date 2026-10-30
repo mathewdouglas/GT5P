@@ -36,13 +36,25 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 164)
+## Start here: state of play (2026-10-31, Phase 166)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 164 is the latest).
+has the evidence, newest phase first (Phase 166 is the latest).
 
 ### What works now
+
+- **Template checkpoint (Phase 166, unfinished):** identifier/numeric-state
+  export/merge and asset-based offline preparation are implemented, default-off.
+  Schema tests, build and valid/altered native-key smoke checks pass. Exported
+  1,494 HSR records; three branching VPs excluded. Lookup finds 210 VP/430 FP
+  identities in 48.93 s. User requested wrap-up before shader/native preparation
+  and paired route/screenshot validation finished. No coverage/stutter claim or
+  shipped starter template. Continue with docs/shader-precompile.md workflow.
+- **Shared convolution (Phase 165):** all 36 supported shared candidates persist;
+  two exact convolution keys match retained HSR links after generation. 576
+  convolution/1,152 colour-resource native checks pass. Contexts stay conditional.
+
 
 - **Explicit colour-only targets (Phase 164):** shared preparation enumerates
   depth-backed and colour-only host targets explicitly (`--depth-context`). The

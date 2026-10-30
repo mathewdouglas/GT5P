@@ -104,11 +104,11 @@ def compile_fragments(jobs, root, cache, engine, game_root):
     groups = {}
     for job in jobs:
         state = job['state']
-        fields = [state['exp32'], state['cube'], 0, state['unnorm'] & ~0x100,
+        fields = [state['exp32'], state['cube'], state['stencil'] & (1 << 26), state['unnorm'] & ~0x100,
                   int(state['samplers'], 16), state['ghi'], state['shd'], state['unhi'], job['used']]
-        dither = int(state['rtfmt'] == 28 and bool(state['cmask'] & 14))
+        dither = int(state['rtfmt'] == 28 and state['nrt'] == 1 and bool(state['cmask'] & 14))
         groups.setdefault(tuple(fields) + (dither,), []).append(job)
-    compiled, failures = {}, {}
+    compiled, failures, code_pool, code_bytes = {}, {}, {}, 0
     for number, (key, members) in enumerate(groups.items()):
         print(f'Compiling profile {number + 1}/{len(groups)}: {len(members)} candidates', flush=True)
         group_id = hashlib.sha256(repr(key).encode()).hexdigest()
@@ -132,7 +132,13 @@ def compile_fragments(jobs, root, cache, engine, game_root):
                     if len(selected) != 1:
                         raise ValueError('Production compiler did not identify one independent profile result')
                     ps_key = selected[0][3]
-                    ps = bounded_read(fresh / (ps_key + '.dxbc'), 4 * 1024 * 1024)
+                    ps = code_pool.get(ps_key)
+                    if ps is None:
+                        ps = bounded_read(fresh / (ps_key + '.dxbc'), 4 * 1024 * 1024)
+                        if code_bytes + len(ps) > 128 * 1024 * 1024:
+                            raise ValueError('Fragment bytecode memory budget exceeded')
+                        code_pool[ps_key] = ps
+                        code_bytes += len(ps)
                     if not ps.startswith(b'DXBC'):
                         raise ValueError('Production result is not DXBC')
                     save_code(cache / (ps_key + '.dxbc'), ps)
