@@ -36,14 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 147)
+## Start here: state of play (2026-10-30, Phase 148)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 147 is the latest).
+has the evidence, newest phase first (Phase 148 is the latest).
 
 ### What works now
 
+- **Conditional environment sampler (Phase 148):** 1,024 native successful
+  framebuffer setup/getter/assignment/emission checks and 1,024 allocation-failure
+  checks recover single-mip linear/clamp and multi-mip trilinear/clamp settings.
+  Developer `--environment-sampler-path framebuffer-single|framebuffer-mipped`
+  requires successful setup/no later overrides. With active dither and LV shadow,
+  the mipped candidate completes sampled lanes for 861 links; four environment
+  shader/native pipeline proofs pass. Other translation/pass/target fields remain
+  captured. Mirror setup/live ownership are open; no player/runtime changes.
 - **Conditional LV shadow sampler (Phase 147):** 1,088 native dynamic-binding
   checks show supplied descriptors retain sampler state. The LV shadow pass
   itself forces linear/clamp (256 enabled and 256 disabled-gate checks).

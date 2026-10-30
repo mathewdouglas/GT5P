@@ -41,6 +41,8 @@ def main():
         'func_00D6CAA0', 'func_00D6D930', 'func_00D6D898', 'func_00D6D9C0'))
     snippets += '\n' + extract(source, 'func_0082C748')
     snippets += '\n' + extract(source, 'func_008103F0')
+    snippets += '\n' + '\n'.join(extract(source, n) for n in (
+        'func_008293A8', 'func_0082E240'))
     snippets += '\n' + extract(source, 'func_0082E330')
     snippets += '\n' + extract(source, 'func_0081F0F0')
     snippets += '\n' + '\n'.join(extract(libc, n) for n in (
@@ -50,7 +52,7 @@ def main():
     wrappers = (args.generated / 'ppu_recomp_007.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(wrappers, n) for n in (
         'func_00BA6998', 'func_00BA6590', 'func_00BA6BD8', 'func_00BA6CF0',
-        'func_00BA6B40', 'func_00BA6C68', 'func_00BA6628'))
+        'func_00BA6B40', 'func_00BA6C68', 'func_00BA6628', 'func_00BA1080', 'func_00B9F1F8'))
     assert 'g_trampoline_fn' not in snippets, 'Isolated routines must not schedule trampolines'
     prefix = '''#define PPU_NO_INLINE_LOADS
 #define PPU_NO_INLINE_STORES
@@ -72,6 +74,17 @@ extern "C" void vm_write16(uint64_t a,uint16_t v) { vm_write8(a,v>>8);vm_write8(
 extern "C" void vm_write32(uint64_t a,uint32_t v) { vm_write16(a,v>>16);vm_write16(a+2,v); }
 extern "C" void vm_write64(uint64_t a,uint64_t v) { vm_write32(a,v>>32);vm_write32(a+4,v); }
 void func_0082C1A0(ppu_context* ctx) { ctx->gpr[3]=fallback; }
+static uint32_t allocation_success;
+// Allocation boundary is controlled; the sampler-writing helper stays real.
+void func_00BA08B8(ppu_context* ctx) {
+ if(!allocation_success) {ctx->gpr[3]=0;return;}
+ uint32_t a=ctx->gpr[3];vm_write32(a,7);vm_write32(a+4,0x1000);
+ vm_write32(a+0x10,ctx->gpr[7] ? ctx->gpr[7] : 1);vm_write32(a+0x24,0);
+ ctx->gpr[3]=1;
+}
+void func_00B9EE50(ppu_context* ctx) { ctx->gpr[3]=6; }
+void func_00BD0080(ppu_context* ctx) { ctx->gpr[3]=0x1000; }
+void func_00BCB520(ppu_context* ctx) { ctx->gpr[3]=0x2000; }
 static uint32_t provider;
 void func_008311A0(ppu_context* ctx) { provider=103;ctx->gpr[3]=0x1e00000; }
 void func_00830FC0(ppu_context* ctx) { provider=104;ctx->gpr[3]=0x1e00000; }
@@ -102,6 +115,29 @@ extern "C" __declspec(dllexport) void load(uint32_t a,const void* p,uint32_t n) 
  bounds(a,n);memcpy(memory+a,p,n);
 }
 extern "C" __declspec(dllexport) uint32_t word(uint32_t a) { return vm_read32(a); }
+extern "C" __declspec(dllexport) void environment_setup(uint32_t mips,uint32_t slot,uint32_t unit,uint32_t poison,uint32_t success) {
+ assert(slot<4 && unit<16);
+ ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
+ allocation_success=success;
+ const uint32_t object=0x1e50000, texture=object+0x2c, descriptor=object+0x54;
+ for(uint32_t j=0;j<0x90;j+=4) vm_write32(object+j,poison);
+ vm_write32(object+4,64);vm_write32(object+8,32);
+ ctx.gpr[3]=texture;ctx.gpr[4]=64;ctx.gpr[5]=32;ctx.gpr[6]=7;
+ ctx.gpr[7]=mips;ctx.gpr[8]=0;ctx.gpr[9]=0;ctx.gpr[10]=0;
+ func_00BA1080(&ctx);
+ if(!success) {assert(ctx.gpr[3]==0);return;}
+ assert(ctx.gpr[3]==1);
+ ctx.gpr[3]=object;func_008293A8(&ctx);assert(ctx.gpr[3]==descriptor);
+ uint32_t root=vm_read32(ctx.gpr[2]-0x66f8), registry=vm_read32(root-0x8000);
+ vm_write32(vm_read32(ctx.gpr[2]-0x66fc)-0x8000,0x1e51000);
+ vm_write32(0x1e51000,17);
+ ctx.gpr[3]=registry;ctx.gpr[4]=descriptor;ctx.gpr[5]=slot;func_0082E240(&ctx);
+ assert(vm_read32(registry+0x1c34+slot*4)==descriptor);
+ assert(vm_read32(registry+0x1ca0+slot*4)==18 && vm_read32(0x1e51000)==18);
+ uint32_t copy_state=vm_read32(ctx.gpr[2]-0x48bc);vm_write32(copy_state+8,0x1e10000);
+ vm_write16(0x1e01006,unit);vm_write8(0x1e0100d,slot);ctx.gpr[4]=0x1e01000;
+ func_00D6CAA0(&ctx);assert(vm_read32(copy_state+8)==0x1e10034);
+}
 extern "C" __declspec(dllexport) void shadow_pass(uint32_t address,uint32_t filtering,uint32_t enabled) {
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
  for(uint32_t j=0;j<13;j++) vm_write32(0x1e02000+j*4,0);
@@ -187,6 +223,7 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
     lib.lookup.restype = ctypes.c_uint32
     lib.emit.argtypes = [ctypes.c_uint32] * 5
     lib.emit.restype = ctypes.c_uint32
+    lib.environment_setup.argtypes = [ctypes.c_uint32] * 5
     lib.dynamic_emit.argtypes = [ctypes.c_uint32] * 5
     lib.shadow_pass.argtypes = [ctypes.c_uint32] * 3
     assert data[:6] == b'\x7fELF\x02\x02', 'Expected ELF64 big endian'
@@ -286,9 +323,33 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                     assert actual_filter & b['filtering_mask'] == b['filtering']
                     assert b['sampler'] == 9
                 shadow_checks += 1
+    environment_checks = 0
+    environment_failures = 0
+    environment_states = {}
+    for mips in (1, 2, 4, 8):
+        path = 'framebuffer-single' if mips == 1 else 'framebuffer-mipped'
+        for slot in range(4):
+            for unit in range(16):
+                for poison in (0, 0xffffffff, 0x01012000, 0x02062000):
+                    lib.environment_setup(mips, slot, unit, poison, 0)
+                    assert lib.word(0x1e50060) == poison and lib.word(0x1e5006c) == poison
+                    environment_failures += 1
+                    lib.environment_setup(mips, slot, unit, poison, 1)
+                    address, filtering = lib.word(0x1e1000c), lib.word(0x1e10018)
+                    d = dict(bindings=[], globals=[dict(name='envMapSampler', kind=0x901, identifier=71, unit=unit)])
+                    b = with_global_sampler_path(d, environment_path=path)['bindings'][0]
+                    assert address & b['address_mask'] == b['address']
+                    assert filtering & b['filtering_mask'] == b['filtering']
+                    assert sampler_register(address, filtering) == b['sampler']
+                    environment_checks += 1
+                    environment_states[path] = dict(address=address, filtering=filtering, sampler=b['sampler'])
     report = {'elf_sha256': digest, 'registry_base': f'{base:08x}',
-              'scope': 'Isolated callbacks and ShadowLV pass; render/scene helpers mocked; resource descriptors synthetic',
+              'scope': 'Isolated callbacks, ShadowLV pass and framebuffer setup; render/scene/allocation helpers mocked; synthetic resources',
               'dynamic_descriptor_checks': dynamic_checks,
+              'environment_framebuffer_checks': environment_checks,
+              'environment_allocation_failure_checks': environment_failures,
+              'environment_examples': environment_states,
+              'environment_scope': 'Real successful texture setup/getter/assignment/emitter; allocation boundary mocked; no later overrides',
               'shadow_lv_pass_checks': shadow_checks,
               'lookup_checks': 10, 'emit_checks': len(emitted), 'emitted': emitted, 'records': records}
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n')

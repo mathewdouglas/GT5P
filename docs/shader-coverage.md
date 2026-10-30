@@ -278,3 +278,12 @@ with active dither, matching candidates cover every sampled sampler lane for 336
 links; four shadow-using car-interior samples rebuild native pipelines. This
 remains conditional sampler coverage, with other pipeline fields still captured.
 Environment/mirror descriptors and remaining pass/translation state are open.
+
+
+Phase 148 adds explicit framebuffer environment sampler candidates, verified by
+1,024 controlled successful setup/getter/assignment/emitter checks and 1,024
+allocation-failure checks. With active dither/LV shadow, the mipped candidate
+completes sampled sampler lanes for 861 retained links; four environment-using
+native pipeline proofs pass. Live path ownership, mirror setup and other
+translation/pass/target fields remain unresolved. See the
+[conditional environment proof](shader-reconstruction.md#conditional-framebuffer-environment-samplers-phase-148).

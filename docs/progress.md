@@ -9,6 +9,30 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 148 - Recover conditional framebuffer environment sampler setup (2026-10-30)
+
+The isolated native oracle runs the real post-allocation texture setup,
+framebuffer getter, environment descriptor assignment and emitter. Allocation
+and address helpers are controlled stubs, not real allocation or scene rendering.
+1,024 successful checks derive linear/clamp for one mip and trilinear/clamp for
+multiple mips; 1,024 failed-allocation checks preserve sampler words. Existing
+callback/emission/shadow checks pass.
+
+Developer `--environment-sampler-path framebuffer-single|framebuffer-mipped`
+requires successful setup and no later overrides; captures never select the
+path. Mirror/unknown signatures remain unresolved. With active dither/LV shadow,
+the mipped candidate completes sampled sampler lanes for 861/1,497 links (336
+before), with 183 known-lane mismatches and 453 without known bindings. Single-mip
+stays at 336. This is conditional sampler coverage, not full pipeline coverage.
+
+Four environment-using samples rebuild source/bytecode/native keys and create
+D3D12 pipelines, also replacing prepared blend/write-mask/depth fields. Other
+translation/pass/target state stays captured. Synthetic signature/overlap/choice
+checks and native integrity/wrong-key/material negatives pass. Original checkout,
+shared runtime, normal build, player defaults and release packaging are unchanged.
+Evidence and remaining mirror/ownership/translation work:
+[shader-reconstruction.md](shader-reconstruction.md#conditional-framebuffer-environment-samplers-phase-148).
+
 ## Phase 147 - Recover the conditional LV shadow sampler from pass setup (2026-10-30)
 
 The expanded native oracle verifies 1,024 synthetic dynamic descriptors and 64

@@ -90,6 +90,26 @@ try:
 except ValueError:
     pass
 
+for path, sampler in (('framebuffer-single', 9), ('framebuffer-mipped', 13)):
+    g = dict(name='envMapSampler', kind=0x901, identifier=71, unit=14)
+    definition = dict(d, used=4 | (1 << 14), globals=[g])
+    resolved = m.with_global_sampler_path(definition, environment_path=path)
+    assert m.complete_sampler_key(resolved) == (13 << 8) | (sampler << 56)
+    assert m.complete_sampler_key(m.with_global_sampler_path(definition, 'active', 'shadow-lv')) is None
+    assert definition['globals'] == [g] and len(definition['bindings']) == 1
+    for field, value in (('name', 'mirrorMapSampler'), ('kind', 0x601), ('identifier', 115)):
+        bad = dict(definition, globals=[dict(g, **{field: value})])
+        assert m.complete_sampler_key(m.with_global_sampler_path(bad, environment_path=path)) is None
+    duplicate = dict(definition, globals=[g, g])
+    assert m.complete_sampler_key(m.with_global_sampler_path(duplicate, environment_path=path)) is None
+    overlap = dict(definition, globals=[dict(g, unit=2)])
+    assert m.known_sampler_key(m.with_global_sampler_path(overlap, environment_path=path)) == (0, 0)
+try:
+    m.with_global_sampler_path(definition, environment_path='guessed')
+    raise AssertionError('unknown environment path accepted')
+except ValueError:
+    pass
+
 for offset, fmt, value, reason in [(1444, 'I', 42, 'texture index outside table'),
                                   (1284, 'h', 0x602, 'unsupported sampler record'),
                                   (1286, 'h', 16, 'unsupported sampler record'),

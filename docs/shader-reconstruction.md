@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138–144, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138-148, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -769,3 +769,76 @@ shadow pass variants, unsupported sampler layouts and remaining translation,
 culling/target/pass fields still prevent complete catalogue generation and
 player first-run integration. Normal game behavior and the runtime overlay
 remain unchanged.
+
+
+## Conditional framebuffer environment samplers (Phase 148)
+
+`--environment-sampler-path framebuffer-single|framebuffer-mipped` is a new
+explicit developer input to the texture audit and reconstruction proof. It
+applies only to the measured `envMapSampler` / kind `0x901` / identifier 71
+signature. It assumes successful framebuffer texture setup with respectively
+one or multiple mip levels, and **no later sampler override**. It never chooses
+that assumption from captured filtering. Unknown signatures, duplicate global
+units and local/global overlap remain unresolved; mirror requirements receive
+no new rule.
+
+The local native oracle executes the real texture-setup helper `00BA1080`,
+shared framebuffer getter `008293A8` (descriptor at object +0x54), descriptor
+assignment `0082E240`, and environment emitter `00D6CAA0` on private memory.
+The allocation helper `00BA08B8` and address conversions are controlled stubs;
+this tests post-allocation setup, not real resource allocation or rendering.
+Structural callers `00829BB0` / `0082A210` reach this setup helper. Dynamic
+environment rendering `00810F20` obtains a descriptor through the framebuffer's
+virtual getter and assigns it after rendering; that full render path has not
+been executed by this oracle.
+
+Across mip counts 1/2/4/8, four environment slots, sixteen texture units and
+four poisoned initial descriptors, **1,024 successful checks** match independently
+expressed sampler-relevant address/filter bits. One mip selects linear/clamp
+(bank 9); multiple mips select trilinear/clamp (bank 13). The getter refreshes
+dimensions without changing these bits; assignment updates the selected slot
+and generation counter, and emission preserves the sampler. Another **1,024
+allocation-failure checks** leave the descriptor's address/filter words untouched.
+Previous registry, dynamic-emission, dither/PCF and shadow checks also pass.
+Only S/T wrap and min/mag filter bits are derived; LOD, format, image identity,
+cube/gamma/unnormalized/shadow masks and all other translation state stay unknown.
+
+With explicit active dither and LV shadow paths, the mipmapped environment
+candidate covers every sampled sampler lane for **861 of 1,497** retained links
+(previously 336). There are 183 known-lane mismatches and 453 links without
+known sampled bindings. The single-mip candidate retains 336 complete matches
+and has 708 mismatches. These are conditional same-pair candidates, not exact
+draw ownership or full pipeline coverage. Mismatches must not trigger automatic
+path guessing. No observed environment lane in this snapshot validates the
+single-mip candidate; its support comes from the controlled native setup check.
+
+Four environment-using samples, selected from the newly complete links, rebuild
+asset shaders, match source/bytecode/native keys, and create D3D12 pipelines.
+They derive complete sampled sampler keys and prepared blend/write-mask/depth
+fields; other translation/target/pass fields remain captured. A separate initial
+four-sample run contains one environment sample and three regression samples.
+Native negative checks reject truncated recipes, damaged code, wrong keys and
+missing/malformed/wrong material state; explicit material mode 0 retains its
+prior behavior. No proof process executes guest entry.
+
+Local evidence:
+
+- `scratch/global-registry-94b3734c9c74404cb3181afa06e50b09/report.json`
+- `scratch/environment-{single,mipped}-sampler-audit-20261030/report.json`
+- `scratch/environment-proof-input-20261030.json`: unmodified source audit rows
+  restricted to links newly complete under the explicitly selected mipped path.
+- `scratch/environment-only-sampler-proof-20261030/report.json`
+- `scratch/environment-mipped-sampler-proof-20261030/report.json` (initial run)
+
+Repeat the existing audit/proof commands with the new option; proofs also require
+`--prepared-material-state --material-samplers --materials <material report>`.
+Synthetic checks cover both choices, missing choices, signature mismatches,
+duplicate/overlapping units, input preservation and invalid choices. The original
+checkout and shared runtime/build remain untouched. No runtime source, normal
+player behavior or release packaging changed.
+
+Next: independently establish which live render paths supply these descriptors,
+including later overrides and the mirror resource's construction/assignment.
+The min-filter write near `00808210` in `008079EC` remains a structural lead,
+not a verified universal environment rule. Recover the remaining texture-dependent
+translation and pass/target fields before generating capture-free native recipes.

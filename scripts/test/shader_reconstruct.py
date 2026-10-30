@@ -1,6 +1,7 @@
 """Synthetic tests of bounded asset vertex discovery and original-slice checks."""
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 
@@ -71,5 +72,13 @@ for field, value in [('blend', 1), ('cmask', 14), ('depth_bits', 0x10000000),
 for stencil in (0x30000001, 0x34000000):
     changed = dict(state=dict(capture['state'], stencil=stencil))
     assert not m.material_state_matches(values, changed)
+
+# Pass paths cannot silently enter a proof without explicit material samplers.
+command = [sys.executable, str(Path(m.__file__))]
+for flag in ('report', 'trace', 'catalog', 'cache', 'decoder', 'engine', 'game-root', 'output'):
+    command += ['--' + flag, 'unused-test-input']
+for path in ('framebuffer-single', 'framebuffer-mipped'):
+    result = subprocess.run(command + ['--environment-sampler-path', path], capture_output=True, text=True)
+    assert result.returncode != 0 and 'require a material sampler proof' in result.stderr
 
 print('SHDS bounds, source integrity and prepared material-state eligibility checks passed')

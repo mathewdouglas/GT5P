@@ -203,3 +203,14 @@ Disabling **Background pipeline creation** also selects the blocking path.
 The offline precompile-only command keeps its existing blocking completion
 semantics. Explicit offline library compilation is still separate from this
 normal-play startup preparation. No cache files are removed or invalidated.
+
+
+## Asset-derived preparation research
+
+The developer reconstruction workflow now has conditional dither/PCF, LV shadow
+and framebuffer environment sampler paths; see
+[shader reconstruction](shader-reconstruction.md#conditional-framebuffer-environment-samplers-phase-148).
+These options require explicit pass assumptions and leave remaining translation/
+pass/target state captured. They do not change this player preparation command,
+launcher behavior or release contents. Capture-free catalogue generation and
+first-run native pipeline preparation remain unfinished.
