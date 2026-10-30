@@ -252,6 +252,8 @@ six native pipeline proofs now replace blend/write-mask/depth fields from
 prepared assets rather than retaining those fields from captures. This remains
 a partial reconstruction. Phase 143 also derives complete effective sampler
 keys for two car-material proofs; most links still need alias/global bindings
-or pass context. Unmatched programs also need analysis. Extending
+or pass context. Phase 144 accepts coherent scalar aliases and inventories the
+global requirements; known-lane candidates increase to 843 links, while complete
+sampled-unit coverage remains 16. Unmatched programs also need analysis. Extending
 catalogue size or cross-multiplying pooled profiles alone cannot establish
 complete pipeline reconstruction.

@@ -9,6 +9,40 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 144 - Resolve coherent scalar aliases and inventory global requirements (2026-10-30)
+
+The material sampler reader now accepts distinct scalar sampler names sharing a
+unit only when every name binds the exact same texture-info index. Missing names
+leave that unit unresolved; conflicting indices are rejected even with identical
+sampler settings. Unsupported array/relocation layouts remain rejected.
+
+The same inventory yields 160,461 resolved unit bindings, including 52,407 alias
+groups, and 659 unsupported-record shader-data groups. Same-pair known-lane
+candidates match 843 captured links versus 349 before; each has at least one
+candidate whose known lanes agree, not necessarily agreement among all candidates.
+827 links are partial, 16 complete, and 654 have no known sampled binding.
+Complete coverage is unchanged; global/pass-bound units remain unresolved.
+
+The separate SHDS 0x38 table provides global names/unit fields/kind/identifier
+metadata. Reports retain the signatures for dither, environment, shadow, PCF
+and mirror requirements. Identifiers are not treated as established runtime
+registry addresses or used to invent texture/sampler defaults. Declared global
+units are excluded from local derivation even when their unit fields overlap.
+
+`--material-sampler-lanes` adds an explicitly partial reconstruction mode. It
+reparses original bindings and derives known lanes from assets, retaining other
+lanes from capture with masks reported. A character material's alpha/emission
+aliases rebuilt its local sampler lane, matching shader source/bytecode and
+native key and creating a D3D12 pipeline. Its global dither lane stayed captured;
+the prepared material descriptor replacement was also active. The complete
+sampler mode still rejects missing units.
+
+Synthetic alias/conflict/missing/global-overlap checks and existing integrity,
+output-containment and eligibility checks passed. No runtime/normal-build
+changes were needed; the isolated proof never ran guest gameplay. Evidence and
+next global-identifier initialization/binding work:
+[shader-reconstruction.md](shader-reconstruction.md).
+
 ## Phase 143 - Derive effective sampler keys from material texture bindings (2026-10-30)
 
 `shader_material_textures.py` reads a bounded SHDS named-sampler layout and

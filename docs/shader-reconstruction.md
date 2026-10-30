@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138–143, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138–144, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -433,9 +433,10 @@ binding layout. SHDS fragment records' 0x14 table supplies named sampler records
 of kind `0x601`, with a supported unit field and zero remaining unknown fields.
 Material definitions bind those names to indices into the model's 0x44-byte
 texture-info table. Those indices are distinct from each texture's image ID.
-The reader follows name/index references, bounds strings/tables to the model,
-and rejects duplicate names/unit aliases, unsupported records and invalid indices.
-It does not guess relocation/alias behavior for the rejected layouts.
+The reader follows name/index references and bounds strings/tables to the model.
+The initial Phase 143 reader rejected duplicate names/unit aliases, unsupported
+records and invalid indices. Phase 144 below adds a measured coherent-alias
+subset; unsupported relocation/array layouts are still not guessed.
 
 Texture-info records supply authored filter and wrap registers. Sampler-bank
 selection uses the current backend's default mapping. **2,048 varied cases
@@ -500,7 +501,76 @@ No runtime sources/builds changed for this stage. The two proofs used the existi
 isolated diagnostic EXE in offline mode, never guest gameplay. Shared runtime,
 normal binary and player defaults remain untouched.
 
-Next: resolve sampler aliases/global bindings and derive more texture-dependent
-translation fields for a bounded family; culling/pass/target context remains
+## Coherent aliases and global requirements (Phase 144)
+
+The scalar sampler layout includes distinct names assigned to the same unit.
+The reader now groups them by unit and derives one binding only if **every
+name is present and selects the exact same texture-info index**. Different
+indices are rejected even when their sampler settings happen to match. A
+missing alias leaves the entire lane unresolved. Duplicate identical names
+and unsupported array/relocation record kinds remain rejected.
+
+The same inventory now provides 160,461 resolved unit bindings, including 52,407
+coherent alias groups. The remaining 659 rejected shader-data groups have
+unsupported sampler records. This count differs from Phase 143 because removing
+the earlier alias rejection exposes unsupported records that it previously hid.
+The accepted subset still has no missing names, which is not a claim that all
+sampled units in the game have material bindings.
+
+Known sampled-lane candidates match **843 of 1,497 captured links**, versus 349
+before. Each of these links has at least one matching candidate; this does not
+mean every candidate for that link agrees. 827 are partial and 16 have every
+sampled unit resolved. Another 654 have no known sampled binding. Complete
+coverage did not increase: the remaining global/pass-bound units are a separate
+dependency, and same-pair candidates do not identify unique draw ownership.
+
+The SHDS fragment record's separate 0x38 table supplies global requirement
+names, unit fields, kind values and identifiers. The reader records these as
+metadata, not texture addresses or sampler defaults. In this supported inventory:
+
+| Requirement | Unit field | Identifier |
+| --- | --- | --- |
+| `ditherMap` | 15 | 103, with a smaller different-kind group using 94 |
+| `envMapSampler` | 14 | 71 |
+| `realTimeShadowMap` | 13 | 87 |
+| `realTimeShadowMapColor` | 12 | 96 |
+| `shadowPCFMap` | 11 | 104 |
+| `mirrorMapSampler` | 0–3 | 115 |
+
+These identifiers' runtime lookup semantics are not established. The report
+retains exact name/kind/unit/identifier signatures and reference counts, plus
+which declared units the fragment instructions sample. Reference counts include
+many material definitions sharing programs and must not be read as unique jobs
+or pipeline counts. A unit declared global never inherits local settings merely
+because a local binding has the same unit field.
+
+For a developer **partial** proof, use `--material-sampler-lanes` instead of
+`--material-samplers`, together with `--prepared-material-state` and `--materials`.
+It reparses the original model, builds a known-lane value/mask from assets, and
+replaces only those lanes in the captured key. Other lanes remain explicitly
+captured; the report records derived/captured masks and global requirements.
+No unresolved lane receives a guessed default. The complete mode still rejects
+missing sampled units, and the CLI rejects selecting both modes together.
+
+A character material with `alphaMapSampler` and `emissionMapSampler` aliased to
+one texture rebuilt the local lane successfully. Generated shader source and
+VS/PS bytecode matched, the native key matched, and D3D12 created the pipeline.
+The dither lane remained captured; prepared blend/write-mask/depth replacement
+was also active. This is an additional partial proof, not a new complete one.
+
+Synthetic checks cover identical versus conflicting aliases, missing alias
+names, global/local overlap, exclusion of unknown lanes and previous malformed
+reference/integrity/output checks. Existing reconstruction eligibility checks
+passed. No runtime source or normal-game build changed, and the isolated proof
+never executed guest gameplay.
+
+Local evidence:
+
+- `scratch/material-sampler-global-signatures-20261030/report.json`
+- `scratch/material-alias-lane-proof-20261030/report.json`
+
+Next: trace the global requirement identifiers to their initialization/binding
+records, starting with dither and shadow samplers. Array/relocation layouts,
+texture-dependent translation fields and culling/pass/target context remain
 separate work. Complete catalogue generation and player first-run integration
 are still not implemented.

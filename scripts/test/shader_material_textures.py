@@ -50,6 +50,7 @@ assert m.complete_sampler_key(d) == 13 << 8
 assert m.replace_known_samplers(0x1234, d['bindings'], 4) == (0x1D34, [2])
 assert m.replace_known_samplers(0x1234, d['bindings'], 1) == (0x1234, [])
 assert m.complete_sampler_key(dict(d, used=5)) is None
+assert m.known_sampler_key(dict(d, used=5)) == (13 << 8, 15 << 8)
 assert m.complete_sampler_key(dict(d, used=0)) is None
 
 for offset, fmt, value, reason in [(1444, 'I', 42, 'texture index outside table'),
@@ -64,6 +65,27 @@ d = m.model_textures(data, 0)[0][0]
 assert not d['bindings'] and len(d['unresolved']) == 1 and m.complete_sampler_key(d) is None
 data = fixture(); data[715] = 2; data[1296:1312] = data[1280:1296]
 assert m.model_textures(data, 0)[1]['ambiguous sampler name/unit'] == 1
+data = fixture(); data[715] = 2
+data[1464:1482] = b'ambientMapSampler\0'
+struct.pack_into('>I4hI', data, 1296, 1464, 0x601, 2, 0, 0, 0)
+struct.pack_into('>H', data, 1162, 2)
+struct.pack_into('>II', data, 1448, 1464, 1)
+d = m.model_textures(data, 0)[0][0]
+assert len(d['bindings']) == 1 and d['bindings'][0]['aliases'] == ['diffuseMapSampler', 'ambientMapSampler']
+assert m.complete_sampler_key(d) == 13 << 8
+struct.pack_into('>I', data, 1452, 0)  # Even identical sampler settings do not justify different image records.
+assert m.model_textures(data, 0)[1]['conflicting scalar alias textures'] == 1
+struct.pack_into('>H', data, 1162, 1)
+d = m.model_textures(data, 0)[0][0]
+assert not d['bindings'] and d['unresolved'][0]['reason'] == 'missing scalar alias binding'
+data = fixture(); data[714] = 1
+struct.pack_into('>I', data, 760, 1800)
+struct.pack_into('>I4hI', data, 1800, 1856, 0x601, 2, 0, 0, 87)
+data[1856:1866] = b'shadowMap\0'
+d = m.model_textures(data, 0)[0][0]
+assert d['globals'] == [dict(name='shadowMap', kind=0x601, unit=2, identifier=87)]
+assert m.complete_sampler_key(d) is None  # Global settings must never inherit a local alias's defaults.
+assert m.known_sampler_key(d) == (0, 0)
 data = fixture(); struct.pack_into('>I', data, 276, 4090)
 try:
     m.model_textures(data, 0)

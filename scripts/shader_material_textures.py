@@ -51,10 +51,18 @@ def model_textures(data, base):
                 if kind != 0x601 or not 0 <= unit < 16 or a or b or c:
                     raise ValueError('unsupported sampler record')
                 key = name(no)
-                if key in samplers or unit in samplers.values():
+                if key in samplers:
                     raise ValueError('ambiguous sampler name/unit')
                 samplers[key] = unit
-            sampler_maps[material] = (pair, samplers)
+            globals_ = []
+            for offset in r.table(r.unpack('I', fp + 56)[0], r.unpack('B', fp + 10)[0], 16):
+                no, kind, unit, a, b, identifier = r.unpack('I4hI', offset)
+                # Retain requirements only. Neither the kind nor the identifier
+                # is used to invent texture/filter state or a registry address.
+                if not 0 <= unit < 16 or a or b:
+                    raise ValueError('unsupported global sampler record')
+                globals_.append(dict(name=name(no), kind=kind, unit=unit, identifier=identifier))
+            sampler_maps[material] = (pair, samplers, globals_)
         except (ValueError, UnicodeError) as error:
             rejected[str(error)] += 1
     for index, offset in enumerate(r.table(r.unpack('I', table + 8)[0], definitions, 52)):
@@ -64,7 +72,7 @@ def model_textures(data, base):
             continue
         if material not in sampler_maps:
             continue
-        pair, samplers = sampler_maps[material]
+        pair, samplers, globals_ = sampler_maps[material]
         try:
             keys = {}
             for item in r.table(r.unpack('I', offset + 12)[0], r.unpack('H', offset + 10)[0], 8):
@@ -74,24 +82,31 @@ def model_textures(data, base):
                     raise ValueError('ambiguous texture key')
                 keys[key] = texture
             bindings, unresolved = [], []
+            unit_names = {}
             for key, unit in samplers.items():
-                if key not in keys:
-                    unresolved.append(dict(name=key, unit=unit, reason='no definition texture key'))
+                unit_names.setdefault(unit, []).append(key)
+            for unit, names in unit_names.items():
+                missing = [key for key in names if key not in keys]
+                if missing:
+                    unresolved.append(dict(names=names, unit=unit, reason='missing scalar alias binding'))
                     continue
-                texture = keys[key]
+                indices = {keys[key] for key in names}
+                if len(indices) != 1:
+                    raise ValueError('conflicting scalar alias textures')
+                texture = indices.pop()
                 if texture >= len(textures):
                     raise ValueError('texture index outside table')
                 position = textures[texture]
                 words = r.unpack('17I', position)
                 if words[0] != 0x00201A00:
                     raise ValueError('unsupported texture record header')
-                bindings.append(dict(name=key, unit=unit, texture_index=texture,
+                bindings.append(dict(name=names[0], aliases=names, unit=unit, texture_index=texture,
                                      image_id=words[14], offset=base + position, size=68,
                                      address=words[3], filtering=words[6], format=words[2],
                                      width=words[7] >> 16, height=words[7] & 65535,
                                      sampler=sampler_register(words[3], words[6])))
             results.append(dict(definition=index, material=material, bindings=bindings,
-                                unresolved=unresolved, vertex_code=pair['vertex_code'],
+                                unresolved=unresolved, globals=globals_, vertex_code=pair['vertex_code'],
                                 used=fp_identity(data[pair['fragment_offset']:pair['fragment_offset'] + pair['fragment_size']])['textures'],
                                 fragment_identity=pair['fragment_identity']))
         except (ValueError, UnicodeError) as error:
@@ -111,10 +126,21 @@ def replace_known_samplers(captured, bindings, used):
 
 
 def complete_sampler_key(definition):
+    if any(definition['used'] & (1 << requirement['unit']) for requirement in definition.get('globals', ())):
+        return None
     key, units = replace_known_samplers(0, definition['bindings'], definition['used'])
     if not definition['used'] or sum(1 << unit for unit in units) != definition['used']:
         return None
     return key
+
+
+def known_sampler_key(definition):
+    """A value/mask pair, explicitly leaving global and unresolved lanes unknown."""
+    globals_ = {g['unit'] for g in definition.get('globals', ())}
+    bindings = [b for b in definition['bindings'] if b['unit'] not in globals_]
+    key, units = replace_known_samplers(0, bindings, definition['used'])
+    mask = sum(15 << (4 * unit) for unit in units)
+    return key, mask
 
 
 def main():
@@ -155,6 +181,7 @@ def main():
     for model in json.loads(args.states.read_text())['models']:
         inventory[model['file']].add(model['model'])
     candidates, rejected, total, unresolved = defaultdict(set), Counter(), 0, 0
+    global_requirements, global_signatures, sampled_globals, aliases = Counter(), Counter(), Counter(), 0
     for number, (filename, bases) in enumerate(sorted(inventory.items())):
         with open(filename, 'rb') as stream:
             with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
@@ -163,8 +190,13 @@ def main():
                     rejected.update(errors)
                     for definition in definitions:
                         total += len(definition['bindings']); unresolved += len(definition['unresolved'])
+                        aliases += sum(len(b['aliases']) > 1 for b in definition['bindings'])
+                        global_units = {g['unit'] for g in definition['globals']}
+                        global_requirements.update(g['name'] for g in definition['globals'])
+                        global_signatures.update((g['name'], g['kind'], g['unit'], g['identifier']) for g in definition['globals'])
+                        sampled_globals.update(g['name'] for g in definition['globals'] if definition['used'] & (1 << g['unit']))
                         known = tuple(sorted((b['unit'], b['sampler']) for b in definition['bindings']
-                                             if definition['used'] & (1 << b['unit'])))
+                                             if definition['used'] & (1 << b['unit']) and b['unit'] not in global_units))
                         if not known:
                             continue
                         for length, lookup in targets.items():
@@ -188,13 +220,17 @@ def main():
                                 known_match=bool(matching), complete_match=complete,
                                 profiles=[dict(used=used, lanes=dict(known)) for used, known in sorted(profiles)]))
     result = dict(schema=1, resolved_bindings=total, unresolved_bindings=unresolved,
+                  coherent_alias_bindings=aliases, global_requirements=dict(global_requirements),
+                  sampled_global_requirements=dict(sampled_globals),
+                  global_signatures=[dict(name=name, kind=kind, unit=unit, identifier=identifier, references=count)
+                                     for (name, kind, unit, identifier), count in sorted(global_signatures.items())],
                   rejected=dict(rejected), counts=dict(counts), comparisons=comparisons,
                   limitations=['Candidates share shader pairs; exact draw/material ownership is unproven.',
                                'Unresolved/global textures do not acquire inferred defaults.',
                                'Only sampler-bank lanes are compared, not cube/gamma/unnormalized or pass state.'])
     output.mkdir(parents=True)
     (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
-    print(json.dumps({key: value for key, value in result.items() if key not in ('comparisons', 'limitations')}, indent=2))
+    print(json.dumps({key: value for key, value in result.items() if key not in ('comparisons', 'limitations', 'global_signatures')}, indent=2))
 
 
 if __name__ == '__main__':
