@@ -100,14 +100,22 @@ def enumerate_jobs(catalog, object_path, target_path, global_path, limit):
     return jobs, dict(containers=len(files), counts=dict(counts), rejected=dict(rejected))
 
 
-def compile_fragments(jobs, root, cache, engine, game_root):
+def fragment_profile(job):
+    state=job['state']
+    return (state['exp32'],state['cube'],state['stencil']&(1<<26),state['unnorm']&~0x100,
+            int(state['samplers'],16),state['ghi'],state['shd'],state['unhi'],job['used'],
+            int(state['rtfmt']==28 and state['nrt']==1 and bool(state['cmask']&14)))
+
+
+def compile_fragments(jobs, root, cache, engine, game_root, mode='legacy'):
+    if mode=='batch':
+        from shader_fragment_batch import compile_batch
+        return compile_batch(jobs,root,cache,engine,game_root)
+    if mode!='legacy':raise ValueError('Unsupported fragment preparation mode')
+    started=time.perf_counter()
     groups = {}
     for job in jobs:
-        state = job['state']
-        fields = [state['exp32'], state['cube'], state['stencil'] & (1 << 26), state['unnorm'] & ~0x100,
-                  int(state['samplers'], 16), state['ghi'], state['shd'], state['unhi'], job['used']]
-        dither = int(state['rtfmt'] == 28 and state['nrt'] == 1 and bool(state['cmask'] & 14))
-        groups.setdefault(tuple(fields) + (dither,), []).append(job)
+        groups.setdefault(fragment_profile(job), []).append(job)
     compiled, failures, code_pool, code_bytes = {}, {}, {}, 0
     for number, (key, members) in enumerate(groups.items()):
         print(f'Compiling profile {number + 1}/{len(groups)}: {len(members)} candidates', flush=True)
@@ -148,6 +156,8 @@ def compile_fragments(jobs, root, cache, engine, game_root):
                     failures[job['id']] = str(exc)
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             failures.update((job['id'], str(exc)) for job in members)
+    (root/'fragment-preparation-report.json').write_text(json.dumps(dict(mode='legacy',requested_jobs=len(jobs),
+        processes=len(groups),prepared_jobs=len(compiled),failed_jobs=len(failures),seconds=time.perf_counter()-started),indent=2)+'\n')
     return compiled, failures
 
 
@@ -186,6 +196,7 @@ def read_result(job, root, cache):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy')
     for name in ('catalog', 'engine', 'decoder', 'game-root', 'output'):
         ap.add_argument('--' + name, type=Path, required=True)
     ap.add_argument('--object-pass-path', choices=('ccw', 'cw'))
@@ -248,7 +259,7 @@ def main():
         root = output / 'jobs'; root.mkdir(exist_ok=True)
         shader_root = output / 'shader-work'; shader_root.mkdir(exist_ok=True)
         phase_started = time.perf_counter()
-        compiled, failures = compile_fragments(jobs, shader_root, cache, args.engine.resolve(), args.game_root.resolve())
+        compiled, failures = compile_fragments(jobs, shader_root, cache, args.engine.resolve(), args.game_root.resolve(),mode=args.fragment_mode)
         report['timings_seconds']['fragment_preparation'] = time.perf_counter() - phase_started
         phase_started = time.perf_counter()
         vertices, requests = {}, []

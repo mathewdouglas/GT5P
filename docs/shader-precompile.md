@@ -77,7 +77,7 @@ Phase 160 adds [named shared-pass selection and isolated state checks](shader-re
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.
 
-## Identifier-only templates (Phase 170; optional developer path)
+## Identifier-only templates (Phase 171; optional developer path)
 
 This adapts the hash/numeric-state design in [Project Pyrrhus's template patch](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2071-pipeline-template-prewarm.patch),
 [context/key correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2077-pso-key-vp-start-template-default.patch)
@@ -187,6 +187,44 @@ For a versioned metadata bundle (no shader contents):
 
 `--template` accepts the bundle directory directly. Each part is checksum checked;
 conflicting/incompatible generations are rejected.
+
+### Exact fragment batching (opt in)
+
+Add `--fragment-mode batch` to template preparation, conditional material
+preparation or shared pipeline preparation. `legacy` remains the default and
+rollback option. The runtime path is independently guarded by
+`RSX_SHADER_LIBRARY_BATCH=<private work directory>` and
+`GT5P_SHADER_PRECOMPILE_ONLY=1`; normal gameplay does not read batch manifests.
+
+The preparer deduplicates exact fragment-program/profile requests, partitions
+only by final-dither policy, and sends at most 4,096 requests to each offline
+process. It never applies every profile to every program. The manifest names
+hash-identified local programs, their raw checksums and explicit profile fields.
+Header/version/counts, sorted unique identifiers, numeric widths, sampler masks,
+program bounds/checksums and sampled-texture masks are validated before use.
+Malformed manifests queue no work; malformed individual programs produce failed
+results. Result joins require every expected ID exactly once. Missing/failed
+bytecode remains unresolved; templates still verify source/bytecode identities
+and the final native key before acceptance.
+
+The existing two compiler workers, source-key deduplication, queue backpressure
+and shutdown are reused. The queue is drained before returning, and no new live
+worker or asynchronous draw policy is introduced. Batch metadata is bounded;
+source/driver contents stay in ignored local caches. Matching intermediate inputs
+can be reused by material/shared `--resume`; cache directories are preserved.
+
+The 32-record paired empty-application-cache check produced identical bytecode
+and native keys in both modes. Fragment preparation measured 37.81 s/20 processes
+with legacy versus 5.64 s/2 processes batched; whole preparation was 57.40 versus
+17.77 s. This is a small ordered test with warm OS/driver caches, not a universal
+speedup or gameplay/stutter measurement. The full 2,334-record starter subsequently
+passes every shader/native/persistence check in one empty application cache:
+108.11 s fragment preparation in two processes, 467.42 s total and 57.17 s native
+driver creation. Serial vertex preparation and cache verification remain part of
+the total. Eleven native protocol/gating cases and all 36 shared candidates plus
+cache-reusing resume pass. See Phase 171 for evidence and limitations. Template
+preparation still requires fresh output; template cancellation/resume is not yet
+implemented. No shadercache is cleared or moved.
 
 Fresh application-cache paired validation:
 

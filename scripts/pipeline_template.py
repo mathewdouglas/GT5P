@@ -308,7 +308,7 @@ def locate(records, catalog, elf, asset_map=None, assets=None):
                                      vertex_found=len(vertices), fragment_found=len(fragments),asset_map=extra)
 
 
-def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False, asset_map=None, assets=None):
+def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False, asset_map=None, assets=None, fragment_mode='legacy'):
     idle()
     output = isolated(output)
     if output.exists():
@@ -370,7 +370,8 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_f
             report['records'].append(dict(key=r['key'], status='incompatible', reason=str(exc)))
     root = output / 'requests'
     root.mkdir()
-    compiled, failures = compile_fragments(jobs, root, cache, engine, game_root)
+    compiled, failures = compile_fragments(jobs, root, cache, engine, game_root,mode=fragment_mode)
+    report['fragment_preparation']=json.loads((root/'fragment-preparation-report.json').read_text())
     requests = []
     for job in jobs:
         r, vs = by_id[job['id']]
@@ -425,6 +426,7 @@ def main():
     m.add_argument('--output', type=Path, required=True)
     m.add_argument('templates', type=Path, nargs='+')
     p = sub.add_parser('prepare')
+    p.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy',help='Opt-in exact-request compiler batching')
     p.add_argument('--asset-map',type=Path,help='Optional verified hash/offset map for non-SHDS programs')
     p.add_argument('--assets',type=Path,help='Original unpacked asset root used with --asset-map')
     p.add_argument('--demand-fallback',action='store_true',help='Report incompatible templates and provide an empty demand cache')
@@ -439,7 +441,7 @@ def main():
         return
     if args.command == 'prepare':
         result = prepare(*(getattr(args, k).resolve() for k in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game_root', 'output')),
-                         demand_fallback=args.demand_fallback,asset_map=args.asset_map,assets=args.assets)
+                         demand_fallback=args.demand_fallback,asset_map=args.asset_map,assets=args.assets,fragment_mode=args.fragment_mode)
         print(json.dumps(dict(counts=result['counts'], lookup=result['lookup'], seconds=result['preparation_seconds'])))
         return
     if args.output.exists():

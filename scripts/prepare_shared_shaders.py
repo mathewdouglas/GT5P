@@ -64,7 +64,7 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
     root.mkdir(exist_ok=True)
     (root / 'manifest.json').write_text(json.dumps([
         {k: v for k, v in job.items() if k != 'fragment'} for job in jobs], indent=2))
-    compiled, failures = compile_fragments(jobs, root, cache, args.engine.resolve(), args.game_root.resolve())
+    compiled, failures = compile_fragments(jobs, root, cache, args.engine.resolve(), args.game_root.resolve(),mode=args.fragment_mode)
     requests = []
     for job in jobs:
         if job['id'] in failures:
@@ -110,6 +110,7 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy')
     ap.add_argument('--elf', required=True, type=Path)
     ap.add_argument('--decoder', required=True, type=Path)
     ap.add_argument('--output', required=True, type=Path)

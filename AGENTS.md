@@ -36,13 +36,23 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 170)
+## Start here: state of play (2026-10-31, Phase 171)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 170 is the latest).
+has the evidence, newest phase first (Phase 171 is the latest).
 
 ### What works now
+
+- **Exact fragment batches (Phase 171):** opt-in --fragment-mode batch sends only
+  requested program/profile pairs through the existing bounded two-worker pool.
+  The full 2,334-record starter passes both-stage/key/native/persistence checks
+  in one empty application cache: 467.42 s total, 108.11 s fragment phase using
+  two processes. A 32-record parity check preserves bytecode/keys and measures
+  37.81 -> 5.64 s fragment preparation. All 36 conditional shared pipelines and
+  resume pass; malformed manifests/checksums/masks/cache reuse pass native tests.
+  Legacy remains the default/rollback. Starter contract reissued after full
+  verification, with record contents unchanged. No player/stutter claim.
 
 - **Representative coverage (Phase 170):** precompiler roadmap saved
   in docs/shader-precompile.md. New pipeline_template_coverage.py compares/ranks

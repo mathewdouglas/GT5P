@@ -15,6 +15,7 @@ for name in ('template','catalog','elf','engine','decoder','fixture','output'):
 ap.add_argument('--trials',type=int,choices=(2,4),default=4)
 ap.add_argument('--asset-map',type=Path)
 ap.add_argument('--assets',type=Path)
+ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy')
 args=ap.parse_args()
 out=isolated(args.output)
 if out.exists():
@@ -22,7 +23,7 @@ if out.exists():
 out.mkdir(parents=True)
 # Offline preparation only reads the supplied private fixture; no guest runs.
 report=prepare(*(getattr(args,k).resolve() for k in ('template','catalog','elf','engine','decoder','fixture')),out/'preparation',
-               asset_map=args.asset_map,assets=args.assets)
+               asset_map=args.asset_map,assets=args.assets,fragment_mode=args.fragment_mode)
 subprocess.run([sys.executable,str(Path(__file__).with_name('shader_stutter.py')),
                 '--fixture',str(args.fixture.resolve()),'--engine',str(args.engine.resolve()),
                 '--prepared',str(out/'preparation/shadercache'),'--output',str(out/'trials'),

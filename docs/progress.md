@@ -9,6 +9,78 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 171 - Exact offline fragment batching (2026-10-31)
+
+Preparation was starting a complete runtime/device for each fragment profile.
+Added the default-off `RSX_SHADER_LIBRARY_BATCH` offline path and developer
+`--fragment-mode batch` in template, material/shared preparation and paired-route
+tools. `legacy` remains their default and rollback. The native guard requires
+`GT5P_SHADER_PRECOMPILE_ONLY=1`, a device/cache and the existing async compiler.
+The ordinary draw path, renderer settings and asynchronous draw policy do not
+change. No new background worker or queue owner is introduced.
+
+Manifest V1 contains at most 4,096 sorted unique request IDs, hash-named local
+program files, raw checksums and explicit numeric profiles. All manifest syntax,
+versions/counts/field widths/identifiers are validated before any compile is
+queued. Program reads are bounded to 32 KiB, checked for END/constants/checksum
+and exact sampled-texture mask, with per-request failures. Result IDs must join
+exactly once to every requested record. Actual bytecode availability/expected
+source and bytecode identifiers and final native keys still gate acceptance;
+enqueue acceptance alone is not compilation/pipeline success.
+
+Python deduplicates exact program/profile requests and partitions only by final
+dither policy (cached globally by the existing translator). It emits the exact
+requested pairs rather than a shader/profile cross product. The normal text
+generator, two existing compiler workers, source-key deduplication and queue
+backpressure are reused. Pending work drains before return, and profile globals
+are restored. Metadata/program/code pools and native row counts stay bounded;
+process timeout remains owned by the caller. Material/shared resume preserves
+cache directories and rejects altered intermediate inputs. Templates still
+require a fresh output; broader cancellation/resume remains open.
+
+A paired 32-record empty-application-cache test under the same rebuilt EXE
+matches all bytecode bytes, source keys and exact native keys. Legacy uses 20
+fragment processes and 37.813 s for that phase; batching uses two processes,
+25 distinct requests and 5.637 s. Whole preparation is 57.405/17.765 s. Order is
+legacy then batch, OS/driver caches stay warm and this is one sample, so it is
+not a universal speedup claim. Evidence:
+`scratch/template-batch-20261031/parity.json` and its legacy/batch directories.
+
+The full starter is then tested in a single new empty application cache. All
+2,334 records reconstruct both stages, match expected source/bytecode identifiers
+and exact native keys, create in D3D12 and persist validated recipes/driver blobs.
+There are zero unresolved/incompatible/key-rejected entries. Fragment preparation
+deduplicates to 1,990 requests in two processes: 1,974 without final dither and
+16 with it, all actually compiled. This phase takes 108.106 s; full preparation
+takes 467.422 s, including lookup, serial vertex translation/compilation, request
+writing and cache verification. Native creation takes 57.172 s for 2,334 driver
+calls with zero cached-blob calls. These are cold application-cache measurements,
+not a cleared OS/driver cache or gameplay benchmark. Evidence:
+`scratch/template-batch-20261031/full/{report.json,native.log}`.
+
+The renderer source contract changes conservatively with the offline addition.
+The starter header/shard checksums are reissued only after the complete native
+proof; numeric/program records and expected keys are byte-for-byte unchanged.
+There is no metadata ABI/key-version change, relaxed compatibility check or cache
+clear. Old source-contract templates remain rejected by the existing check.
+
+Eleven real native cases exercise wrong versions, overflow counts, duplicates,
+unsafe filenames, invalid profiles, trailing records, bad raw hashes, mismatched
+texture masks, oversized code, switch-off gating and a valid request. The repeat
+of the valid request produces identical results and zero shader compiles.
+Evidence: `scratch/fp-batch-native-20261031/report.json`. Synthetic tests cover
+exact deduplication/dither split, duplicate/missing result joins, corrupted input,
+timeout handling and reuse of matching intermediate inputs.
+
+All 36 conditional shared pipeline candidates also prepare in batch mode, then
+resume successfully: no fragment recompiles and all 36 driver calls reuse cached
+blobs on resume. Evidence: `scratch/sb171/{report-first.json,report.json}` and
+`pipelines/native.log`. The isolated build and runtime patch reverse-check pass.
+The original checkout, shared runtime and their processes remain untouched.
+Existing shadercache directories are preserved; writes use private caches. No
+additional game copy, player defaults or live stutter/rendering claim; wider
+content, template cancellation/resume and measured in-game benefits remain open.
+
 ## Phase 170 - Representative-session coverage and precompiler roadmap (2026-10-31)
 
 Saved the seven remaining milestones in `docs/shader-precompile.md`: representative
