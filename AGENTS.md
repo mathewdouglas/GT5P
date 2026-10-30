@@ -36,13 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 153)
+## Start here: state of play (2026-10-30, Phase 154)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 153 is the latest).
+has the evidence, newest phase first (Phase 154 is the latest).
 
 ### What works now
+
+- **Fresh native descriptor (Phase 154):** developer `--native-target-path`
+  plus material/object-pass candidates builds a fresh GPU-fetch, depth-backed
+  single-colour descriptor under default-off offline switch
+  `RSX_PSO_RECONSTRUCT_NATIVE=1`. Three 2x and two single-sample RGBA16 pipeline
+  proofs pass, including a zeroed captured-descriptor test and twenty process
+  checks. Target selection is explicit; game ownership and remaining fragment
+  profile fields remain unresolved. Player/release defaults stay unchanged.
 
 - **Conditional object pass (Phase 153):** 1,536 native wrapper checks recover
   entry/exit cull/winding/output gamma. Developer `--object-pass-path ccw|cw`

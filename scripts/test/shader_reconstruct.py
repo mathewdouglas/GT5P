@@ -104,3 +104,18 @@ for path, enabled_key in (('ccw', 5), ('cw', 1)):
 result = subprocess.run(command + ['--object-pass-path', 'ccw'], capture_output=True, text=True)
 assert result.returncode != 0 and 'requires --prepared-material-state' in result.stderr
 print('Conditional object-pass selection, independent replacement and prerequisites passed')
+
+from shader_pass_state import native_target_fields, target_matches, replace_target_fields, TARGET_PATHS
+for path in TARGET_PATHS:
+    fields = native_target_fields(path)
+    state = dict(cube=0x80001000 | fields['cube_value'], stencil=0xb0000000,
+                 rtfmt=fields['rtfmt'], nrt=1, cull=5)
+    capture = dict(state=state, vp_gpu=1)
+    assert target_matches(fields, capture)
+    assert replace_target_fields(fields, dict(state, rtfmt=99, nrt=8, cube=0x800f1000)) == state
+    for key, value in [('nrt', 2), ('rtfmt', 10), ('stencil', 0xb8000000)]:
+        assert not target_matches(fields, dict(capture, state=dict(state, **{key: value})))
+    assert not target_matches(fields, dict(capture, vp_gpu=0))
+result = subprocess.run(command + ['--native-target-path', 'rgba16-msaa2'], capture_output=True, text=True)
+assert result.returncode != 0 and 'requires --object-pass-path' in result.stderr
+print('Explicit native target selection, masked sample replacement and unsupported path checks passed')

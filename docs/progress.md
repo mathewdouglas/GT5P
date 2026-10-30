@@ -9,6 +9,24 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 154 - Construct fresh conditional native pipeline descriptors (2026-10-30)
+
+Explicit developer `--native-target-path` selects a GPU-fetch, single-colour,
+depth-backed target candidate; material and object-pass proofs are prerequisites.
+The new default-off offline `RSX_PSO_RECONSTRUCT_NATIVE=1` discards captured native
+state and constructs the descriptor from renderer constants, explicit target,
+prepared material and object-pass fields. Target/sample profile bits are also
+derived. Actual game pass ownership and remaining shader translation are open.
+
+Three RGBA16/2x and two RGBA16/single shader/native pipeline proofs pass. A zeroed
+captured descriptor still creates the expected pipeline with construction on and
+fails with it off. Twenty process checks and poisoned-descriptor/target rejection
+checks pass. RGBA8/single has synthetic coverage only. Isolated backend build and
+runtime patch check succeed; no player/release/original-checkout changes. This
+removes native descriptor state as a construction source for supported conditional
+candidates, not all captured translation dependencies. Evidence:
+[shader-reconstruction.md](shader-reconstruction.md#fresh-conditional-native-descriptor-construction-phase-154).
+
 ## Phase 153 - Reconstruct conditional object-pass culling and output gamma (2026-10-30)
 
 1,536 isolated native checks recover object-wrapper entry/exit face, winding,

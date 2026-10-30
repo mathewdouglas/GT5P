@@ -1161,3 +1161,54 @@ Local evidence:
 Next recover resource construction and gamma producers for unresolved globals,
 then target/sample/shadow/coordinate translation and actual pass ownership. The
 launcher must not present this developer proof as complete first-run coverage.
+
+
+## Fresh conditional native descriptor construction (Phase 154)
+
+Developer `--native-target-path rgba16-single|rgba16-msaa2|rgba8-single` explicitly
+selects a GPU-fetch vertex path, one colour target, D24S8 depth backing, and no
+stencil/mask redirect. It requires the explicit object-pass candidate and prepared
+material state. The target is an input, never selected from capture. This does
+not establish which game pass owns a live target. Candidate assumptions and the
+remaining captured translation fields are reported separately.
+
+`RSX_PSO_RECONSTRUCT_NATIVE=1` is default-off and only reachable inside the guarded
+offline proof. A bounded `target.state` selects supported format/sample pairs.
+The helper zero-initializes a fresh native descriptor, supplies renderer constants
+and target state, then applies independent material and object-pass fields.
+Root signature and independently rebuilt code are installed afterward. Both
+bytecode pointers and lengths are supplied explicitly. All captured native
+state is discarded; the recipe envelope remains a bounded code/key oracle.
+Material and pass application are mandatory; invalid targets fail closed.
+
+The host also replaces target format/count and sample bits 16..19 in its fragment
+profile. The GPU-fetch vertex path is selected explicitly. Other texture, export,
+shadow and low-unit coordinate translation fields remain captured. Reconstructing
+a native descriptor does not make the whole pipeline capture-independent.
+
+Three RGBA16/2x MSAA and two RGBA16/single-sample proofs match shader source,
+bytecode and native keys and create D3D12 pipelines with fresh descriptors.
+RGBA8/single is covered by synthetic descriptor checks, not a new GPU proof.
+Twenty process checks pass: the previous twelve plus target validation, native
+switch-off, prerequisites, and a descriptor-independence test. In that test every
+captured descriptor state byte is zeroed, retaining only code lengths required
+by the recipe reader; native construction still creates the expected pipeline.
+The same zeroed recipe fails with construction disabled. Thus a matching captured
+descriptor is not supplying the successful result.
+
+Native unit checks erase poisoned descriptor bytes for all three target choices
+and reject unsupported/malformed/overflowing targets without mutation. The pinned
+Windows x64 recipe ABI used by the zeroing fixture is checked at compile time.
+Existing reconstruction tests and isolated build/runtime patch checks pass.
+Normal play, player defaults, release packaging, original checkout/processes and
+shadercache are unchanged. Evidence:
+
+- `scratch/native-descriptor-msaa2-fixed-proof-20261030/report.json`
+- `scratch/native-descriptor-single-proof-20261030/report.json`
+- `scratch/pass-build/native-build.log`
+- `scripts/test/shader_reconstruct_native.py` (twenty exercised cases)
+
+Next remove the remaining captured fragment profile dependencies, starting with
+export control and unresolved global texture facts. Full first-run catalogue,
+actual pass ownership, automated route validation and launcher integration remain
+open; these conditional developer proofs must not be presented as complete.

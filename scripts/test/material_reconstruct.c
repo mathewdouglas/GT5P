@@ -1,5 +1,6 @@
 /* Isolated native descriptor replacement; no D3D device or game. */
 #include <assert.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,10 +8,14 @@
 #include <d3d12.h>
 #include "rsx_material_reconstruct.h"
 #include "rsx_pass_reconstruct.h"
+#include "rsx_native_reconstruct.h"
 static void write_state(const char* dir,const char* text) {
     char path[640];snprintf(path,sizeof path,"%s/material.state",dir);
     FILE* f=fopen(path,"wb");assert(f);fwrite(text,1,strlen(text),f);fclose(f);
 }
+_Static_assert(sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC)==656,"recipe x64 ABI changed");
+_Static_assert(offsetof(D3D12_GRAPHICS_PIPELINE_STATE_DESC,VS.BytecodeLength)==16,"VS ABI changed");
+_Static_assert(offsetof(D3D12_GRAPHICS_PIPELINE_STATE_DESC,PS.BytecodeLength)==32,"PS ABI changed");
 int main(int argc,char** argv) {
     assert(argc==2);
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pd={0};
@@ -60,6 +65,28 @@ int main(int argc,char** argv) {
         fwrite(invalid_pass[i],1,i==6?sizeof "GT5P_PASS_V1 5\0trailing"-1:strlen(invalid_pass[i]),f);fclose(f);
         before=pd;assert(!pso_pass_apply(argv[1],&pd));assert(!memcmp(&pd,&before,sizeof pd));
     }
+    const unsigned formats[]={11,11,28},samples[]={1,2,1};
+    for(unsigned i=0;i<3;i++) {
+        memset(&pd,0xab,sizeof pd);
+        char path[640];snprintf(path,sizeof path,"%s/target.state",argv[1]);
+        FILE* f=fopen(path,"wb");assert(f);fprintf(f,"GT5P_TARGET_V1 %u %u\n",formats[i],samples[i]);fclose(f);
+        assert(pso_native_base(argv[1],&pd));
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC expected={0};
+        expected.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;
+        expected.SampleMask=UINT_MAX;expected.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        expected.NumRenderTargets=1;expected.RTVFormats[0]=(DXGI_FORMAT)formats[i];
+        expected.DSVFormat=DXGI_FORMAT_D24_UNORM_S8_UINT;expected.DepthStencilState.DepthEnable=TRUE;
+        expected.SampleDesc.Count=samples[i];
+        assert(!memcmp(&pd,&expected,sizeof pd));
+    }
+    const char* invalid_target[]={"", "GT5P_TARGET_V1 28 2", "GT5P_TARGET_V1 11 4",
+        "GT5P_TARGET_V1 11 2 extra", "GT5P_TARGET_V2 11 2", "GT5P_TARGET_V1 4294967307 2"};
+    for(unsigned i=0;i<sizeof invalid_target/sizeof *invalid_target;i++) {
+        char path[640];snprintf(path,sizeof path,"%s/target.state",argv[1]);
+        FILE* f=fopen(path,"wb");assert(f);fputs(invalid_target[i],f);fclose(f);
+        before=pd;assert(!pso_native_base(argv[1],&pd));assert(!memcmp(&pd,&before,sizeof pd));
+    }
+    puts("Fresh native base construction erased poisoned descriptor and rejected unsupported targets");
     puts("Conditional pass descriptor replacement and malformed pass rejection passed");
     puts("Partial descriptor replacement, MRT fields, untouched pass fields and invalid-input rejection passed");
     return 0;

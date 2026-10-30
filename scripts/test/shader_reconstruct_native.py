@@ -24,11 +24,14 @@ if (source / 'material.state').is_file():
     cases += ['material-missing', 'material-malformed', 'material-wrong-state', 'material-off']
 if (source / 'pass.state').is_file():
     cases += ['pass-missing', 'pass-malformed', 'pass-wrong-state', 'pass-off', 'pass-without-material']
+if (source / 'target.state').is_file():
+    cases += ['native-missing', 'native-malformed', 'native-wrong-target', 'native-off',
+              'native-without-pass', 'native-without-material', 'native-zeroed-oracle', 'native-zeroed-control']
 for case in cases:
     work = Path(tempfile.mkdtemp(prefix='reconstruct-negative-', dir=ROOT / 'scratch'))
     proof = work / 'pipeline'; proof.mkdir()
     for path in source.iterdir():
-        if path.name in ('request.recipe', 'material.state', 'pass.state') or path.suffix == '.dxbc':
+        if path.name in ('request.recipe', 'material.state', 'pass.state', 'target.state') or path.suffix == '.dxbc':
             shutil.copy2(path, proof / path.name)
     if case == 'truncated-recipe':
         (proof / 'request.recipe').write_bytes(b'bad')
@@ -55,6 +58,24 @@ for case in cases:
         path = proof / 'pass.state'; fields = path.read_text().split()
         fields[1] = '1' if fields[1] == '5' else '5'
         path.write_text(' '.join(fields) + '\n')
+    if case == 'native-missing':
+        (proof / 'target.state').unlink()
+    elif case in ('native-malformed', 'native-off'):
+        (proof / 'target.state').write_text('invalid')
+    elif case == 'native-wrong-target':
+        path = proof / 'target.state'; fields = path.read_text().split()
+        fields[1:] = ['11', '1'] if fields[1:] == ['11', '2'] else ['11', '2']
+        path.write_text(' '.join(fields) + '\n')
+    elif case in ('native-zeroed-oracle', 'native-zeroed-control'):
+        # Pinned Windows x64 recipe V1 ABI, checked in the native descriptor test.
+        # Preserve only envelope code lengths needed by the bounded reader.
+        path = proof / 'request.recipe'; data = bytearray(path.read_bytes())
+        assert len(data) == 2760 and struct.unpack_from('<II', data, 8) == (1, 2760)
+        vs_bytes, ps_bytes = struct.unpack_from('<II', data, 40)
+        data[48:704] = bytes(656)
+        struct.pack_into('<Q', data, 48 + 16, vs_bytes)
+        struct.pack_into('<Q', data, 48 + 32, ps_bytes)
+        struct.pack_into('<Q', data, len(data) - 8, fnv64(data[:-8])); path.write_bytes(data)
     env = offline_env(args.game_root.resolve(), work / 'cache')
     env['RSX_PSO_RECONSTRUCT'] = str(proof)
     if case.startswith('material-'):
@@ -62,6 +83,10 @@ for case in cases:
     if case.startswith('pass-'):
         env['RSX_PSO_RECONSTRUCT_MATERIAL'] = '0' if case == 'pass-without-material' else '1'
         env['RSX_PSO_RECONSTRUCT_PASS'] = '0' if case == 'pass-off' else '1'
+    if case.startswith('native-'):
+        env['RSX_PSO_RECONSTRUCT_MATERIAL'] = '0' if case == 'native-without-material' else '1'
+        env['RSX_PSO_RECONSTRUCT_PASS'] = '0' if case == 'native-without-pass' else '1'
+        env['RSX_PSO_RECONSTRUCT_NATIVE'] = '0' if case in ('native-off', 'native-zeroed-control') else '1'
     run_offline(args.engine.resolve(), args.game_root.resolve(), env, work / 'run.log')
     result = json.loads((proof / 'result.json').read_text())
     if case == 'material-off':
@@ -78,6 +103,15 @@ for case in cases:
         assert result['pass_requested'] and not result['pass_applied']
     if case == 'pass-wrong-state':
         assert result['pass_applied'] and result['expected'] != result['actual']
+    if case in ('native-off', 'native-zeroed-oracle'):
+        assert result['created'] and result['expected'] == result['actual']
+        assert result['native_applied'] == (case == 'native-zeroed-oracle')
+        print('Verified', case, '(guest entry never executed)')
+        continue
+    if case in ('native-missing', 'native-malformed'):
+        assert result['native_requested'] and not result['native_applied']
+    if case == 'native-wrong-target':
+        assert result['native_applied'] and result['expected'] != result['actual']
     assert result['created'] is False, (case, result)
     if case == 'wrong-pipeline-key':
         assert result['expected'] != result['actual'] and result['actual'] != '0000000000000000'

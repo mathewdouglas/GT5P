@@ -323,3 +323,10 @@ gamma reconstruction. Five partial shader/native pipeline proofs pass; live
 pass ownership and remaining target/translation fields are unresolved. See
 [the reconstruction scope](shader-reconstruction.md#conditional-object-pass-fields-phase-153).
 This does not change player preparation or release defaults.
+
+
+Phase 154 adds fresh native descriptor construction for explicit developer
+GPU-fetch/depth-backed target candidates. Five pipeline proofs and a zeroed
+captured-descriptor check pass. Remaining shader translation and actual pass
+ownership still depend on investigation; no player or release default changes.
+See [the measured scope](shader-reconstruction.md#fresh-conditional-native-descriptor-construction-phase-154).

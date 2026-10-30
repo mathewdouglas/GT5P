@@ -26,3 +26,29 @@ def pass_matches(fields, state):
 def replace_pass_fields(fields, state):
     return dict(state, cull=fields['cull'],
                 cube=(state['cube'] & ~fields['cube_mask']) | fields['cube_value'])
+
+
+TARGET_PATHS = {'rgba16-single': (11, 1), 'rgba16-msaa2': (11, 2), 'rgba8-single': (28, 1)}
+
+
+def native_target_fields(path):
+    if path not in TARGET_PATHS:
+        raise ValueError('unknown native target path')
+    format, samples = TARGET_PATHS[path]
+    return dict(path=path, rtfmt=format, nrt=1, sample_count=samples,
+                cube_mask=15 << 16, cube_value=(samples if samples > 1 else 0) << 16,
+                assumptions=['GPU-fetch vertex path with no native input layout',
+                             'one explicit depth-backed colour target; no stencil or mask redirect',
+                             'default renderer depth/cull/blend switches'])
+
+
+def target_matches(fields, capture):
+    state = capture['state']
+    return (capture['vp_gpu'] == 1 and state['rtfmt'] == fields['rtfmt'] and state['nrt'] == 1 and
+            not state['stencil'] & 0x0fffffff and
+            state['cube'] & fields['cube_mask'] == fields['cube_value'])
+
+
+def replace_target_fields(fields, state):
+    return dict(state, rtfmt=fields['rtfmt'], nrt=fields['nrt'],
+                cube=(state['cube'] & ~fields['cube_mask']) | fields['cube_value'])

@@ -174,13 +174,14 @@ def material_state_matches(values, capture):
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
                  prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None,
-                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None):
+                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
     sampler_origin = None
     shape_origin = None
     pass_origin = None
+    target_origin = None
     if prepared:
         from shader_material_state import prepare_state, decode_state
         raw = read_slice(prepared['source'])
@@ -197,6 +198,14 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         if not pass_matches(pass_origin, capture['state']):
             raise ValueError('conditional object pass differs from captured oracle')
         state = replace_pass_fields(pass_origin, state)
+    if native_target_path:
+        from shader_pass_state import native_target_fields, target_matches, replace_target_fields
+        if not pass_origin:
+            raise ValueError('Native construction requires an explicit object pass')
+        target_origin = native_target_fields(native_target_path)
+        if not target_matches(target_origin, capture):
+            raise ValueError('explicit native target differs from captured oracle')
+        state = replace_target_fields(target_origin, state)
     if material_samplers or sampler_lanes:
         from shader_material_textures import model_textures, complete_sampler_key, known_sampler_key, with_global_sampler_path
         # Reparse the original definition and bindings. A saved audit/captured
@@ -234,7 +243,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         state['samplers'] = f'{key:016x}'
     asset = read_slice(candidate)
     vertex = word_swap(asset) if candidate['order'] == 'swap32' else asset
-    hlsl, vs = compiler.vertex(vertex, capture['vp_gpu'])
+    hlsl, vs = compiler.vertex(vertex, 1 if target_origin else capture['vp_gpu'])
     (output / 'vertex-input.bin').write_bytes(vertex)
     (output / 'vertex.hlsl').write_bytes(hlsl)
     if f'{fnv64(hlsl):016x}' != capture['vp_hlsl']:
@@ -276,6 +285,9 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
             f"GT5P_MATERIAL_V1 {values['blend']:x} {values['cmask']:x} {values['depth_bits']:x}\n", encoding='ascii')
     if pass_origin:
         (proof / 'pass.state').write_text(f"GT5P_PASS_V1 {pass_origin['cull']:x}\n", encoding='ascii')
+    if target_origin:
+        (proof / 'target.state').write_text(
+            f"GT5P_TARGET_V1 {target_origin['rtfmt']} {target_origin['sample_count']}\n", encoding='ascii')
     (proof / f"code_{capture['vs']}.dxbc").write_bytes(vs)
     (proof / f"code_{capture['ps']}.dxbc").write_bytes(ps)
     env = offline_env(game_root, output / 'proof-cache')
@@ -284,6 +296,8 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         env['RSX_PSO_RECONSTRUCT_MATERIAL'] = '1'
     if pass_origin:
         env['RSX_PSO_RECONSTRUCT_PASS'] = '1'
+    if target_origin:
+        env['RSX_PSO_RECONSTRUCT_NATIVE'] = '1'
     run_offline(engine, game_root, env, output / 'pipeline-create.log')
     result = json.loads((proof / 'result.json').read_text())
     if result['expected'] != capture['pipeline'] or result['actual'] != capture['pipeline'] or not result['created']:
@@ -292,16 +306,21 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         raise ValueError('engine did not replace native descriptor fields from material state')
     if pass_origin and not result.get('pass_applied'):
         raise ValueError('engine did not replace native cull fields from pass candidate')
+    if target_origin and not result.get('native_applied'):
+        raise ValueError('engine did not construct a fresh native descriptor')
     return dict(pipeline=capture['pipeline'], vertex_asset=candidate, fragment_asset=fragment_source,
                 vs=capture['vs'], ps=capture['ps'], vertex_hlsl_matches=True, fragment_source_key_matches=True,
                 native_result=result,
                 material_state=({**prepared, 'values': values} if prepared else None),
-                sampler_origin=sampler_origin, texture_shape_origin=shape_origin, object_pass_origin=pass_origin,
+                sampler_origin=sampler_origin, texture_shape_origin=shape_origin, object_pass_origin=pass_origin, native_target_origin=target_origin,
+                native_descriptor_origin='fresh independent construction' if target_origin else 'captured with reported replacements',
                 replaced_translation_fields=(['sampler_lanes'] if sampler_lanes else ['samplers'] if material_samplers else []) +
-                                            (['texture_sampling_bits'] if material_texture_state else ['texture_shape_bits'] if material_texture_shapes else []) + (['output_gamma_bit'] if pass_origin else []),
+                                            (['texture_sampling_bits'] if material_texture_state else ['texture_shape_bits'] if material_texture_shapes else []) + (['output_gamma_bit'] if pass_origin else []) +
+                                            (['target_sample_bits'] if target_origin else []),
                 replaced_descriptor_fields=(['blend', 'colour_write_mask', 'depth_compare', 'depth_write_mask'] if prepared else []) +
-                                           (['cull_mode', 'front_counter_clockwise'] if pass_origin else []),
-                state_origin=('prepared asset blend/mask/depth plus reported conditional fields; remaining state captured'
+                                           (['cull_mode', 'front_counter_clockwise'] if pass_origin else []) +
+                                           (['all_other_native_descriptor_fields'] if target_origin else []),
+                state_origin=('prepared material and reported conditional fields; native descriptor fresh when requested; remaining translation state captured'
                               if prepared else 'captured translation profile and native recipe'),
                 shader_input_origin='original asset slices; no captured raw inputs or cached DXBC used for compilation')
 
@@ -341,7 +360,12 @@ def main():
                     help='Explicit successfully initialized framebuffer shape; incoming gamma stays unknown')
     ap.add_argument('--object-pass-path', choices=('ccw', 'cw'),
                     help='Conditional object wrapper winding/output gamma; no later overrides')
+    from shader_pass_state import TARGET_PATHS
+    ap.add_argument('--native-target-path', choices=tuple(TARGET_PATHS),
+                    help='Construct fresh GPU-fetch, depth-backed single-target descriptor for explicit candidate')
     args = ap.parse_args()
+    if args.native_target_path and not args.object_pass_path:
+        ap.error('Native target construction requires --object-pass-path')
     if args.object_pass_path and not args.prepared_material_state:
         ap.error('Object pass requires --prepared-material-state')
     if args.environment_texture_path and (not args.environment_sampler_path or not (args.material_texture_shapes or args.material_texture_state)):
@@ -437,9 +461,10 @@ def main():
     output.mkdir(parents=True)
     report = dict(vertex_records=count, matched_vertex_inputs=len(matches), candidates=matches, samples=[],
                   limitations=['Source container set comes from the existing FP catalogue, not an exhaustive asset inventory.',
-                               ('Prepared blend/write-mask/depth and explicitly selected conditional pass fields are replaced; other state remains captured.'
+                               ('Prepared material and explicit conditional fields are reconstructed; native descriptor is fresh only with native_target_path; other translation fields remain captured.'
                                 if args.prepared_material_state else 'Rendering state/native descriptor is captured, not reconstructed from material definitions.'),
                                'This is a bounded sample, not a complete distributable catalogue.'])
+    report['native_target_path'] = args.native_target_path
     report['object_pass_path'] = args.object_pass_path
     report['environment_texture_path'] = args.environment_texture_path
     report['material_texture_state'] = args.material_texture_state
@@ -450,13 +475,15 @@ def main():
     report['shadow_sampler_path'] = args.shadow_sampler_path
     report['environment_sampler_path'] = args.environment_sampler_path
     report['mirror_sampler_path'] = args.mirror_sampler_path
-    from shader_pass_state import object_pass_fields, pass_matches
+    from shader_pass_state import object_pass_fields, pass_matches, native_target_fields, target_matches
     compiler = NativeCompiler(args.decoder)
     pairs = set()
     for row in rows:
         if row['status'] != 'recipe_link_verified' or not row.get('fragment_asset_match') or row['line'] < args.start_line:
             continue
         c = row['capture']; state = c['state']
+        if args.native_target_path and not target_matches(native_target_fields(args.native_target_path), c):
+            continue
         if c['vp_raw'] not in matches or c['fp_flags'] or state['unnorm']:
             continue  # This proof's offline FP profile has these explicit limits.
         pair = (c['vs'], c['ps'])
@@ -493,7 +520,7 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path)
+                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path)
             result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])
