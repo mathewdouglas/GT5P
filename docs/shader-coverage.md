@@ -247,7 +247,9 @@ The provenance recorder and sampled asset reconstruction are now implemented;
 see [shader-reconstruction.md](shader-reconstruction.md) for material pairings
 and the subsequent state audit/preparation proof. A measured preparation rule
 now accounts for the common LESS-to-LEQUAL difference. The current next step is
-establishing exact draw ownership and the remaining pass/target/texture state,
-followed by unmatched-program analysis. Extending
+establishing exact draw ownership and the remaining pass/target/texture state;
+six native pipeline proofs now replace blend/write-mask/depth fields from
+prepared assets rather than retaining those fields from captures. This remains
+a partial reconstruction; unmatched programs also need analysis. Extending
 catalogue size or cross-multiplying pooled profiles alone cannot establish
 complete pipeline reconstruction.

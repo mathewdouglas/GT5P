@@ -9,6 +9,35 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 142 - Replace native descriptor fields from prepared material data (2026-10-30)
+
+`shader_reconstruct.py --materials <audit> --prepared-material-state` reparses
+material definitions/state indices and hashes the original state slice, applies
+the measured preparation rule, then supplies derived blend/write-mask/depth
+values to the native offline proof. Captured state is still an eligibility
+oracle; unsupported stencil/mask passes are excluded.
+
+Default-off `RSX_PSO_RECONSTRUCT_MATERIAL=1`, honored only by the guarded offline
+proof, validates a bounded `material.state` file and replaces blend fields and
+colour masks on active render targets plus depth comparison/write mask before
+production key calculation and uncached D3D12 creation. Culling orientation and
+all other descriptor/pass/texture fields remain captured. This is partial
+reconstruction, not capture-free preparation or exact material ownership.
+
+Six selected samples matched rebuilt shader source/bytecode and native keys and
+created successfully: three opaque character cases, one blended character, a
+blended car-menu case with depth writes off, and one opaque car interior. A valid
+wrong colour mask changed the computed key and prevented creation; missing or
+malformed material files were rejected. Explicit mode `0` ignored malformed
+state and preserved the legacy proof. Prior truncated-recipe/damaged-code/
+wrong-key checks passed; all runs confirmed guest entry was not executed.
+
+Native unit checks cover descriptor replacement across MRTs, unchanged unrelated
+fields, invalid values and unsupported stencil. Python checks cover candidate
+eligibility. The isolated compile/relink and pinned-overlay reapply succeeded;
+shared runtime and normal binary are unchanged. Evidence/next fields:
+[shader-reconstruction.md](shader-reconstruction.md).
+
 ## Phase 141 - Reproduce material preparation and corroborate consumed bytes (2026-10-30)
 
 The isolated runtime gains bounded/default-off `GCM_DEPTH_PROVENANCE`, with

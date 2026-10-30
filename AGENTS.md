@@ -36,14 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 141)
+## Start here: state of play (2026-10-30, Phase 142)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 141 is the latest).
+has the evidence, newest phase first (Phase 142 is the latest).
 
 ### What works now
 
+- **Prepared-state pipeline proof (Phase 142):** six samples rebuilt shaders
+  and replaced native blend/write-mask/depth fields from prepared asset blocks,
+  matching pipeline keys and creating successfully in D3D12. Culling direction,
+  targets, texture state and other pass fields remain captured. The optional
+  offline mode is `RSX_PSO_RECONSTRUCT_MATERIAL=1`, exposed by the developer
+  proof's `--prepared-material-state`; normal play is unchanged. See
+  [docs/shader-reconstruction.md](docs/shader-reconstruction.md).
 - **Material preparation recovered (Phase 141):** an independently expressed
   offline transform matches the local lifted preparation routine on 5,692
   blocks. Prepared candidates match depth for all 1,164 linked draws with

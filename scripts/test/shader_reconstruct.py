@@ -61,4 +61,15 @@ with tempfile.TemporaryDirectory() as folder:
     path.write_bytes(b'')
     assert m.discover_vertices([path], {48: {code: {'synthetic-id'}}}) == ({}, 0)
 
-print('SHDS vertex bounds, wrapper offsets, word order, exact matching and source mutation checks passed')
+values = dict(blend=0, cmask=15, depth_bits=0x30000000, cull_enable=1, stencil_enable=0)
+capture = dict(state=dict(blend=0, cmask=15, stencil=0x30000000, cull=5))
+assert m.material_state_matches(values, capture)
+for field, value in [('blend', 1), ('cmask', 14), ('depth_bits', 0x10000000),
+                     ('cull_enable', 0), ('stencil_enable', 1)]:
+    changed = dict(values); changed[field] = value
+    assert not m.material_state_matches(changed, capture)
+for stencil in (0x30000001, 0x34000000):
+    changed = dict(state=dict(capture['state'], stencil=stencil))
+    assert not m.material_state_matches(values, changed)
+
+print('SHDS bounds, source integrity and prepared material-state eligibility checks passed')
