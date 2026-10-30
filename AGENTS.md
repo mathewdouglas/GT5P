@@ -36,13 +36,23 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 167)
+## Start here: state of play (2026-10-31, Phase 168)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 167 is the latest).
+has the evidence, newest phase first (Phase 168 is the latest).
 
 ### What works now
+
+- **Optional verified template and storage cleanup (Phase 168):** 1,196 records
+  rebuild both stages and exact native pipelines from local assets; optional
+  metadata-only starter is in assets/pipeline-templates/gt5p-disc-v2. Preparation
+  takes about 12 minutes; 298 exported records remain unresolved. Completed
+  cold application-cache route trials do not establish a consistent stutter win.
+  No fabricated menu/race membership or player defaults. Removed 14 disposable
+  benchmark game copies, freeing 54.53 GiB while preserving every shadercache,
+  fixtures and evidence. Future trials preflight space and discard completed
+  game copies automatically; --keep-game-copies opts into retention.
 
 - **Quiet portable templates (Phase 167):** offline compiler windows stay hidden;
   native visibility/explicit-profile source parity checks pass. Format 2 pins

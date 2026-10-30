@@ -9,6 +9,77 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 168 - Verified optional template, measured routes and bounded storage (2026-10-31)
+
+Completed the Phase 167 experiment. Asset lookup finds 210 VP/430 FP identities;
+1,196 of 1,494 exported records reconstruct both stages, match source/bytecode
+identifiers and exact current native keys, and persist local driver pipelines.
+298 remain unresolved-program; three branching VP contexts were excluded before
+export. Total preparation is 723.881 s, including process/translation overhead;
+fresh native creation is 26.109 s for 1,196 pipelines. Driver blobs total
+82.568 MiB. Lookup was 8.035 s with warm OS caches versus the earlier 48.93 s;
+this is not evidence of a lookup optimization. Evidence:
+`scratch/template-hidden-route-20261031/preparation/report.json`.
+
+The optional starter at `assets/pipeline-templates/gt5p-disc-v2` contains only
+the 1,196 positively verified identifier/numeric-state records, checksum-sharded
+into roughly 1.1 MB of text. No shader bytes/source/compiled binaries are tracked.
+The source contract/default settings/root key checks remain mandatory. Native
+compiler creation is lazy; malformed/incompatible headers with explicit
+`--demand-fallback` produce an empty result without starting a compiler. Strict
+mode still rejects them. A fresh-cache single-record bundle smoke passes:
+`scratch/template-bundle-smoke-20261031`. Preparation no longer fabricates a
+menu index: offline disk availability is not evidence of live pass membership.
+
+Four completed HSR trials used fresh application caches, the same scripted route,
+1080p/2x/VSync and existing asynchronous draw policy. OS/driver caches remained
+warm. Bulk preload initially assigned all prepared records to menu membership;
+that assumption was removed after these trials. Cumulative five-second counters
+can omit the final interval. Native cached calls are included in driver calls;
+shader compilation is a separate counter.
+
+| Trial | Shader compiles | Driver calls (cached) | Demand queued | Early/late p99 ms | Grid s | Peak private GiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Control 1 | 1603 | 942 (0) | 942 | 65.7 / 58.9 | 65.4 | 3.17 |
+| Bulk prepared 2 | 666 | 2048 (1318) | 841 | 185.7 / 101.8 | 65.0 | 3.34 |
+| Bulk prepared 3 | 674 | 2045 (1318) | 838 | 193.4 / 91.3 | 65.9 | 3.34 |
+| Control 4 | 1646 | 1539 (1) | 1539 | 197.4 / 145.3 | 65.4 | 3.24 |
+| Final demand control | 1559 | 1118 (0) | 1132 | 129.4 / 49.3 | 66.9 | 3.20 |
+| Final demand prepared | 655 | 2126 (1393) | 2126 | 150.1 / 92.1 | 65.1 | 3.29 |
+
+The final pair disables startup scanning and clears membership indices only in
+new trial cache copies. Warm-loaded/resident/prewarm-hit counts are zero there;
+prepared binaries are consumed through normal demand. Bulk runs report 2,292
+warm hits, but that counter includes startup bookkeeping and cannot be claimed
+as independently measured draw coverage. Shader compiles decrease; **no consistent
+stutter improvement is established**. Prepared runs still have long hitches.
+Controls and scene progression differ markedly; disk/memory pressure and desktop
+activity limit attribution. Early/late >100 ms counts in the final pair are
+31/1 control and 28/17 prepared. Later screenshots show road/cars/HUD in prepared
+scenes; differing cameras/progression prevent a pixel-equal regression verdict.
+No new persistent rendering fault was identified in inspected later images,
+but missing-draw freedom is not proved. Reports/screenshots:
+`scratch/template-hidden-route-20261031/trials/report.json` and
+`scratch/template-demand-clean-20261031/report.json`. An older demand pair was
+stopped for the user's urgent disk request and is excluded from these results.
+
+The audit checkout held 75.436 GiB of regular files, mostly disposable benchmark
+game copies. Removed exactly 14 verified private trial `game` directories,
+reclaiming 54.53 GiB. All shadercache directories, original checkout/runtime,
+base fixture, private training root, build tools, reports and screenshots were
+preserved. Junctions were unlinked without traversing their targets; all paths
+and protected cache names were checked before deletion. Evidence:
+`scratch/disk-usage-20261031.json`, `scratch/disk-cleanup-20261031.json`.
+
+`scripts/benchmark_storage.py` now checks available space before each copy,
+including a 2 GiB margin, and removes completed trials' private game copies by
+default. `--keep-game-copies` retains them explicitly. Cleanup validates owned
+trial paths, refuses nested shadercache/unexpected hard links and never follows
+reparse points. Synthetic tests exercise junction target preservation, read-only
+copies, cache protection and low-space rejection; the final real pair also
+removes both copies while preserving caches/evidence. No further game runs were
+needed. No launcher/release/player default changes or complete coverage claim.
+
 ## Phase 167 - Quiet preparation and portable template contracts (2026-10-31)
 
 User observed repeated windows flashing/closing during template preparation.

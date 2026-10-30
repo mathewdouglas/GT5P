@@ -7,7 +7,7 @@ Phase 160 adds [named shared-pass selection and isolated state checks](shader-re
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.
 
-## Identifier-only templates (Phase 167; live validation pending)
+## Identifier-only templates (Phase 168; optional developer path)
 
 This adapts the hash/numeric-state design in [Project Pyrrhus's template patch](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2071-pipeline-template-prewarm.patch),
 [context/key correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2077-pso-key-vp-start-template-default.patch)
@@ -45,23 +45,29 @@ Diagnostic recording is off during performance tests. Export each session:
 
 Templates contain hashes, translation state, numeric native state and canonical
 ATTR inputs. No game-derived shader bytes/source/binaries are included. Keep all
-experimental outputs ignored; no starter template is shipped yet. Game ELF, renderer source contract, explicit default settings and
+experimental outputs ignored. A verified 1,196-record metadata starter is in
+`assets/pipeline-templates/gt5p-disc-v2`; pass that directory to `--template`.
+Game ELF, renderer source contract, explicit default settings and
 schema/key/Windows x64 ABI compatibility are required. Format 2 excludes
 per-install EXE/DLL timestamps; actual helper hashes stay in diagnostic reports. Rebuilt
 source and bytecode identifiers and exact native keys verify settings/root
 compatibility. Current export excludes branching vertices until their start-slot
 context can be represented. Unknown or conflicting records fail safely; a user
 can launch normally without template preparation. Individual missing/incompatible
-programs are reported and remain on the asynchronous demand path.
+programs are reported and remain on the asynchronous demand path. Optional
+`--demand-fallback` writes an empty preparation result for invalid/incompatible
+template headers without starting a compiler; strict preparation otherwise fails.
 
 The guarded offline persistence switch is `RSX_PSO_TEMPLATE_PREPARE=1`, default
 off. Rollback: omit preparation/use the normal launcher; `=0` disables this
 extension. No live draw policy or player defaults changed. Preparation uses the
 existing two compiler workers, bounded queues and sequential native device owner,
-then exits before play. Accepted recipes use the existing startup worker/resident
-caps/deduplication/shutdown. Offline windows stay hidden. `RSX_SHADER_LIBRARY_EXACT=1` omits unnecessary
+then exits before play. Preparation does not invent menu/race membership indices:
+normal demand consumes prepared bytecode/driver blobs, and real play learns
+membership. Existing worker limits, deduplication and shutdown remain unchanged.
+Offline windows stay hidden. `RSX_SHADER_LIBRARY_EXACT=1` omits unnecessary
 base-profile compiles in explicit preparation only; ordinary library defaults
-remain unchanged. Limits and current evidence are in Phases 166/167.
+remain unchanged. Limits and current evidence are in Phases 166-168.
 
 For a versioned metadata bundle (no shader contents):
 
@@ -71,9 +77,9 @@ For a versioned metadata bundle (no shader contents):
 ```
 
 `--template` accepts the bundle directory directly. Each part is checksum checked;
-conflicting/incompatible generations are rejected. No starter is shipped yet.
+conflicting/incompatible generations are rejected.
 
-Fresh-cache paired validation is wired but **has not run**:
+Fresh application-cache paired validation:
 
 ```powershell
 .venv/Scripts/python scripts/test/pipeline_template_route.py `
@@ -90,7 +96,26 @@ driver calls/cached calls, live demand jobs, warmup hits, frame hitches, grid
 loading and sampled memory. Five-second counters can omit the final interval.
 Inspect saved screenshots for missing draws before interpreting timing; OS and
 driver caches are retained. Add offline preparation to the first-launch wait.
-No shader/native coverage or stutter improvement is established by this checkpoint.
+The completed experiment reconstructs 1,196 of 1,494 exported records; 298 remain
+unresolved and three branching vertex contexts were excluded at export. Both
+shader stages and exact native keys pass verification. Preparation took 723.9 s,
+including lookup/translation/compiler process overhead; native creation accounted
+for 26.1 s. Local driver blobs occupy 82.6 MiB. These are retained-route records,
+not whole-game coverage. A fresh-cache bundled one-record smoke also passes.
+
+Four bulk-preload trials and a final demand-only pair do not establish a consistent
+stutter improvement. Runtime shader compiles fall in prepared trials, but cached
+driver creation still occurs and frame-time results vary substantially. Screenshots
+show later prepared scenes drawing, but differing progress prevents pixel-equal
+rendering proof. See Phase 168 for counters, timings and evidence. `warm_hits`
+includes startup bookkeeping; it is not an independent draw/preparation-hit count.
+
+Benchmark trials now remove only their disposable private `game` directory after
+saving results. Shader caches, logs and screenshots remain. Use
+`--keep-game-copies` only when debugging requires them. Before copying, a free-space
+check reserves the writable game copy, prepared cache and 2 GiB headroom. Fourteen
+old copies were removed on request, freeing 54.53 GiB; their report paths remain
+as historical evidence, but those disposable game directories no longer exist.
 
 ## Automatic shared vertex preparation (developer only)
 

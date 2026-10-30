@@ -14,8 +14,11 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'scripts'))
+from benchmark_storage import require_space, discard_game_copy
 
 
 def frame_stats(rows, start, end):
@@ -53,8 +56,8 @@ def analyze_run(logs, tag, seed_keys=()):
     metric_names = ('shader_compiles','driver_calls','cached_calls','demand_queued','demand_done','warm_loaded','warm_hits','resident')
     memory_path = logs / f'{tag}.memory.csv'
     memory = list(csv.DictReader(memory_path.open(encoding='utf-8-sig'))) if memory_path.exists() else []
-    # The worker marks actually used recipes once per run; mere startup reads
-    # leave an existing recipe's timestamp unchanged. No provenance recording.
+    # File maintenance marks are diagnostic, not independent draw coverage:
+    # preparation/recording can refresh timestamps as well as demand use.
     used = {p.stem[4:] for p in (logs.parent/'shadercache/warmup-v1').glob('pso_*.recipe')
             if p.stat().st_mtime_ns >= window['launch_ms']*1_000_000}
     return dict(window=window, periods={k:frame_stats(rows,*v) for k,v in periods.items()},
@@ -68,7 +71,7 @@ def analyze_run(logs, tag, seed_keys=()):
                 warmup_summaries=warm,
                 pipeline_counters=dict(zip(metric_names,map(int,metrics[-1]))) if metrics else {},
                 memory_peak_sampled={k:max(int(r[k]) for r in memory) for k in ('WorkingSet','PrivateBytes','PeakWorkingSet')} if memory else {},
-                metrics_note='Cumulative counters sampled every five seconds; final partial interval can be omitted. Driver calls include startup preparation; demand_queued counts live async work.',
+                metrics_note='Cumulative counters sampled every five seconds; final partial interval can be omitted. Driver calls include startup preparation; demand_queued counts live async work. Warm hits include preload bookkeeping; timestamp marks are not independent draw coverage.',
                 used_native_recipes=len(used), encountered_seed_keys=sorted(used & set(seed_keys)),
                 compiler_note='Five-second diagnostic summaries omit any final partial interval.',
                 period_note='Early period includes grid and intended 30-FPS rolling start; route includes loading transitions.')
@@ -79,8 +82,10 @@ def main():
     for name in ('fixture','engine','prepared','output'):
         ap.add_argument('--'+name,type=Path,required=True)
     ap.add_argument('--trials',type=int,choices=(2,4),default=4)
+    ap.add_argument('--keep-game-copies',action='store_true',
+                    help='Retain disposable game/save copies for debugging (about 4 GiB per trial)')
     ap.add_argument('--startup-policy',choices=('scan','demand'),default='scan',
-                    help='Scan all prepared recipes at startup, or use prepared files on demand')
+                    help='Scan prepared recipes at startup, or suppress copied membership indices and use files on demand')
     args = ap.parse_args()
     fixture,engine,prepared,output = (getattr(args,k).resolve() for k in ('fixture','engine','prepared','output'))
     if output.exists() or subprocess.run(['git','check-ignore','-q',str(output/'report.json')],cwd=ROOT).returncode:
@@ -109,6 +114,7 @@ def main():
     for number,condition in enumerate(order,1):
         if b'gt5p.exe' in subprocess.run(['tasklist','/FI','IMAGENAME eq gt5p.exe','/NH'],capture_output=True).stdout.lower():
             raise SystemExit('Another gt5p.exe is running; nothing was stopped')
+        require_space(output,fixture,prepared if condition=='prepared' else None)
         tag = f'{number}-{condition}'
         trial = output/tag;game = trial/'game';logs=trial/'logs';game.mkdir(parents=True);logs.mkdir()
         print('Creating isolated trial',tag,flush=True)
@@ -125,6 +131,11 @@ def main():
         cache = trial/'shadercache'
         if condition == 'prepared':
             shutil.copytree(prepared,cache)
+            if args.startup_policy == 'demand':
+                # Change only this new private trial's copied indices. The seed
+                # cache and all recipe/bytecode/driver files remain untouched.
+                for name in ('menu-v1.txt','race-v1.txt'):
+                    (cache/'warmup-v1'/name).write_text('')
         else:
             cache.mkdir()
         env = {k:v for k,v in os.environ.items() if not k.startswith(
@@ -153,6 +164,10 @@ def main():
         result = dict(tag=tag,condition=condition,**analyze_run(logs,tag,seed_keys))
         report['trials'].append(result)
         (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+        if not args.keep_game_copies:
+            result['discarded_game_copy_bytes'] = discard_game_copy(game)
+            result['game_copy_retention'] = 'Disposable game copy removed; logs/screenshots/shadercache retained'
+            (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps(result['periods']),flush=True)
     print('Completed paired benchmark:',output/'report.json',flush=True)
 

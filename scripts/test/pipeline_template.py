@@ -1,12 +1,13 @@
 """Template schema, numeric state, integrity and merge conflict rejection."""
 import copy
 import tempfile
+from unittest.mock import patch
 from pathlib import Path
 import struct
 import sys
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from pipeline_template import validate, envelope, native_state, has_flow, SCHEMA, VERSION, SETTINGS, merge, bundle, read
+from pipeline_template import validate, envelope, native_state, has_flow, SCHEMA, VERSION, SETTINGS, merge, bundle, read, prepare, renderer_contract
 from prepare_material_shaders import request_envelope
 
 data = bytearray(request_envelope(b'DXBC', b'DXBC'))
@@ -80,3 +81,23 @@ with tempfile.TemporaryDirectory() as temporary:
     else:
         raise AssertionError('Corrupt metadata shard accepted')
 print('Metadata bundles round-trip and reject altered parts')
+
+# Keep this synthetic rejection independent of a concurrently owned game. No
+# decoder or offline engine is permitted to start when the header is invalid.
+from shader_coverage import ROOT
+(ROOT/'scratch').mkdir(exist_ok=True)
+work=Path(tempfile.mkdtemp(prefix='template-fallback-',dir=ROOT/'scratch'))
+invalid=work/'invalid.json';invalid.write_text('{"version":999}')
+with patch('pipeline_template.idle'), patch('pipeline_template.NativeCompiler',side_effect=AssertionError('Decoder started for invalid header')):
+    fallback=prepare(invalid,work,work/'elf',work/'engine',work/'decoder',work,work/'result',demand_fallback=True)
+assert fallback['counts']=={'template-rejected':1}
+assert (work/'result/shadercache/warmup-v1').is_dir()
+assert not list((work/'result/shadercache/warmup-v1').iterdir())
+print('Incompatible-header fallback writes no recipes and starts no compiler')
+
+starter=ROOT/'assets/pipeline-templates/gt5p-disc-v2'
+if starter.exists():
+    metadata=read(starter)
+    assert metadata['compatibility']['renderer_sha256']==renderer_contract()
+    assert len(metadata['records'])<=4096
+    print('Bundled starter metadata matches the current renderer contract')

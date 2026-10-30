@@ -34,17 +34,20 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def renderer_contract():
+    manifest = json.loads((ROOT / 'config/ps3recomp.json').read_text())
+    patch = (ROOT / manifest['patch']).read_bytes().replace(b'\r\n', b'\n')
+    patch = b'\n'.join(b'' if line == b' ' else line for line in patch.split(b'\n'))
+    return sha(manifest['commit'].encode() + b'\n' + patch)
+
+
 def compatibility(engine, decoder, elf):
     # Pin the distributable renderer source contract, not per-install executable
     # or DLL timestamps. Exact source/bytecode/native hashes still gate reuse.
     if not engine.is_file() or not decoder.is_file():
         raise ValueError('Engine/decoder missing')
-    manifest = json.loads((ROOT / 'config/ps3recomp.json').read_text())
-    patch = (ROOT / manifest['patch']).read_bytes().replace(b'\r\n', b'\n')
-    patch = b'\n'.join(b'' if line == b' ' else line for line in patch.split(b'\n'))
-    contract = sha(manifest['commit'].encode() + b'\n' + patch)
     return dict(abi='windows-x64-recipe-v1', key_version=1, root_signature_keyed=True,
-                renderer_sha256=contract, renderer_settings=SETTINGS.copy(),
+                renderer_sha256=renderer_contract(), renderer_settings=SETTINGS.copy(),
                 elf_sha256=sha(elf.read_bytes()), translation_policy='default-constbuf-v1')
 
 
@@ -295,14 +298,25 @@ def locate(records, catalog, elf):
                                      vertex_found=len(vertices), fragment_found=len(fragments))
 
 
-def prepare(template, catalog, elf, engine, decoder, game_root, output):
+def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False):
     idle()
     output = isolated(output)
     if output.exists():
         raise ValueError('Use a fresh ignored output; existing caches are preserved')
-    document = read(template)
-    if document['compatibility'] != compatibility(engine, decoder, elf):
-        raise ValueError('Template renderer/game/settings mismatch; demand fallback remains available')
+    try:
+        document = read(template)
+        if document['compatibility'] != compatibility(engine, decoder, elf):
+            raise ValueError('Template renderer/game/settings mismatch')
+    except (ValueError,OSError,TypeError,KeyError) as exc:
+        if not demand_fallback:
+            raise
+        (output/'shadercache/warmup-v1').mkdir(parents=True)
+        report = dict(schema=1,template_sha256=None,requested=0,records=[],counts={'template-rejected':1},
+                      lookup={},preparation_seconds=0,reason=str(exc),
+                      policy='Template rejected; empty cache retained for existing asynchronous demand path')
+        save_report(output/'report.json',report)
+        print('Template rejected; using demand fallback:',exc,flush=True)
+        return report
     output.mkdir(parents=True)
     cache = output / 'shadercache'
     cache.mkdir()
@@ -314,7 +328,7 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output):
                   engine_sha256=sha(engine.read_bytes()), decoder_sha256=sha(decoder.read_bytes()),
                   policy='Offline before guest entry; default renderer translation; demand fallback for missing/rejected entries')
     save_report(output / 'report.json', report)
-    compiler = NativeCompiler(decoder)
+    compiler = None
     vs_cache, jobs, by_id = {}, [], {}
     for number, r in enumerate(document['records'],1):
         if number % 128 == 0:
@@ -324,6 +338,8 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output):
             f = fragments[r['fp']['sha256']]
             identity = (r['vp']['sha256'], r['vp_gpu'])
             if identity not in vs_cache:
+                if compiler is None:
+                    compiler = NativeCompiler(decoder)
                 source, code = compiler.vertex(v, bool(r['vp_gpu']))
                 if sum(len(t[0]) + len(t[1]) for t in vs_cache.values()) + len(source) + len(code) > 128 * 1024 * 1024:
                     raise ValueError('Vertex translation memory budget exceeded')
@@ -375,9 +391,10 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output):
     prepared = {r['key'] for r in report['records'] if r['status'] == 'prepared'}
     if not prepared <= set(report['inventory']['valid_driver_blobs']) or report['inventory']['rejected']:
         raise ValueError('Prepared native cache validation failed')
-    # Only accepted keys enter startup scanning; demand work uses the existing
-    # renderer owner/deduplication. No speculative worker lives during gameplay.
-    (cache / 'warmup-v1/menu-v1.txt').write_text(''.join(k + '\n' for k in sorted(prepared)))
+    # Observed recipes do not establish menu/race ownership. Keep the prepared
+    # disk cache without fabricating a menu preload index; the existing demand
+    # owner consumes it, and real play can learn its own membership indices.
+    (cache / 'warmup-v1').mkdir(exist_ok=True)
     report['preparation_seconds'] = time.perf_counter() - started
     save_report(output / 'report.json', report)
     return report
@@ -396,6 +413,7 @@ def main():
     m.add_argument('--output', type=Path, required=True)
     m.add_argument('templates', type=Path, nargs='+')
     p = sub.add_parser('prepare')
+    p.add_argument('--demand-fallback',action='store_true',help='Report incompatible templates and provide an empty demand cache')
     for name in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game-root', 'output'):
         p.add_argument('--' + name, type=Path, required=True)
     b = sub.add_parser('bundle',help='Write verified identifier/numeric metadata shards; no shader contents')
@@ -406,7 +424,8 @@ def main():
         bundle(read(args.template),args.output)
         return
     if args.command == 'prepare':
-        result = prepare(*(getattr(args, k).resolve() for k in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game_root', 'output')))
+        result = prepare(*(getattr(args, k).resolve() for k in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game_root', 'output')),
+                         demand_fallback=args.demand_fallback)
         print(json.dumps(dict(counts=result['counts'], lookup=result['lookup'], seconds=result['preparation_seconds'])))
         return
     if args.output.exists():

@@ -1,0 +1,46 @@
+{
+  "schema": "gt5p-pipeline-template-bundle",
+  "version": 2,
+  "parts": [
+    {
+      "file": "part-0000.json",
+      "sha256": "7b2e7ea5213c27ed2d859e4dca9ab35b85149186f491b2cd1c83043bb75d9a67"
+    },
+    {
+      "file": "part-0001.json",
+      "sha256": "a9b48fff74a2bceba734db35da20fc293514fb8342e6bb7123927422d5d9eaa5"
+    },
+    {
+      "file": "part-0002.json",
+      "sha256": "443457772a63ec390771c36cb3e5a4eb4a337b5f68dddd728d9d6f8625f294b6"
+    },
+    {
+      "file": "part-0003.json",
+      "sha256": "b1d071bc6ebb78cb28ca19033cd171cb5bdf16230a14cc83a3808da90ca537ef"
+    },
+    {
+      "file": "part-0004.json",
+      "sha256": "4d099a1a1f0e283a0169fe98460c77fe2664968560d45d838274408e0089664a"
+    },
+    {
+      "file": "part-0005.json",
+      "sha256": "63c4bc884375372d36c44f211e1df99066942ec7044ddce55c5d068d9010a2f5"
+    },
+    {
+      "file": "part-0006.json",
+      "sha256": "c330f866f2220d63ba79f850f359b1ac262cfbd793cc5b77d860e8129a249fe1"
+    },
+    {
+      "file": "part-0007.json",
+      "sha256": "1e37f62a34e195457a51d96612df274ca206221590d5a1fd5bba04cc2b9c231d"
+    },
+    {
+      "file": "part-0008.json",
+      "sha256": "63ede5231eb5f843c3013019e2bf9516302f9b6a031b4e54b431cc06982c85ef"
+    },
+    {
+      "file": "part-0009.json",
+      "sha256": "7cdd66d727e92a79d343921a2e35701fea9731ba0d41206a67a56cac6a652891"
+    }
+  ]
+}
