@@ -9,6 +9,52 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 161 - Automate route discovery and native pipeline preparation (2026-10-31)
+
+The practical workflow no longer requires finding/proving every pipeline by
+hand. `scripts/train_pipeline_cache.py` drives the existing supported HSR and
+Daytona routes into one private learned cache, then prepares all learned native
+pipelines offline before play. It selects no individual shader names, capture
+lines, material pairs or pipeline keys. The source of complete state is actual
+renderer requests, explicitly separate from independent asset reconstruction.
+
+The tool uses a copied ignored fixture, copies writable game data, rejects
+redirected writable paths and links only the private copied disc directory.
+It refuses another game; process cleanup targets only its owned child tree.
+Cache pruning and bulk scans during route learning are disabled. No cache is
+deleted or moved. An atomic report supports interruption/resume and optional
+preparation-only reuse, tied to engine/fixture/route/settings identity.
+
+Validation checks recipe envelopes/checksums, associated bytecode sizes/hashes,
+grid milestones, ongoing presentation, complete native warmup acceptance,
+offline guest-entry exclusion and every persisted driver blob's checksum.
+The pinned offline cap is 8,192 recipes; exceeding it is an explicit failure.
+Malformed/incomplete caches are retained and reported, never silently accepted.
+Synthetic tests cover damaged envelopes, missing/mismatched bytecode, truncated
+driver blobs, insufficient route samples and output containment.
+
+The isolated 1080p/2x sweep visits HSR then Daytona for 60 seconds after each
+grid. It learns 1,719 distinct recipes in total. Final screenshots show track,
+cars and mirrors in both routes; an earlier HSR shot shows mostly HUD. These
+are bounded route visits, not proof of every variant or complete visual
+readiness. No paired performance comparison is made, so no stutter-reduction
+claim follows. Original checkout, caches and shared runtime stay untouched.
+
+The final offline pass accepts all 1,719 recipes with zero rejections and checks
+all persisted driver blobs. A separate empty-native-cache rebuild copies only
+the learned recipes/bytecode, creates and persists all 1,719 native blobs, and
+confirms no guest entry. OS/driver caches remain warm; this is not a clean-driver
+timing claim. The updated preparation-only resume path is also exercised.
+
+Evidence: `scratch/pipeline-training-20261031/report.json`, route logs/shots
+under `logs/`, `prepare.log`, and
+`scratch/pipeline-rebuild-20261031/report.json`. Commands and limitations are in
+[shader preparation](shader-precompile.md#automated-route-learning-and-preparation-developer-only).
+Only the current car, supported routes and explicit settings are visited.
+Expanding discovery routes/content and measuring cache reuse are the practical
+next steps; independent pass reconstruction can continue separately. No
+runtime, player, launcher or release defaults change.
+
 ## Phase 160 - Recover named shared shader pairs and colour-correction setup (2026-10-31)
 
 `scripts/shader_shared_passes.py` adds bounded capture-free SHDS name-table

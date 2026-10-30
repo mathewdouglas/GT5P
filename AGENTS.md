@@ -36,13 +36,24 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 160)
+## Start here: state of play (2026-10-31, Phase 161)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 160 is the latest).
+has the evidence, newest phase first (Phase 161 is the latest).
 
 ### What works now
+
+- **Automatic pipeline discovery (Phase 161):** developer
+  `scripts/train_pipeline_cache.py` drives HSR/Daytona, learns real draw recipes
+  and prepares them offline in a private cache, without selecting individual
+  shader pairs or pipeline keys. Supports resume and preparation-only reuse;
+  validates recipe/code dependencies and persisted driver blobs. An isolated
+  sweep and recipe-only native rebuild both prepare all 1,719 learned pipelines.
+  This uses
+  observed state, not independent reconstruction. Only supported routes/current
+  car/settings are visited; whole-game coverage and stutter benefit remain open.
+  No player/launcher defaults change. See shader preparation docs for usage.
 
 - **Named shared passes (Phase 160):** bounded SHDS name-table selection recovers
   38 authored pairs across menu/scene-effect/graphics banks; 88 native lookup/
