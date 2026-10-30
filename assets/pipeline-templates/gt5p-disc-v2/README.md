@@ -1,9 +1,9 @@
-This optional developer starter contains 1,494 verified pipeline records for
+This optional developer starter contains 2,334 verified pipeline records for
 BCUS98158 version 3. It contains program identifiers and numeric translation/native
 state only. It contains no shader microcode, source, DXBC or driver binaries.
 
-The records came from local menu/High Speed Ring play. Both shader stages were
-reconstructed from original assets, their identifiers checked, and all 1,494
+The records came from local menu/High Speed Ring/Daytona play. Both shader stages were
+reconstructed from original assets, their identifiers checked, and all 2,334
 native keys reproduced and pipelines created on the test machine. Unsupported
 or unavailable programs and branching vertex contexts are excluded. This is an
 observed-state template, not independent recovery of material/pass ownership or
@@ -15,7 +15,7 @@ The preparer verifies locally rebuilt shaders and actual root-signature/native
 keys before accepting anything. Incompatibilities remain on the demand path.
 Driver results are constructed locally for the user's GPU and stay local.
 
-`asset-map.json` is a separately versioned hash/offset map for 72 programs outside
+`asset-map.json` is a separately versioned hash/offset map for 119 programs outside
 the supported SHDS tables. Supply `--assets <original unpacked GT.VOL directory>`
 to select it automatically. It contains container/program hashes, file offsets,
 sizes and byte order only. Container hashes and program identities are verified

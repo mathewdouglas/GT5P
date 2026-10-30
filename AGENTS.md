@@ -44,14 +44,16 @@ has the evidence, newest phase first (Phase 170 is the latest).
 
 ### What works now
 
-- **Representative coverage checkpoint (Phase 170):** precompiler roadmap saved
+- **Representative coverage (Phase 170):** precompiler roadmap saved
   in docs/shader-precompile.md. New pipeline_template_coverage.py compares/ranks
   sessions and exports only additional candidates, with explicit conflict
-  quarantine. Existing HSR/Daytona captures yield 840 unambiguous new candidates;
-  fresh-cache shader/native verification is running under
-  scratch/template-session-expansion-20261031/prepared. Do not publish these
-  before verification. Starter remains 1,494 verified entries at this checkpoint.
-  No additional game copy or player defaults.
+  quarantine. All 840 unambiguous new HSR/Daytona candidates pass both-stage,
+  exact native-key and persisted-cache verification in a fresh cache. Optional
+  starter now has 2,334 verified entries and 119 supplemental program locations.
+  Three conflicting older session keys are quarantined; nine corrupt blobs and
+  unsupported branches remain excluded. Evidence is under
+  scratch/template-session-expansion-20261031. No additional game copy, new
+  gameplay/stutter claim or player defaults.
 
 - **Asset-location recovery (Phase 169):** all 298 previously unresolved template
   records rebuild both shaders and exact native pipelines in an empty cache.

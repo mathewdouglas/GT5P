@@ -13,7 +13,8 @@ player integration; retained-route coverage is not whole-game coverage.
 1. **Broaden representative coverage.** Merge templates from other tracks,
    dealerships, menus, cars and cameras. Report each session's additional and
    shared programs/state so further collection targets useful gaps rather than
-   every car-track combination. This is the next implementation priority.
+   every car-track combination. Phase 170 adds reporting and the first session
+   expansion; broader unvisited content remains open.
 2. **Generate more directly from assets.** Extend material/shared-pass rules to
    derive valid pipelines without observing every draw. Recover bindings and
    actual pass state instead of multiplying every shader by every possible state.
@@ -76,7 +77,7 @@ Phase 160 adds [named shared-pass selection and isolated state checks](shader-re
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.
 
-## Identifier-only templates (Phase 169; optional developer path)
+## Identifier-only templates (Phase 170; optional developer path)
 
 This adapts the hash/numeric-state design in [Project Pyrrhus's template patch](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2071-pipeline-template-prewarm.patch),
 [context/key correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2077-pso-key-vp-start-template-default.patch)
@@ -114,7 +115,7 @@ Diagnostic recording is off during performance tests. Export each session:
 
 Templates contain hashes, translation state, numeric native state and canonical
 ATTR inputs. No game-derived shader bytes/source/binaries are included. Keep all
-experimental outputs ignored. A verified 1,494-record metadata starter is in
+experimental outputs ignored. A verified 2,334-record metadata starter is in
 `assets/pipeline-templates/gt5p-disc-v2`; pass that directory to `--template`.
 Game ELF, renderer source contract, explicit default settings and
 schema/key/Windows x64 ABI compatibility are required. Format 2 excludes
@@ -128,8 +129,8 @@ programs are reported and remain on the asynchronous demand path. Optional
 template headers without starting a compiler; strict preparation otherwise fails.
 
 Phase 169 adds a separate version-1 program location map for code outside the
-supported SHDS tables. The starter contains `asset-map.json`: 72 program locations
-(4 vertex, 68 fragment), each a container SHA-256, file offset, size, encoding and
+supported SHDS tables. The starter contains `asset-map.json`: now 119 locations
+(4 vertex, 115 fragment), each a container SHA-256, file offset, size, encoding and
 program identity. No filenames, guest addresses or shader contents are included.
 Supply `--assets <original unpacked GT.VOL directory>` when preparing the bundled
 starter; the map is selected automatically. For a standalone template, also pass
@@ -139,7 +140,8 @@ Preparation hashes candidate-sized original containers, verifies the selected
 program slices, then applies the same shader-source/bytecode/native-key checks.
 Renaming or relocating identical assets is supported; changed assets cannot serve
 their old locations. Missing containers stay unresolved. The measured full lookup
-resolves all 1,494 exported records; three branching contexts remain excluded.
+resolves all 2,334 retained HSR/Daytona records. Unsupported branching contexts
+remain excluded; Phase 170 details export exclusions and conflict quarantine.
 This closes an extraction gap, not the unknown-state problem for unseen content.
 
 Generate a map once from representative developer provenance and original assets:
@@ -160,7 +162,8 @@ between-candidate deadline and 4,096 anchor candidates per program/container.
 Unlocated programs remain unresolved. Preparation limits map payloads to 4 MiB,
 8,192 entries and 128 MiB resolved code; hashing has a 60 s between-container
 deadline and 16 GiB budget. The local supplemental lookup hashed five containers
-(438,542,896 bytes) in about 1.1 s with warm OS caches. No guest-memory scanning,
+(438,542,896 bytes) in about 1.1 s with warm OS caches in Phase 169; the expanded
+map hashes six containers/528,044,272 bytes in 1.54 s. No guest-memory scanning,
 new live worker, asynchronous draw-policy change or player default is introduced.
 Rollback is to omit `--assets`/`--asset-map` or skip optional preparation entirely.
 

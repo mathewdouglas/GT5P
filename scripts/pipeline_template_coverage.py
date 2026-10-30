@@ -92,6 +92,8 @@ def main():
     ap.add_argument('--delta-output',type=Path,help='Optional template of candidates absent from the baseline')
     ap.add_argument('--quarantine-conflicts',action='store_true',help='Exclude all conflicting session records; preserve the supplied baseline')
     args=ap.parse_args()
+    if not 1 <= len(args.session) <= 16:
+        ap.error('Supply 1..16 representative sessions')
     outputs=[isolated(p) for p in (args.output,args.delta_output) if p is not None]
     if len(set(outputs))!=len(outputs) or any(p.exists() for p in outputs):
         ap.error('Use distinct fresh ignored output files; existing data is preserved')

@@ -46,11 +46,24 @@ deduplicates identical entries and rejects conflicting locations. Synthetic test
 cover overlap/state-versus-program distinctions, greedy ranking, conflict
 quarantine, incompatible contracts, multi-trace lookup and corrupt oracle skips.
 
-The 840-entry fresh-cache shader/native proof is running at this checkpoint in
-`scratch/template-session-expansion-20261031/prepared`. No new starter entries
-are published before positive verification. It reuses the existing private
-fixture, never enters the guest, and creates no additional game copy. No player
-defaults, live draw policy, rendering or stutter claims change.
+The checkpoint's 840-entry fresh-cache proof then completed: all 840 reconstruct
+both shader stages, match expected source/bytecode identifiers and exact current
+native keys, create in D3D12 and persist validated recipes/driver blobs. There are
+zero incompatible/unresolved/key-rejected records in this batch. Total elapsed
+time is 693.387 s, including vertex translation and 263 fragment-profile processes;
+840 native driver calls take 20.453 s with zero cached-blob calls. These are
+application-cache proofs; OS/driver caches remain warm. Evidence:
+`scratch/template-session-expansion-20261031/prepared/{report.json,native.log}`.
+
+Only after this verification, the optional starter expands to 2,334 records.
+The merged map has 119 locations (4 VP/115 FP) across six containers; identical
+locations deduplicate and conflicts fail. Full lookup resolves 293 VP/683 FP
+identities for all 2,334 records; its supplemental pass hashes 528,044,272 bytes
+in 1.543 s with warm OS caches. See `full-lookup.json` and `merged-asset-map.json`
+in the same evidence root. No shader contents/source/compiled binaries are
+tracked. The existing private fixture is reused; guest entry is never executed
+and no additional game copy is made. No player defaults, live draw policy,
+rendering or stutter claims change. Broader unvisited content remains open.
 
 ## Phase 169 - Recover non-SHDS programs with verified asset locations (2026-10-31)
 
