@@ -9,6 +9,49 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 170 - Representative-session coverage and precompiler roadmap (2026-10-31)
+
+Saved the seven remaining milestones in `docs/shader-precompile.md`: representative
+coverage, asset-derived rules, branch/settings contexts, efficient resumable
+preparation, demonstrated stutter reduction, launcher integration and player-path
+validation. The next step now has a concrete developer tool:
+`scripts/pipeline_template_coverage.py`. It compares compatible session templates,
+reports shared/additional keys/programs/pairs/source variants/translation state,
+distinguishes new pipelines reusing existing programs, ranks marginal session
+gain and emits a delta template for verification. It measures metadata candidates,
+not preparation success, whole-game coverage or runtime hits.
+
+The existing extended HSR/Daytona recordings export 1,758/1,931 records. Export
+rejects three/five branching contexts and two/seven raw-program integrity failures.
+Three overlapping keys disagree in FP identity/source ID. Strict comparison and
+the original merge reject conflicts. Explicit `--quarantine-conflicts` removes
+all conflicting session versions, preserving the supplied baseline; conflicting
+new keys are never selected by order/majority. Incompatible contracts always fail.
+The three baseline keys already have Phase 169 proof and are not replaced.
+
+After quarantine, the union has 2,334 candidate pipelines versus the verified
+1,494-record baseline, a delta of 840. Of these, 253 reuse both original program
+identities and 587 need at least one additional program. Daytona contributes 820
+keys absent from the baseline; extended HSR contributes 20 more after Daytona.
+The report only ranks supplied recordings, not the benefit of unvisited content.
+Evidence: `scratch/template-session-expansion-20261031/{coverage-final,delta}.json`
+and the two `*-export.json` reports in that directory.
+
+Asset-map generation accepts up to 16 traces, counts/skips invalid oracle blobs
+and still verifies every match against original asset bytes. All 49 supplemental
+identities needed by the delta are located in 31.516 s; nine invalid oracle files
+are skipped. Preparation lookup finds all needed programs; its supplemental pass
+hashes three containers/224,921,136 bytes in 0.804 s with warm OS caches. Map merge
+deduplicates identical entries and rejects conflicting locations. Synthetic tests
+cover overlap/state-versus-program distinctions, greedy ranking, conflict
+quarantine, incompatible contracts, multi-trace lookup and corrupt oracle skips.
+
+The 840-entry fresh-cache shader/native proof is running at this checkpoint in
+`scratch/template-session-expansion-20261031/prepared`. No new starter entries
+are published before positive verification. It reuses the existing private
+fixture, never enters the guest, and creates no additional game copy. No player
+defaults, live draw policy, rendering or stutter claims change.
+
 ## Phase 169 - Recover non-SHDS programs with verified asset locations (2026-10-31)
 
 The largest immediate template gap was lookup: of the 298 unresolved records,

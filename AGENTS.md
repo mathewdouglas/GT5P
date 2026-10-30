@@ -36,13 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 169)
+## Start here: state of play (2026-10-31, Phase 170)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 169 is the latest).
+has the evidence, newest phase first (Phase 170 is the latest).
 
 ### What works now
+
+- **Representative coverage checkpoint (Phase 170):** precompiler roadmap saved
+  in docs/shader-precompile.md. New pipeline_template_coverage.py compares/ranks
+  sessions and exports only additional candidates, with explicit conflict
+  quarantine. Existing HSR/Daytona captures yield 840 unambiguous new candidates;
+  fresh-cache shader/native verification is running under
+  scratch/template-session-expansion-20261031/prepared. Do not publish these
+  before verification. Starter remains 1,494 verified entries at this checkpoint.
+  No additional game copy or player defaults.
 
 - **Asset-location recovery (Phase 169):** all 298 previously unresolved template
   records rebuild both shaders and exact native pipelines in an empty cache.

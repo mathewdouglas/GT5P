@@ -3,6 +3,75 @@
 For measured asset/raw-program coverage, recipe dependency checks and the
 remaining provenance gap, see [shader coverage audit](shader-coverage.md).
 
+## Road to the finished precompiler
+
+The core mechanism works: a portable template identifies programs and numeric
+pipeline state, and preparation reconstructs/verifies both shaders and native
+pipelines from the user's own assets. Remaining work is breadth, performance and
+player integration; retained-route coverage is not whole-game coverage.
+
+1. **Broaden representative coverage.** Merge templates from other tracks,
+   dealerships, menus, cars and cameras. Report each session's additional and
+   shared programs/state so further collection targets useful gaps rather than
+   every car-track combination. This is the next implementation priority.
+2. **Generate more directly from assets.** Extend material/shared-pass rules to
+   derive valid pipelines without observing every draw. Recover bindings and
+   actual pass state instead of multiplying every shader by every possible state.
+   This is the main scaling path toward GT5.
+3. **Support missing contexts/settings.** Recover branching vertex context and
+   relevant renderer-setting/root-signature combinations. Reject incompatible
+   entries safely and leave unsupported cases on the existing demand path.
+4. **Make preparation efficient and resumable.** Reduce repeated compiler-process
+   startup, reuse verified results, support cancellation/resume, and bound CPU,
+   memory and storage. Developer preparation needs refinement for first launch.
+5. **Demonstrate consistent stutter reduction.** Fewer runtime shader compiles have
+   not yet produced a consistent frame-time win. Separate driver creation, cache
+   reads, scheduling and unrelated game work; load prepared resources at useful
+   times without expensive blanket startup scanning.
+6. **Integrate the launcher.** Detect game/version and supported settings, show
+   progress, support cancellation/resume, and handle cache compatibility. Ship
+   metadata only; shader contents and GPU-specific binaries remain local.
+7. **Validate the complete player path.** Exercise fresh caches, multiple GPUs,
+   settings changes and representative routes. Measure loading time, memory,
+   actual preparation hits and hitches; inspect rendering before enabling any
+   default. No zero-stutter or complete-coverage promise follows from creation.
+
+The immediate order is broader coverage reporting/session merging, then fixing
+the measured performance bottleneck. GT5 additionally needs its asset formats
+and rendering contexts verified; GT5P's template does not supply GT5 coverage.
+
+### Compare representative sessions before more collection
+
+Export each recorded session with `pipeline_template.py export`, then compare it
+with the current verified starter. This reads metadata only and starts no game:
+
+```powershell
+.venv/Scripts/python scripts/pipeline_template_coverage.py `
+  --baseline assets/pipeline-templates/gt5p-disc-v2 `
+  --session HSR=scratch/hsr-template.json --session Daytona=scratch/daytona-template.json `
+  --output scratch/session-coverage.json --delta-output scratch/new-candidates.json
+```
+
+The report counts shared/additional pipeline keys, program identities, observed
+program pairs, source variants and translation states. It distinguishes new
+pipelines reusing existing programs from those needing additional programs, and
+ranks supplied sessions by marginal pipeline gain after earlier selections.
+This ranks recorded content, not unvisited cars/tracks. Counts are metadata
+candidates until preparation verifies them; they do not measure runtime hits.
+
+Conflicting records fail by default. Explicit `--quarantine-conflicts` removes
+all conflicting session versions and reports their keys/differing fields while
+preserving the supplied baseline. It never picks a conflicting new record by
+session order or majority. Incompatible renderer/game contracts always fail.
+Exporter exclusions and quarantine counts must accompany coverage claims.
+
+Prepare the delta against original assets into a fresh private cache; add only
+positively verified entries to the baseline. The supplemental asset-map generator
+accepts repeated `--trace` arguments for multi-session lookup. Invalid oracle
+blobs are counted and skipped, never used to derive a program location. Merging
+compatible templates does not require the user to drive every car-track pair;
+it also does not prove that unvisited content is covered.
+
 Phase 160 adds [named shared-pass selection and isolated state checks](shader-reconstruction.md#named-shared-passes-phase-160).
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.

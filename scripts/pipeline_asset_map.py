@@ -61,6 +61,17 @@ def read(path):
     return validate(json.loads(bounded_read(path,4*1024**2)))
 
 
+def merge(documents):
+    records={}
+    for document in documents:
+        for r in validate(document)['records']:
+            key=(r['stage'],r['id'])
+            if key in records and records[key]!=r:
+                raise ValueError('Conflicting program locations; regenerate against the original assets')
+            records[key]=r
+    return validate(dict(schema=SCHEMA,version=1,records=list(records.values())))
+
+
 def files(assets, elf):
     if not assets.is_dir() or assets.is_symlink() or assets.is_junction():
         raise ValueError('Use an original asset directory without redirection')
@@ -120,20 +131,29 @@ def build(records, trace, assets, elf, known=()):
     """Search original files, emitting only independently verified locations."""
     wanted = {(s,r[s]['sha256'],r[s]['size']) for r in records for s in ('vp','fp')} - set(known)
     targets = {}
+    traces=[trace] if isinstance(trace,Path) else trace
+    if not 1 <= len(traces) <= 16:
+        raise ValueError('Use 1..16 representative traces')
+    invalid_oracles=0
     for stage in ('vp','fp'):
-        for p in sorted(trace.glob(stage+'_*.bin')):
-            raw = bounded_read(p,MAX_FP)
-            if p.stem != f'{stage}_{fnv64(raw):016x}':
-                raise ValueError('Captured program integrity failed')
-            lengths = {size for s,_,size in wanted if s == stage and size <= len(raw)}
-            for size in lengths:
-                code = raw[:size]
+        for folder in traces:
+            for p in sorted(folder.glob(stage+'_*.bin')):
                 try:
-                    key = (stage,identity(stage,code),size)
-                except ValueError:
+                    raw = bounded_read(p,MAX_FP)
+                    if p.stem != f'{stage}_{fnv64(raw):016x}':
+                        raise ValueError('Captured program integrity failed')
+                except (ValueError,OSError):
+                    invalid_oracles+=1
                     continue
-                if key in wanted:
-                    targets.setdefault(key,code)
+                lengths = {size for s,_,size in wanted if s == stage and size <= len(raw)}
+                for size in lengths:
+                    code = raw[:size]
+                    try:
+                        key = (stage,identity(stage,code),size)
+                    except ValueError:
+                        continue
+                    if key in wanted:
+                        targets.setdefault(key,code)
     rows = []
     searched = scanned = 0
     started = time.perf_counter()
@@ -187,15 +207,16 @@ def build(records, trace, assets, elf, known=()):
             break
     return validate(dict(schema=SCHEMA,version=1,records=rows)),dict(requested=len(wanted),located=len(rows),
         unavailable_oracle=len(wanted)-len(rows)-len(targets),unresolved=len(targets),
-        containers_searched=searched,bytes_searched=scanned,seconds=time.perf_counter()-started)
+        invalid_oracles=invalid_oracles,containers_searched=searched,bytes_searched=scanned,seconds=time.perf_counter()-started)
 
 
 def main():
     from pipeline_template import read as read_template,locate
     from train_pipeline_cache import isolated,save_report
     ap = argparse.ArgumentParser(description=__doc__)
-    for name in ('template','trace','assets','elf','output'):
+    for name in ('template','assets','elf','output'):
         ap.add_argument('--'+name,type=Path,required=True)
+    ap.add_argument('--trace',type=Path,action='append',required=True,help='Representative trace; repeat to combine sessions')
     ap.add_argument('--catalog',type=Path,help='Omit programs already found by the SHDS lookup')
     args = ap.parse_args()
     output = isolated(args.output)

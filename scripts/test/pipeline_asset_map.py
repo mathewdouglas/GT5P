@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 sys.path.insert(0,str(Path(__file__).parents[1]))
-from pipeline_asset_map import build,resolve,validate,identity,digest
+from pipeline_asset_map import build,resolve,validate,identity,digest,merge
 from shader_coverage import fnv64
 from shader_reconstruct import word_swap
 
@@ -25,6 +25,16 @@ with tempfile.TemporaryDirectory() as temporary:
     assert stats['located']==2 and stats['unresolved']==0
     assert all(set(r)=={'stage','id','size','container','container_size','offset','encoding'} for r in doc['records'])
     assert next(r for r in doc['records'] if r['stage']=='vp')['encoding']=='swap32'
+    assert merge([doc,doc])==doc
+    changed=copy.deepcopy(doc);changed['records'][0]['offset']+=1
+    try:merge([doc,changed])
+    except ValueError:pass
+    else:raise AssertionError('Conflicting location map silently selected')
+    other=root/'other-trace';other.mkdir()
+    (trace/f'vp_{fnv64(vp):016x}.bin').replace(other/f'vp_{fnv64(vp):016x}.bin')
+    (other/'fp_0000000000000000.bin').write_bytes(b'corrupt oracle')
+    combined,stats=build([record],[trace,other],assets,elf)
+    assert combined==doc and stats['invalid_oracles']==1 and stats['located']==2
     # No filenames or captured bytes are needed during preparation.
     for p in trace.iterdir():p.unlink()
     (assets/'unknown-format').rename(assets/'renamed-local-asset')
