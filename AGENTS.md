@@ -36,13 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 171)
+## Start here: state of play (2026-10-31, Phase 172)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 171 is the latest).
+has the evidence, newest phase first (Phase 172 is the latest).
 
 ### What works now
+
+- **Default batching and template resume (Phase 172):** exact batching is now
+  the developer preparation default; --fragment-mode legacy rolls back.
+  Template --resume pins metadata/helper identity, verifies cached DXBC and
+  revalidates every native pipeline. A real shader-phase interruption resumes
+  all 32 test records without shader compilation, then passes native creation
+  and a driver-blob reuse pass. Cross-process ownership, redirected/hard-linked
+  output, changed-template and corrupt-cache rejection checks pass. No cache
+  deletion or live draw-policy change; launcher cancellation remains open.
 
 - **Exact fragment batches (Phase 171):** opt-in --fragment-mode batch sends only
   requested program/profile pairs through the existing bounded two-worker pool.
@@ -51,7 +60,7 @@ has the evidence, newest phase first (Phase 171 is the latest).
   two processes. A 32-record parity check preserves bytecode/keys and measures
   37.81 -> 5.64 s fragment preparation. All 36 conditional shared pipelines and
   resume pass; malformed manifests/checksums/masks/cache reuse pass native tests.
-  Legacy remains the default/rollback. Starter contract reissued after full
+  Legacy was the default at this phase (changed in Phase 172). Starter contract reissued after full
   verification, with record contents unchanged. No player/stutter claim.
 
 - **Representative coverage (Phase 170):** precompiler roadmap saved

@@ -110,7 +110,7 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy')
+    ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='batch')
     ap.add_argument('--elf', required=True, type=Path)
     ap.add_argument('--decoder', required=True, type=Path)
     ap.add_argument('--output', required=True, type=Path)

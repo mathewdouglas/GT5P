@@ -9,6 +9,56 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 172 - Default batching and verified template resume (2026-10-31)
+
+At the user's request, exact fragment batching is now the default in template,
+material/shared preparation and paired-route validation. Explicit
+`--fragment-mode legacy` remains the rollback. The runtime offline environment
+guards, two-worker queue, live draw policy and renderer/template key contract
+are unchanged; no runtime rebuild or starter record reissue is needed.
+
+Template preparation now checkpoints before lookup and supports `--resume`.
+The checkpoint pins canonical validated template/map content and actual helper
+EXE/decoder hashes. Every attempt re-locates original programs; expected
+source-keyed DXBC can be reused only after exact bytecode identifier/length
+verification with a bounded pool. Missing artifacts rebuild; corrupt artifacts
+reject safely and remain intact. Vertex source/bytecode identifiers are computed
+once per unique vertex variant instead of repeatedly for each template record.
+
+An OS lock gives one preparation owner per output, released on exit. Resume
+checks the output tree for redirected/hard-linked entries before writes and
+bounds the walk. Atomic state records carry attempt/phase/progress; old reports
+are distinguished by their attempt. Every native pipeline is revalidated on
+resume, with pending markers replacing old per-request result files before
+submission. Completion is recorded only after persisted cache verification.
+Existing outputs without checkpoints cannot resume and are preserved. No
+shadercache is deleted or moved.
+
+A real 32-record default-batch run is deliberately interrupted immediately after
+fragment preparation. Resume verifies 37 cached source files, reuses 12 vertex
+variants and all 32 fragment jobs, starts zero shader compiler processes, then
+creates/persists all 32 native pipelines. A subsequent resume again compiles no
+shaders and successfully uses all 32 driver blobs. Attempts take 12.150 s and
+12.319 s respectively; these are small resume checks with warm OS/driver caches,
+not fresh full-starter performance or gameplay/stutter measurements. Cached
+shader bytes remain unchanged. Evidence:
+`scratch/template-resume-20261031/{validation.json,completed-attempt-2.json,completed-attempt-3.json}`.
+
+The native test also rejects a changed template without modifying checkpoint or
+cache, and rejects a deliberately corrupted bytecode copy before compiler/native
+startup while preserving both that copy and the successful cache. Separate
+process lock contention and real Windows junction/hard-link checks pass in
+`scripts/test/preparation_checkpoint.py` (latest output
+`scratch/checkpoint-test-8zhzikjt`). Template/schema, session coverage, asset map,
+fragment batch, material envelope and shared profile tests also pass. No new
+game copy, original-checkout change or distributed game-derived content.
+
+This is developer interruption/resume support. Graceful launcher cancellation,
+fine-grained native progress, broader representative coverage and a consistent
+live stutter benefit remain open. An abrupt partial/corrupt file can require
+inspection and a fresh output rather than automatic repair; caches are never
+silently discarded.
+
 ## Phase 171 - Exact offline fragment batching (2026-10-31)
 
 Preparation was starting a complete runtime/device for each fragment profile.

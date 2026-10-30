@@ -15,10 +15,12 @@ The preparer verifies locally rebuilt shaders and actual root-signature/native
 keys before accepting anything. Incompatibilities remain on the demand path.
 Driver results are constructed locally for the user's GPU and stay local.
 
-The current renderer contract includes optional exact fragment batching. All
+The current renderer contract supports exact fragment batching. All
 2,334 records passed a single empty-application-cache reconstruction/native proof
-after that change; record contents and expected keys are unchanged. Add
-`--fragment-mode batch` to opt in; the legacy mode remains the default.
+after that change; record contents and expected keys are unchanged. Developer
+preparation uses batching by default; `--fragment-mode legacy` is the rollback.
+Matching checkpointed template output supports `--resume`, verifying cached
+shader identifiers and revalidating native pipelines before acceptance.
 
 `asset-map.json` is a separately versioned hash/offset map for 119 programs outside
 the supported SHDS tables. Supply `--assets <original unpacked GT.VOL directory>`

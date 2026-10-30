@@ -308,17 +308,40 @@ def locate(records, catalog, elf, asset_map=None, assets=None):
                                      vertex_found=len(vertices), fragment_found=len(fragments),asset_map=extra)
 
 
-def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False, asset_map=None, assets=None, fragment_mode='legacy'):
+def cached_shaders(document,cache):
+    """Reuse only expected source-key files with exact bytecode IDs and lengths."""
+    expected={}
+    for r in document['records']:
+        for source,code,index in (('vp_source','vs',4),('fp_source','ps',8)):
+            length=r['native']['words'][index] | (r['native']['words'][index+1]<<32)
+            value=(r[code],length)
+            if r[source] in expected and expected[r[source]]!=value:
+                raise ValueError('Template source/bytecode mapping conflicts')
+            expected[r[source]]=value
+    found={};total=0
+    for key,(code_id,length) in expected.items():
+        path=cache/(key+'.dxbc')
+        if not path.exists():continue
+        data=bounded_read(path,4*1024**2)
+        if not data.startswith(b'DXBC') or len(data)!=length or f'{fnv64(data):016x}'!=code_id:
+            raise ValueError('Cached shader failed resume verification; cache preserved: '+key)
+        total+=len(data)
+        if total>128*1024**2:raise ValueError('Resume shader memory budget exceeded')
+        found[key]=data
+    return found
+
+
+def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False, asset_map=None, assets=None, fragment_mode='batch', resume=False):
     idle()
     output = isolated(output)
-    if output.exists():
-        raise ValueError('Use a fresh ignored output; existing caches are preserved')
+    if output.exists() and not resume:
+        raise ValueError('Use a fresh ignored output or --resume; existing caches are preserved')
     try:
         document = read(template)
         if document['compatibility'] != compatibility(engine, decoder, elf):
             raise ValueError('Template renderer/game/settings mismatch')
     except (ValueError,OSError,TypeError,KeyError) as exc:
-        if not demand_fallback:
+        if not demand_fallback or resume:
             raise
         (output/'shadercache/warmup-v1').mkdir(parents=True)
         report = dict(schema=1,template_sha256=None,requested=0,records=[],counts={'template-rejected':1},
@@ -327,37 +350,68 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_f
         save_report(output/'report.json',report)
         print('Template rejected; using demand fallback:',exc,flush=True)
         return report
-    output.mkdir(parents=True)
-    cache = output / 'shadercache'
-    cache.mkdir()
-    started = time.perf_counter()
     if asset_map is None and assets is not None and template.is_dir() and (template/'asset-map.json').is_file():
         asset_map = template/'asset-map.json'
+    map_id=None
+    if asset_map is not None:
+        from pipeline_asset_map import read as read_map
+        map_id=sha(json.dumps(read_map(asset_map),sort_keys=True,separators=(',',':')).encode())
+    contract=dict(template=sha(json.dumps(document,sort_keys=True,separators=(',',':')).encode()),
+                  engine=sha(engine.read_bytes()),decoder=sha(decoder.read_bytes()),
+                  asset_map=map_id)
+    from preparation_checkpoint import Checkpoint
+    started=time.perf_counter()
+    with Checkpoint(output,contract,resume) as checkpoint:
+        checkpoint.stage('checking-cache')
+        checked=time.perf_counter()
+        reused=cached_shaders(document,output/'shadercache') if resume else {}
+        return prepare_document(document,template,catalog,elf,engine,decoder,game_root,output,
+                                asset_map,assets,fragment_mode,checkpoint,reused,started,time.perf_counter()-checked)
+
+
+def prepare_document(document,template,catalog,elf,engine,decoder,game_root,output,
+                     asset_map,assets,fragment_mode,checkpoint,reused,started,cache_seconds):
+    cache=output/'shadercache';cache.mkdir(exist_ok=True)
+    checkpoint.stage('lookup')
+    lookup_started=time.perf_counter()
     vertices, fragments, lookup = locate(document['records'], catalog, elf,asset_map,assets)
-    lookup['seconds'] = time.perf_counter() - started
+    lookup['seconds'] = time.perf_counter() - lookup_started
     report = dict(schema=1, template_sha256=template_digest(template), lookup=lookup,
                   requested=len(document['records']), records=[], preparation_seconds=None,
-                  engine_sha256=sha(engine.read_bytes()), decoder_sha256=sha(decoder.read_bytes()),
+                  engine_sha256=checkpoint.contract['engine'], decoder_sha256=checkpoint.contract['decoder'],
+                  resume=dict(attempt=checkpoint.state['attempt'],verified_cached_sources=len(reused),
+                              cache_verification_seconds=cache_seconds,
+                              vertex_programs_reused=0,vertex_programs_compiled=0,fragment_jobs_reused=0),
                   policy='Offline before guest entry; default renderer translation; demand fallback for missing/rejected entries')
     save_report(output / 'report.json', report)
     compiler = None
     vs_cache, jobs, by_id = {}, [], {}
+    vs_bytes=0
+    checkpoint.stage('vertex',completed=0,total=len(document['records']))
     for number, r in enumerate(document['records'],1):
         if number % 128 == 0:
             print(f"Vertex/state validation {number}/{len(document['records'])}; unique vertex variants {len(vs_cache)}",flush=True)
+            checkpoint.stage('vertex',completed=number-1,total=len(document['records']))
         try:
             v = vertices[r['vp']['sha256']]
             f = fragments[r['fp']['sha256']]
             identity = (r['vp']['sha256'], r['vp_gpu'])
             if identity not in vs_cache:
-                if compiler is None:
-                    compiler = NativeCompiler(decoder)
-                source, code = compiler.vertex(v, bool(r['vp_gpu']))
-                if sum(len(t[0]) + len(t[1]) for t in vs_cache.values()) + len(source) + len(code) > 128 * 1024 * 1024:
+                if r['vp_source'] in reused:
+                    code=reused[r['vp_source']]
+                    source_id,code_id=r['vp_source'],r['vs']
+                    report['resume']['vertex_programs_reused']+=1
+                else:
+                    if compiler is None:compiler=NativeCompiler(decoder)
+                    source,code=compiler.vertex(v,bool(r['vp_gpu']))
+                    source_id,code_id=f'{source_key(source):016x}',f'{fnv64(code):016x}'
+                    report['resume']['vertex_programs_compiled']+=1
+                vs_bytes+=len(code)
+                if vs_bytes > 128 * 1024 * 1024:
                     raise ValueError('Vertex translation memory budget exceeded')
-                vs_cache[identity] = (source, code)
-            source, code = vs_cache[identity]
-            if f'{fnv64(code):016x}' != r['vs'] or f'{source_key(source):016x}' != r['vp_source']:
+                vs_cache[identity]=(source_id,code_id,code)
+            source_id,code_id,code = vs_cache[identity]
+            if code_id != r['vs'] or source_id != r['vp_source']:
                 raise ValueError('Rebuilt vertex identifier differs')
             save_code(cache / (r['vp_source'] + '.dxbc'), code)
             job_id = sha(r['key'].encode())
@@ -369,8 +423,17 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_f
         except ValueError as exc:
             report['records'].append(dict(key=r['key'], status='incompatible', reason=str(exc)))
     root = output / 'requests'
-    root.mkdir()
-    compiled, failures = compile_fragments(jobs, root, cache, engine, game_root,mode=fragment_mode)
+    root.mkdir(exist_ok=True)
+    checkpoint.stage('fragment',requested=len(jobs))
+    compiled={};pending=[]
+    for job in jobs:
+        r,_=by_id[job['id']]
+        if r['fp_source'] in reused:
+            compiled[job['id']]=(r['fp_source'],reused[r['fp_source']])
+            report['resume']['fragment_jobs_reused']+=1
+        else:pending.append(job)
+    fresh,failures=compile_fragments(pending,root,cache,engine,game_root,mode=fragment_mode)
+    compiled.update(fresh)
     report['fragment_preparation']=json.loads((root/'fragment-preparation-report.json').read_text())
     requests = []
     for job in jobs:
@@ -382,23 +445,26 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_f
             if key != r['fp_source'] or f'{fnv64(ps):016x}' != r['ps']:
                 raise ValueError('Rebuilt fragment identifier differs')
             proof = root / job['id'] / 'pipeline'
-            proof.mkdir(parents=True)
+            proof.mkdir(parents=True,exist_ok=True)
             (proof / 'request.recipe').write_bytes(envelope(r, vs, ps))
             for code in (vs, ps):
                 (proof / f'code_{fnv64(code):016x}.dxbc').write_bytes(code)
+            (proof/'result.json').write_text('{"pending":true}\n')
             requests.append(job['id'])
         except ValueError as exc:
             report['records'].append(dict(key=r['key'], status='incompatible', reason=str(exc)))
     (root / 'jobs.txt').write_text(''.join(i + '\n' for i in requests))
     if requests:
+        checkpoint.stage('native',requested=len(requests))
         env = offline_env(game_root, cache)
         env.update(RSX_PSO_PREPARE_BATCH=str(root), RSX_PSO_TEMPLATE_PREPARE='1', RSX_PSO_RECIPE_KEEP_DAYS='0')
         run_offline(engine, game_root, env, output / 'native.log', timeout=900)
     for identity in requests:
         r = by_id[identity][0]
         result = json.loads((root / identity / 'pipeline/result.json').read_text())
-        passed = result['created'] and result['actual'] == result['expected'] == r['key']
+        passed = result.get('created') and result.get('actual') == result.get('expected') == r['key']
         report['records'].append(dict(key=r['key'], status='prepared' if passed else 'key-rejected', result=result))
+    checkpoint.stage('verifying-cache')
     report['inventory'] = inventory(cache, True)
     report['counts'] = dict(Counter(r['status'] for r in report['records']))
     prepared = {r['key'] for r in report['records'] if r['status'] == 'prepared'}
@@ -410,6 +476,7 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_f
     (cache / 'warmup-v1').mkdir(exist_ok=True)
     report['preparation_seconds'] = time.perf_counter() - started
     save_report(output / 'report.json', report)
+    checkpoint.stage('complete',counts=report['counts'])
     return report
 
 
@@ -426,7 +493,8 @@ def main():
     m.add_argument('--output', type=Path, required=True)
     m.add_argument('templates', type=Path, nargs='+')
     p = sub.add_parser('prepare')
-    p.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy',help='Opt-in exact-request compiler batching')
+    p.add_argument('--fragment-mode',choices=('batch','legacy'),default='batch',help='Exact-request batching by default; legacy rollback')
+    p.add_argument('--resume',action='store_true',help='Resume a matching checkpoint and revalidate native pipelines')
     p.add_argument('--asset-map',type=Path,help='Optional verified hash/offset map for non-SHDS programs')
     p.add_argument('--assets',type=Path,help='Original unpacked asset root used with --asset-map')
     p.add_argument('--demand-fallback',action='store_true',help='Report incompatible templates and provide an empty demand cache')
@@ -441,7 +509,7 @@ def main():
         return
     if args.command == 'prepare':
         result = prepare(*(getattr(args, k).resolve() for k in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game_root', 'output')),
-                         demand_fallback=args.demand_fallback,asset_map=args.asset_map,assets=args.assets,fragment_mode=args.fragment_mode)
+                         demand_fallback=args.demand_fallback,asset_map=args.asset_map,assets=args.assets,fragment_mode=args.fragment_mode,resume=args.resume)
         print(json.dumps(dict(counts=result['counts'], lookup=result['lookup'], seconds=result['preparation_seconds'])))
         return
     if args.output.exists():

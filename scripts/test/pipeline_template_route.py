@@ -15,7 +15,7 @@ for name in ('template','catalog','elf','engine','decoder','fixture','output'):
 ap.add_argument('--trials',type=int,choices=(2,4),default=4)
 ap.add_argument('--asset-map',type=Path)
 ap.add_argument('--assets',type=Path)
-ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy')
+ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='batch')
 args=ap.parse_args()
 out=isolated(args.output)
 if out.exists():

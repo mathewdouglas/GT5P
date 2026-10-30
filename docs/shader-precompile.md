@@ -24,7 +24,8 @@ player integration; retained-route coverage is not whole-game coverage.
    entries safely and leave unsupported cases on the existing demand path.
 4. **Make preparation efficient and resumable.** Reduce repeated compiler-process
    startup, reuse verified results, support cancellation/resume, and bound CPU,
-   memory and storage. Developer preparation needs refinement for first launch.
+   memory and storage. Phase 172 makes exact batching the developer default and
+   adds verified template resume; launcher cancellation still needs refinement.
 5. **Demonstrate consistent stutter reduction.** Fewer runtime shader compiles have
    not yet produced a consistent frame-time win. Separate driver creation, cache
    reads, scheduling and unrelated game work; load prepared resources at useful
@@ -77,7 +78,7 @@ Phase 160 adds [named shared-pass selection and isolated state checks](shader-re
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.
 
-## Identifier-only templates (Phase 171; optional developer path)
+## Identifier-only templates (Phase 172; optional developer path)
 
 This adapts the hash/numeric-state design in [Project Pyrrhus's template patch](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2071-pipeline-template-prewarm.patch),
 [context/key correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2077-pso-key-vp-start-template-default.patch)
@@ -188,11 +189,12 @@ For a versioned metadata bundle (no shader contents):
 `--template` accepts the bundle directory directly. Each part is checksum checked;
 conflicting/incompatible generations are rejected.
 
-### Exact fragment batching (opt in)
+### Exact fragment batching (default)
 
-Add `--fragment-mode batch` to template preparation, conditional material
-preparation or shared pipeline preparation. `legacy` remains the default and
-rollback option. The runtime path is independently guarded by
+Template preparation, conditional material/shared preparation and paired-route
+validation now use exact fragment batching by default. Select
+`--fragment-mode legacy` to roll back to per-profile processes. The runtime path
+is independently guarded by
 `RSX_SHADER_LIBRARY_BATCH=<private work directory>` and
 `GT5P_SHADER_PRECOMPILE_ONLY=1`; normal gameplay does not read batch manifests.
 
@@ -222,9 +224,41 @@ passes every shader/native/persistence check in one empty application cache:
 108.11 s fragment preparation in two processes, 467.42 s total and 57.17 s native
 driver creation. Serial vertex preparation and cache verification remain part of
 the total. Eleven native protocol/gating cases and all 36 shared candidates plus
-cache-reusing resume pass. See Phase 171 for evidence and limitations. Template
-preparation still requires fresh output; template cancellation/resume is not yet
-implemented. No shadercache is cleared or moved.
+cache-reusing resume pass. See Phase 171 for evidence and limitations. No
+shadercache is cleared or moved.
+
+### Resume template preparation
+
+Repeat the original `pipeline_template.py prepare` command with `--resume` and
+the same output directory. A fresh run creates `preparation-state.json` before
+lookup. The checkpoint binds the canonical validated template and asset map,
+plus the actual EXE/decoder hashes. Incompatible checkpoints are rejected without
+changing their state or caches. Older outputs without a checkpoint cannot resume;
+keep them and use a new ignored output directory.
+
+Each attempt rechecks the original assets and verifies cached source-keyed DXBC
+against the template's expected bytecode identifier and length. Missing shaders
+are rebuilt; corrupt shaders cause a safe failure and stay intact for inspection.
+Verified cached shader bytes have a 128 MiB pool limit. Every requested native
+pipeline is still checked/created on resume, using persisted driver blobs when
+accepted. Pending result markers prevent an earlier successful native result
+from satisfying a new attempt.
+
+An exclusive OS file lock prevents concurrent preparation of the same output;
+it releases when its owner exits. Resume rejects redirected or hard-linked
+output entries and bounds the directory walk. `preparation-state.json` records
+the attempt, phase and phase progress atomically; `complete` means that cache
+verification finished. Check its phase and compare the attempt with
+`report.json`'s `resume.attempt`: a report from an older attempt can remain after
+an interruption. The lock file's presence alone does not mean a process is live.
+
+A controlled interruption after real shader preparation resumed all 32 test
+records without vertex/fragment recompilation, then passed native creation and
+a second driver-blob reuse pass. Changed-template, corrupt-bytecode and separate
+process ownership checks pass (Phase 172). This verifies developer resume, not
+graceful launcher cancellation or recovery of every partially written artifact;
+partial/corrupt files fail safely. There is no new live rendering policy,
+coverage or stutter claim.
 
 Fresh application-cache paired validation:
 

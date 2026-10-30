@@ -107,7 +107,7 @@ def fragment_profile(job):
             int(state['rtfmt']==28 and state['nrt']==1 and bool(state['cmask']&14)))
 
 
-def compile_fragments(jobs, root, cache, engine, game_root, mode='legacy'):
+def compile_fragments(jobs, root, cache, engine, game_root, mode='batch'):
     if mode=='batch':
         from shader_fragment_batch import compile_batch
         return compile_batch(jobs,root,cache,engine,game_root)
@@ -196,7 +196,7 @@ def read_result(job, root, cache):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='legacy')
+    ap.add_argument('--fragment-mode',choices=('legacy','batch'),default='batch')
     for name in ('catalog', 'engine', 'decoder', 'game-root', 'output'):
         ap.add_argument('--' + name, type=Path, required=True)
     ap.add_argument('--object-pass-path', choices=('ccw', 'cw'))
