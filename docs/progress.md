@@ -9,6 +9,32 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 147 - Recover the conditional LV shadow sampler from pass setup (2026-10-30)
+
+The expanded native oracle verifies 1,024 synthetic dynamic descriptors and 64
+absent-resource fallbacks through environment/shadow/color-shadow/mirror emit
+callbacks. Supplied address/filter words are copied unchanged; absent resources
+use the initialized fallback. Identifier-wide fixed sampler guesses are invalid.
+
+Read-only tracing then found the LV shadow pass explicitly overwrites S/T wrap
+to clamp and both filters to linear before assigning its descriptor. The full
+local pass routine, with scene/render/resource access mocked and the real
+shadow descriptor setter/color conversion retained, passes 256 varied input
+sampler checks. Another 256 disabled-gate cases leave inputs untouched. Both
+the shadow descriptor and its color-copy select bank register 9. This tests the
+sampler setup path under controlled inputs, not actual scene rendering.
+
+Developer `--shadow-sampler-path shadow-lv` adds only the relevant address/filter
+bits for exact shadow signatures; all other pass fields remain unknown. With
+active dither, same-pair candidates completely cover sampled sampler lanes for
+336 links, versus 122 without this shadow variant. The conditional constraints
+match known lanes on 861 links and disagree on 183; they must not be imposed on
+every draw. Four car-interior samples with real shadow requirements rebuild
+source/bytecode/native keys and create D3D12 pipelines with complete derived
+sampler keys and prepared material fields. Remaining translation/target/pass
+state is still captured. No normal game or runtime source changed. Evidence:
+[shader-reconstruction.md](shader-reconstruction.md#conditional-lv-shadow-pass-phase-147).
+
 ## Phase 146 - Derive conditional dither/PCF sampler lanes and rebuild pipelines (2026-10-30)
 
 The local oracle now executes the real dither/PCF emitters and command-building

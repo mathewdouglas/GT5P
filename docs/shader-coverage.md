@@ -271,3 +271,10 @@ Eight active and two fallback samples recreate native pipelines. These figures
 remain sampler coverage under a chosen path, not complete pipeline or game
 coverage. Other global textures, pass/target state and unmatched programs remain
 unresolved; no complete first-run catalogue is ready to package.
+
+Phase 147 adds an explicit LV shadow-pass variant. Its setup forces linear/clamp
+sampling, verified under controlled inputs with the real pass routine. Together
+with active dither, matching candidates cover every sampled sampler lane for 336
+links; four shadow-using car-interior samples rebuild native pipelines. This
+remains conditional sampler coverage, with other pipeline fields still captured.
+Environment/mirror descriptors and remaining pass/translation state are open.

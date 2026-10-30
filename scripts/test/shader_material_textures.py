@@ -75,6 +75,21 @@ try:
 except ValueError:
     pass
 
+for name, identifier in (('realTimeShadowMap', 87), ('realTimeShadowMapColor', 96)):
+    g = dict(name=name, kind=0x601, identifier=identifier, unit=13)
+    definition = dict(d, bindings=[b], used=(1 << b['unit']) | (1 << 13), globals=[g])
+    resolved = m.with_global_sampler_path(definition, shadow_path='shadow-lv')
+    assert m.complete_sampler_key(resolved) == (13 << 8) | (9 << 52)
+    assert m.complete_sampler_key(m.with_global_sampler_path(definition, 'active')) is None
+    for field, value in (('name', 'envMapSampler'), ('kind', 0x801), ('identifier', 71)):
+        bad = dict(definition, globals=[dict(g, **{field: value})])
+        assert m.complete_sampler_key(m.with_global_sampler_path(bad, shadow_path='shadow-lv')) is None
+try:
+    m.with_global_sampler_path(definition, shadow_path='all-shadows')
+    raise AssertionError('unknown shadow pass accepted')
+except ValueError:
+    pass
+
 for offset, fmt, value, reason in [(1444, 'I', 42, 'texture index outside table'),
                                   (1284, 'h', 0x602, 'unsupported sampler record'),
                                   (1286, 'h', 16, 'unsupported sampler record'),

@@ -143,31 +143,40 @@ def known_sampler_key(definition):
     return key, mask
 
 
-def with_global_sampler_path(definition, path=None):
-    """Add measured dither/PCF candidates for an explicitly chosen binding path.
+def with_global_sampler_path(definition, path=None, shadow_path=None):
+    """Add measured global sampler candidates for explicitly chosen pass paths.
 
     Captures never choose the path here. Unknown signatures, duplicate global
     units and local/global overlaps stay unresolved. Only sampler state is added.
     """
-    if path is None:
+    if path is None and shadow_path is None:
         return definition
-    if path not in ('active', 'fallback'):
+    if path not in (None, 'active', 'fallback'):
         raise ValueError('unsupported global sampler path')
+    if shadow_path not in (None, 'shadow-lv'):
+        raise ValueError('unsupported shadow sampler path')
     signatures = {('ditherMap', 0x601, 94), ('ditherMap', 0x801, 103),
                   ('shadowPCFMap', 0x801, 104)}
     globals_ = definition.get('globals', ())
     counts = Counter(g['unit'] for g in globals_)
     local_units = {b['unit'] for b in definition['bindings']}
-    address, filtering = ((0x00030101, 0x01012000) if path == 'active' else
-                          (0x60010101, 0x02022000))
     bindings, unresolved = list(definition['bindings']), []
     for g in globals_:
         signature = (g['name'], g['kind'], g['identifier'])
-        if signature not in signatures or counts[g['unit']] != 1 or g['unit'] in local_units:
+        dither = path is not None and signature in signatures
+        shadow = shadow_path == 'shadow-lv' and signature in {
+            ('realTimeShadowMap', 0x601, 87), ('realTimeShadowMapColor', 0x601, 96)}
+        if not (dither or shadow) or counts[g['unit']] != 1 or g['unit'] in local_units:
             unresolved.append(g)
             continue
+        address, filtering = ((0x404, 0x02020000) if shadow else
+                              (0x00030101, 0x01012000) if path == 'active' else
+                              (0x60010101, 0x02022000))
         bindings.append(dict(g, address=address, filtering=filtering,
-                             sampler=sampler_register(address, filtering), global_path=path))
+                             sampler=sampler_register(address, filtering),
+                             global_path=shadow_path if shadow else path,
+                             address_mask=0xf0f if shadow else 0xffffffff,
+                             filtering_mask=0x07070000 if shadow else 0xffffffff))
     return dict(definition, bindings=bindings, globals=unresolved)
 
 
@@ -187,6 +196,8 @@ def main():
     ap.add_argument('--output', type=Path, required=True)
     ap.add_argument('--global-sampler-path', choices=('active', 'fallback'),
                     help='Conditional dither/PCF path; other globals remain unresolved')
+    ap.add_argument('--shadow-sampler-path', choices=('shadow-lv',),
+                    help='Conditional shadow pass; derive sampler-relevant bits only')
     args = ap.parse_args()
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
@@ -227,7 +238,7 @@ def main():
                         global_signatures.update((g['name'], g['kind'], g['unit'], g['identifier']) for g in definition['globals'])
                         sampled_globals.update(g['name'] for g in definition['globals'] if definition['used'] & (1 << g['unit']))
                         original_binding_count = len(definition['bindings'])
-                        definition = with_global_sampler_path(definition, args.global_sampler_path)
+                        definition = with_global_sampler_path(definition, args.global_sampler_path, args.shadow_sampler_path)
                         derived_globals += len(definition['bindings']) - original_binding_count
                         global_units = {g['unit'] for g in definition['globals']}
                         known = tuple(sorted((b['unit'], b['sampler']) for b in definition['bindings']
@@ -255,6 +266,7 @@ def main():
                                 known_match=bool(matching), complete_match=complete,
                                 profiles=[dict(used=used, lanes=dict(known)) for used, known in sorted(profiles)]))
     result = dict(schema=1, global_sampler_path=args.global_sampler_path,
+                  shadow_sampler_path=args.shadow_sampler_path,
                   resolved_bindings=total, unresolved_bindings=unresolved,
                   conditional_global_bindings=derived_globals,
                   coherent_alias_bindings=aliases, global_requirements=dict(global_requirements),
@@ -263,7 +275,7 @@ def main():
                                      for (name, kind, unit, identifier), count in sorted(global_signatures.items())],
                   rejected=dict(rejected), counts=dict(counts), comparisons=comparisons,
                   limitations=['Candidates share shader pairs; exact draw/material ownership is unproven.',
-                               'Unknown global textures stay unresolved; dither/PCF candidates require the explicit path.',
+                               'Unknown global textures stay unresolved; global candidates require explicit pass paths.',
                                'Only sampler-bank lanes are compared, not cube/gamma/unnormalized or pass state.'])
     output.mkdir(parents=True)
     (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')

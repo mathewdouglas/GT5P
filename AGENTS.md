@@ -36,14 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 146)
+## Start here: state of play (2026-10-30, Phase 147)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 146 is the latest).
+has the evidence, newest phase first (Phase 147 is the latest).
 
 ### What works now
 
+- **Conditional LV shadow sampler (Phase 147):** 1,088 native dynamic-binding
+  checks show supplied descriptors retain sampler state. The LV shadow pass
+  itself forces linear/clamp (256 enabled and 256 disabled-gate checks).
+  Developer `--shadow-sampler-path shadow-lv` derives sampler-relevant bits
+  only; with active dither, complete sampled-lane candidates match 336 links.
+  Four car-interior shader/native pipeline proofs pass. Other contexts remain
+  unknown; no player/runtime changes. Next trace environment descriptor setup
+  and remaining translation/pass/target state; see reconstruction docs.
 - **Conditional global sampler proof (Phase 146):** 288 native emitter checks
   recover dither/PCF active and fallback sampler settings. Explicit developer
   `--global-sampler-path active|fallback` extends the material audit/proof;

@@ -699,3 +699,73 @@ remaining translation/pass/target context. Their emit wrappers largely bind
 supplied descriptors, so dither's fixed sampler rules cannot be generalized to
 them. Complete catalogue generation and player first-run integration remain
 unfinished.
+
+## Conditional LV shadow pass (Phase 147)
+
+The environment, shadow, shadow-color and mirror emit callbacks were executed
+with 1,024 varied synthetic supplied descriptors (four identifiers, sixteen
+units, four wrap settings and four filter settings). They preserve the supplied
+address/filter words and other descriptor fields, replacing the unit-specific
+command headers. Another 64 absent-resource checks use the real initialized
+fallback descriptor, selecting sampler 8. These tests do not establish the
+contents of any real dynamically constructed resource.
+
+The measured dynamic dependency locations are environment object `+1c34` for
+selector zero, shadow `+1c44`, mirror `+1c48`, and the separate shadow-color
+pointer returned by `0082c748`. Nonzero environment selectors have not been
+exercised by this oracle. The callbacks' sampler settings cannot be derived
+from their identifiers alone.
+
+Further structural tracing found the LV shadow pass `008103f0` writes sampler
+settings before passing its resource to `0082e330`. The expanded native oracle
+executes that full pass with private resource descriptors. Scene rendering,
+render-state helpers and virtual resource access are mocked; the sampler
+writes, shadow descriptor setter, memory copying and color-descriptor format
+conversion are real extracted code. No GPU work or guest game entry runs.
+
+Across four input address words and all 8x8 min/mag filter combinations, **256
+enabled cases** force S/T wrap nibbles to 4 and min/mag fields to 2. Both shadow
+and shadow-color descriptors consequently select **sampler 9 (linear/clamp)**.
+Another 256 cases with the pass's early-exit gate set leave the supplied input
+sampler fields untouched. This is a conditional pass-setup proof; it does not
+show that every draw uses the LV shadow resource or that scene rendering is
+correct with these mocks.
+
+Both audit and reconstruction accept developer option
+`--shadow-sampler-path shadow-lv`, independently of the dither/PCF path. Only
+exact `realTimeShadowMap`/`realTimeShadowMapColor` kind/identifier signatures
+qualify, with the same overlap/duplicate rejection as other global lanes.
+Derived binding records carry `address_mask=00000f0f` and
+`filtering_mask=07070000`: only those sampler-relevant bits are known. They are
+not complete raw address/filter registers and must not supply gamma, LOD or
+other texture translation fields. The caller explicitly selects this variant;
+the capture is an oracle, not the source of the chosen settings.
+
+With active dither plus this shadow variant, the same corpus has 336 matching
+complete sampled-sampler candidates, up from 122 for active dither alone.
+Known lanes match on 861 links, disagree on 183, and 453 have no known sampled
+binding. Adding a conditional shadow constraint can eliminate candidates that
+only matched their local/dither lanes previously. The disagreements are retained,
+not hidden by dropping the shadow requirement. These remain candidate counts;
+pass/draw ownership is unresolved.
+
+Four newly eligible car-interior samples rebuilt shaders and their complete
+sampler keys, matched native keys and created D3D12 pipelines. All contain an
+actual sampled shadow requirement, alongside dither and local texture bindings.
+Prepared material blend/write-mask/depth replacement was active; other shader
+translation and pass/target descriptor fields still came from capture. Synthetic
+unknown-signature/pass-selection tests also pass. Local evidence:
+
+- `scratch/global-registry-7c9d3138c4f04a999fc6b903c199ccf7/report.json`
+- `scratch/shadow-lv-sampler-audit-20261030/report.json`
+- `scratch/shadow-lv-sampler-proof-20261030/report.json`
+
+The next concrete trace is the environment descriptor assigned by `0082e240`,
+including the dynamic environment path `00810f20` and its framebuffer resource.
+The local RTTI table identifies the shared FrameBuffer/CubeFrameBuffer texture
+getter at `008293a8`; its descriptor is at object `+54`. This last structural
+lead has not yet been executed in the oracle. Environment/mirror setup, other
+shadow pass variants, unsupported sampler layouts and remaining translation,
+culling/target/pass fields still prevent complete catalogue generation and
+player first-run integration. Normal game behavior and the runtime overlay
+remain unchanged.

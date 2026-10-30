@@ -37,7 +37,11 @@ def main():
     snippets += '\n' + extract(source, 'func_00830050')
     handlers = (args.generated / 'ppu_recomp_009.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(handlers, n) for n in (
-        'func_00D6DE78', 'func_00D6DE98', 'func_00D77C20', 'func_00D77CC0', 'func_00D77A90'))
+        'func_00D6DE78', 'func_00D6DE98', 'func_00D77C20', 'func_00D77CC0', 'func_00D77A90',
+        'func_00D6CAA0', 'func_00D6D930', 'func_00D6D898', 'func_00D6D9C0'))
+    snippets += '\n' + extract(source, 'func_0082C748')
+    snippets += '\n' + extract(source, 'func_008103F0')
+    snippets += '\n' + extract(source, 'func_0082E330')
     snippets += '\n' + extract(source, 'func_0081F0F0')
     snippets += '\n' + '\n'.join(extract(libc, n) for n in (
         'func_00BCEBB0', 'func_00BCEE18', 'func_00BCF1B0',
@@ -45,7 +49,8 @@ def main():
         'func_00BD2660', 'func_00BD5B88', 'func_00C05D58'))
     wrappers = (args.generated / 'ppu_recomp_007.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(wrappers, n) for n in (
-        'func_00BA6998', 'func_00BA6590', 'func_00BA6BD8', 'func_00BA6CF0'))
+        'func_00BA6998', 'func_00BA6590', 'func_00BA6BD8', 'func_00BA6CF0',
+        'func_00BA6B40', 'func_00BA6C68', 'func_00BA6628'))
     assert 'g_trampoline_fn' not in snippets, 'Isolated routines must not schedule trampolines'
     prefix = '''#define PPU_NO_INLINE_LOADS
 #define PPU_NO_INLINE_STORES
@@ -70,12 +75,71 @@ void func_0082C1A0(ppu_context* ctx) { ctx->gpr[3]=fallback; }
 static uint32_t provider;
 void func_008311A0(ppu_context* ctx) { provider=103;ctx->gpr[3]=0x1e00000; }
 void func_00830FC0(ppu_context* ctx) { provider=104;ctx->gpr[3]=0x1e00000; }
+void func_00811BD0(ppu_context* ctx) { ctx->gpr[3]=0x1e39000; }
+void func_00811D58(ppu_context* ctx) { ctx->gpr[3]=0; }
+void func_00811D48(ppu_context* ctx) { ctx->gpr[3]=0; }
+void func_00811D28(ppu_context* ctx) {}
+void func_00811D38(ppu_context* ctx) {}
+void func_00811BE0(ppu_context* ctx) {}
+void func_0082E430(ppu_context* ctx) {}
+void func_0082E488(ppu_context* ctx) {}
+void func_008343D0(ppu_context* ctx) {}
+void func_008343F0(ppu_context* ctx) {}
+void func_008389F0(ppu_context* ctx) {}
+void func_00810CD8(ppu_context* ctx) {}
+void func_00BC8360(ppu_context* ctx) {}
+void func_00BC84F8(ppu_context* ctx) {}
+void func_00BCE538(ppu_context* ctx) {}
+void func_00BCFEF8(ppu_context* ctx) {}
+void func_00BCFFA0(ppu_context* ctx) {}
+void ps3_indirect_call(ppu_context* ctx) {
+ assert(ctx->ctr==1 || ctx->ctr==2);
+ ctx->gpr[3]=(ctx->ctr==2) ? 0x1e32000 : 0x1e02000;
+}
 '''
     suffix = '''
 extern "C" __declspec(dllexport) void load(uint32_t a,const void* p,uint32_t n) {
  bounds(a,n);memcpy(memory+a,p,n);
 }
 extern "C" __declspec(dllexport) uint32_t word(uint32_t a) { return vm_read32(a); }
+extern "C" __declspec(dllexport) void shadow_pass(uint32_t address,uint32_t filtering,uint32_t enabled) {
+ ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
+ for(uint32_t j=0;j<13;j++) vm_write32(0x1e02000+j*4,0);
+ vm_write32(0x1e02000,0x201a00);vm_write32(0x1e02008,0x18529);
+ vm_write32(0x1e0200c,address);vm_write32(0x1e02018,filtering);vm_write32(0x1e0201c,0x400040);
+ vm_write32(0x1e33000,0x1e34000);vm_write32(0x1e34038,0x1e35000);
+ vm_write32(0x1e35000,1);vm_write32(0x1e35004,0x133bc58);
+ vm_write32(0x1e36000,0x1e37000);vm_write32(0x1e37010,0x1e38000);
+ vm_write32(0x1e38000,2);vm_write32(0x1e38004,0x133bc58);
+ vm_write32(0x1e39018,0x1e33000);
+ vm_write32(vm_read32(ctx.gpr[2]-0x66fc)-0x7ff4,0x1e3c000);
+ vm_write32(vm_read32(ctx.gpr[2]-0x6784)-0x8000,0x1e3d000);
+ vm_write8(0x1e3921c,enabled ? 0 : 1);vm_write8(0x1e36012,0);
+ ctx.gpr[3]=0x1e36000;ctx.gpr[4]=0x1e3a000;
+ func_008103F0(&ctx);
+ if(enabled) assert(vm_read32(0x1e3d000+0x1c44)==0x1e02000);
+}
+extern "C" __declspec(dllexport) void dynamic_emit(uint32_t identifier,uint32_t unit,uint32_t address,uint32_t filtering,uint32_t present) {
+ assert(unit<16);
+ ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
+ uint32_t root=vm_read32(ctx.gpr[2]-0x66f8), object=vm_read32(root-0x8000);
+ uint32_t copy_state=vm_read32(ctx.gpr[2]-0x48bc);vm_write32(copy_state+8,0x1e10000);
+ uint32_t descriptor=0x1e02000;
+ for(uint32_t j=0;j<13;j++) vm_write32(descriptor+j*4,0x12340000+j);
+ vm_write32(descriptor,0x201a00);vm_write32(descriptor+0xc,address);
+ vm_write32(descriptor+0x18,filtering);
+ vm_write32(object+0x1c34,present ? descriptor : 0);
+ vm_write32(object+0x1c44,present ? descriptor : 0);
+ vm_write32(object+0x1c48,present ? descriptor : 0);
+ vm_write32(vm_read32(ctx.gpr[2]-0x66fc)-0x7ff4,present ? descriptor : 0);
+ vm_write16(0x1e01006,unit);vm_write8(0x1e0100d,0);ctx.gpr[4]=0x1e01000;
+ if(identifier==71) func_00D6CAA0(&ctx);
+ else if(identifier==87) func_00D6D930(&ctx);
+ else if(identifier==96) func_00D6D898(&ctx);
+ else if(identifier==115) func_00D6D9C0(&ctx);
+ else assert(!"Unsupported dynamic identifier");
+ assert(vm_read32(copy_state+8)==0x1e10034);
+}
 extern "C" __declspec(dllexport) uint32_t emit(uint32_t identifier,uint32_t unit,uint32_t width,uint32_t address,uint32_t active) {
  assert(unit<16 && width>0 && width<4096);
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
@@ -123,6 +187,8 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
     lib.lookup.restype = ctypes.c_uint32
     lib.emit.argtypes = [ctypes.c_uint32] * 5
     lib.emit.restype = ctypes.c_uint32
+    lib.dynamic_emit.argtypes = [ctypes.c_uint32] * 5
+    lib.shadow_pass.argtypes = [ctypes.c_uint32] * 3
     assert data[:6] == b'\x7fELF\x02\x02', 'Expected ELF64 big endian'
     phoff = struct.unpack_from('>Q', data, 32)[0]
     stride, count = struct.unpack_from('>HH', data, 54)
@@ -182,8 +248,48 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                     assert sampler_register(commands[3], commands[6]) == binding['sampler']
                     emitted.append({'identifier': identifier, 'unit': unit, 'width': width,
                                     'active': bool(active), 'resource_address': address, 'words': commands})
+    dynamic_checks = 0
+    for identifier in (71, 87, 96, 115):
+        for unit in range(16):
+            for address in (0x101, 0x303, 0x301, 0x103):
+                for filtering in (0x01012000, 0x02022000, 0x02062000, 0x01052000):
+                    lib.dynamic_emit(identifier, unit, address, filtering, 1)
+                    commands = [lib.word(0x1e10000 + j * 4) for j in range(13)]
+                    assert commands[0] == 0x201a00 + unit * 32
+                    assert commands[9] == 0x41840 + unit * 4
+                    for j in range(13):
+                        if j not in (0, 3, 6, 9):
+                            assert commands[j] == 0x12340000 + j
+                    assert commands[3] == address and commands[6] == filtering
+                    dynamic_checks += 1
+            lib.dynamic_emit(identifier, unit, 0, 0, 0)
+            assert lib.word(0x1e1000c) == 0x60010101
+            assert lib.word(0x1e10018) == 0x02022000
+            dynamic_checks += 1
+    shadow_checks = 0
+    for address in (0, 0x101, 0x303, 0xffffffff):
+        for minimum in range(8):
+            for magnify in range(8):
+                filtering = (minimum << 16) | (magnify << 24) | 0x2000
+                lib.shadow_pass(address, filtering, 0)
+                assert lib.word(0x1e0200c) == address and lib.word(0x1e02018) == filtering
+                lib.shadow_pass(address, filtering, 1)
+                actual_address, actual_filter = lib.word(0x1e0200c), lib.word(0x1e02018)
+                assert actual_address & 0xf0f == 0x404
+                assert (actual_filter >> 16) & 7 == 2 and (actual_filter >> 24) & 7 == 2
+                assert sampler_register(actual_address, actual_filter) == 9
+                assert sampler_register(lib.word(0x1e3c00c), lib.word(0x1e3c018)) == 9
+                for name, identifier in (('realTimeShadowMap', 87), ('realTimeShadowMapColor', 96)):
+                    d = dict(bindings=[], globals=[dict(name=name, kind=0x601, identifier=identifier, unit=13)])
+                    b = with_global_sampler_path(d, shadow_path='shadow-lv')['bindings'][0]
+                    assert actual_address & b['address_mask'] == b['address']
+                    assert actual_filter & b['filtering_mask'] == b['filtering']
+                    assert b['sampler'] == 9
+                shadow_checks += 1
     report = {'elf_sha256': digest, 'registry_base': f'{base:08x}',
-              'scope': 'Isolated initializer/lookups and active/fallback dither/PCF emit paths; active resource providers stubbed',
+              'scope': 'Isolated callbacks and ShadowLV pass; render/scene helpers mocked; resource descriptors synthetic',
+              'dynamic_descriptor_checks': dynamic_checks,
+              'shadow_lv_pass_checks': shadow_checks,
               'lookup_checks': 10, 'emit_checks': len(emitted), 'emitted': emitted, 'records': records}
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: v for k, v in report.items() if k != 'emitted'}, indent=2))
