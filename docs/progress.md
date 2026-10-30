@@ -9,6 +9,30 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 150 - Derive local texture shape translation bits (2026-10-30)
+
+The new read-only shape audit derives supported local FORMAT dimension/cube
+flags and packs independent cube/volume value/mask pairs. Global bindings,
+unsupported dimension combinations and empty extents remain unknown. Gamma,
+output/sample fields and unresolved units are preserved. A native DLL using
+production bind assignments and shape-key helpers matches 768 synthetic cases
+across 2D/cube/volume and all sixteen units under default renderer switches.
+
+The supported inventory's 160,461 local bindings are all 2D. Same-pair known
+shape candidates match 843 retained links with no known-bit mismatches; 16 have
+every sampled shape known, 827 are partial and 654 lack known bindings. This does
+not recover the game's actual cube/volume paths or establish unique ownership.
+
+Developer `--material-texture-shapes` reparses the original selected definition
+and replaces only known shape bits before shader translation. Two complete local
+shape samples and two partial samples preserving a captured global environment
+cube match shader source/bytecode/native keys and create D3D12 pipelines. Sampler
+and prepared material fields are also derived; remaining translation/pass/target
+state stays captured. Synthetic integrity/containment/mask/global exclusion and
+existing material/sampler regressions pass. No runtime/player/release change;
+original checkout/shared runtime remain untouched. Evidence and next global/
+translation work: [shader-reconstruction.md](shader-reconstruction.md#asset-local-texture-shape-bits-phase-150).
+
 ## Phase 149 - Recover mirror filter overrides without guessing wrap (2026-10-30)
 
 The isolated oracle executes the mirror scene-copy consumer `00705FC0`, real

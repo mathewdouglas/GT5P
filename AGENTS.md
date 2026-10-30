@@ -36,14 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 149)
+## Start here: state of play (2026-10-30, Phase 150)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 149 is the latest).
+has the evidence, newest phase first (Phase 150 is the latest).
 
 ### What works now
 
+- **Local texture shape bits (Phase 150):** independent cube/volume masks from
+  supported local descriptors match 768 native production-key cases. Inventory
+  bindings are all 2D; known shape candidates match 843 links, 16 complete.
+  Developer `--material-texture-shapes` replaces known bits in four shader/native
+  pipeline proofs; partial cases explicitly preserve a global environment cube.
+  Global shapes/gamma/pass state remain open. No player/runtime changes; see
+  reconstruction docs for scope and next steps.
 - **Partial mirror sampler (Phase 149):** 4,096 native scene-copy checks show
   linear min/mag overrides with inherited S/T wrap. Explicit developer
   `--mirror-sampler-path scene-copy` derives filter bits only; audit schema 2

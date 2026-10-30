@@ -102,7 +102,7 @@ def model_textures(data, base):
                     raise ValueError('unsupported texture record header')
                 bindings.append(dict(name=names[0], aliases=names, unit=unit, texture_index=texture,
                                      image_id=words[14], offset=base + position, size=68,
-                                     address=words[3], filtering=words[6], format=words[2],
+                                     address=words[3], filtering=words[6], format=words[2], control3=words[10],
                                      width=words[7] >> 16, height=words[7] & 65535,
                                      sampler=sampler_register(words[3], words[6])))
             results.append(dict(definition=index, material=material, bindings=bindings,

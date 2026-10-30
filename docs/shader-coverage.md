@@ -294,3 +294,12 @@ within sampler-bank lanes. Audit schema 2 includes per-profile `lane_masks`;
 wrap bits remain unknown. No authored mirror pair links to the retained HSR
 capture, so its coverage totals are unchanged. See the
 [partial mirror proof](shader-reconstruction.md#partial-mirror-scene-copy-sampler-phase-149).
+
+
+Phase 150 adds a separate local texture-shape audit and partial shape translation
+proof. Known local shape bits match 843 retained links, with 16 complete for all
+sampled shapes. This supported inventory is all 2D; global shapes remain unknown.
+Four pipeline proofs derive local shape bits, with two explicitly retaining a
+global environment cube. These counts are separate from sampler coverage and
+do not establish capture-free pipelines. See
+[local shape reconstruction](shader-reconstruction.md#asset-local-texture-shape-bits-phase-150).

@@ -174,11 +174,12 @@ def material_state_matches(values, capture):
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
                  prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None,
-                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None):
+                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
     sampler_origin = None
+    shape_origin = None
     if prepared:
         from shader_material_state import prepare_state, decode_state
         raw = read_slice(prepared['source'])
@@ -200,6 +201,12 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                     raise ValueError('selected material texture definition is no longer available')
                 original_globals = definition['globals']
                 definition = with_global_sampler_path(definition, global_sampler_path, shadow_sampler_path, environment_sampler_path, mirror_sampler_path)
+                if material_texture_shapes:
+                    from shader_texture_shapes import shape_fields, shape_matches, replace_shape_fields
+                    shape_origin = shape_fields(definition)
+                    if not shape_matches(shape_origin, capture['state']):
+                        raise ValueError('reparsed texture shape bits differ from captured oracle')
+                    state.update(replace_shape_fields(shape_origin, state))
                 known, mask = known_sampler_key(definition)
                 captured_key = int(capture['state']['samplers'], 16)
                 if sampler_lanes and not mask:
@@ -274,8 +281,9 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                 vs=capture['vs'], ps=capture['ps'], vertex_hlsl_matches=True, fragment_source_key_matches=True,
                 native_result=result,
                 material_state=({**prepared, 'values': values} if prepared else None),
-                sampler_origin=sampler_origin,
-                replaced_translation_fields=(['sampler_lanes'] if sampler_lanes else ['samplers'] if material_samplers else []),
+                sampler_origin=sampler_origin, texture_shape_origin=shape_origin,
+                replaced_translation_fields=(['sampler_lanes'] if sampler_lanes else ['samplers'] if material_samplers else []) +
+                                            (['texture_shape_bits'] if material_texture_shapes else []),
                 replaced_descriptor_fields=(['blend', 'colour_write_mask', 'depth_compare', 'depth_write_mask'] if prepared else []),
                 state_origin=('prepared asset blend/mask/depth; remaining translation/pass/descriptor state captured'
                               if prepared else 'captured translation profile and native recipe'),
@@ -309,7 +317,11 @@ def main():
                     help='Conditional successful framebuffer setup; no later sampler overrides')
     ap.add_argument('--mirror-sampler-path', choices=('scene-copy',),
                     help='Partial mirror filter bits; wrap stays unresolved')
+    ap.add_argument('--material-texture-shapes', action='store_true',
+                    help='Derive supported local cube/volume bits; retain unknown shape and unrelated bits explicitly')
     args = ap.parse_args()
+    if args.material_texture_shapes and not (args.material_samplers or args.material_sampler_lanes):
+        ap.error('--material-texture-shapes requires a material sampler proof')
     if args.prepared_material_state and not args.materials:
         ap.error('--prepared-material-state requires --materials')
     if (args.material_samplers or args.material_sampler_lanes) and not args.prepared_material_state:
@@ -366,11 +378,15 @@ def main():
                             base = item['model']
                             table = struct.unpack_from('>I', data, base + 0x44)[0]
                             state_table = struct.unpack_from('>I', data, base + table + 16)[0]
+                        texture_shapes = {}
                         texture_keys = {}
                         texture_lanes = {}
                         if args.material_samplers or args.material_sampler_lanes:
                             textures, _ = model_textures(data, item['model'])
                             textures = [with_global_sampler_path(d, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path) for d in textures]
+                            from shader_texture_shapes import shape_fields, shape_matches
+                            if args.material_texture_shapes:
+                                texture_shapes = {d['definition']: shape_fields(d) for d in textures}
                             texture_keys = {d['definition']: complete_sampler_key(d) for d in textures}
                             texture_lanes = {d['definition']: known_sampler_key(d) for d in textures}
                         candidates = []
@@ -383,6 +399,7 @@ def main():
                             if args.prepared_material_state:
                                 for binding in bindings.get(pair['material'], ()):
                                     state_options.append(dict(**binding, values=states[binding['state']],
+                                                              texture_shapes=texture_shapes.get(binding['definition']),
                                                               sampler_key=texture_keys.get(binding['definition']),
                                                               sampler_lanes=texture_lanes.get(binding['definition'], (0, 0)),
                                                               source=source(base + state_table + binding['state'] * 160, 160)))
@@ -397,6 +414,7 @@ def main():
                                ('Only blend/write-mask/depth descriptor fields are replaced from prepared material state; other state remains captured.'
                                 if args.prepared_material_state else 'Rendering state/native descriptor is captured, not reconstructed from material definitions.'),
                                'This is a bounded sample, not a complete distributable catalogue.'])
+    report['material_texture_shapes'] = args.material_texture_shapes
     report['material_samplers'] = args.material_samplers
     report['partial_material_sampler_lanes'] = args.material_sampler_lanes
     report['global_sampler_path'] = args.global_sampler_path
@@ -424,6 +442,7 @@ def main():
                                      for lookup in targets.values() for prefix, ids in lookup.items()))
                 for option in eligible:
                     selected = next((s for s in option['states'] if material_state_matches(s['values'], c) and
+                                     (not args.material_texture_shapes or shape_matches(s['texture_shapes'], c['state'])) and
                                      (not args.material_samplers or s['sampler_key'] == int(c['state']['samplers'], 16)) and
                                      (not args.material_sampler_lanes or (s['sampler_lanes'][1] and
                                       (int(c['state']['samplers'], 16) & s['sampler_lanes'][1]) == s['sampler_lanes'][0]))), None)
@@ -443,7 +462,7 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path)
+                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes)
             result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])

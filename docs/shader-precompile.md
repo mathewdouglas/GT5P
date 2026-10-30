@@ -220,3 +220,10 @@ The developer mirror scene-copy option derives filter bits only, leaving input
 wrap unresolved. Schema 2 texture audits carry per-lane masks; these partial
 constraints are not complete pipeline recipes. See the
 [mirror investigation](shader-reconstruction.md#partial-mirror-scene-copy-sampler-phase-149).
+
+
+Developer `--material-texture-shapes` can now replace supported local cube/volume
+translation bits during reconstruction proofs. Measured real asset bindings in
+this subset are all 2D; global shapes and remaining translation/pass fields still
+use capture state. This does not enable a new player preparation path; see the
+[shape proof](shader-reconstruction.md#asset-local-texture-shape-bits-phase-150).

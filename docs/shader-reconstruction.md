@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138-149, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138-150, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -909,3 +909,85 @@ oracle outputs remain ignored. The original checkout/shared runtime were read
 only. Next trace the actual mirror source's creation and wrapping, obtain an
 independent mirror pair link, and recover remaining texture-dependent translation
 and target/pass state.
+
+
+## Asset-local texture shape bits (Phase 150)
+
+`scripts/shader_texture_shapes.py` derives supported local texture shapes from
+reparsed material texture-info descriptors. Dimension is FORMAT bits 4..7;
+bit 2 selects cube. The supported subset is dimension 2 (2D or cube) and
+dimension 3 without cube (volume). Unsupported combinations and empty extents
+remain unknown. The material reader additionally exposes CONTROL3 for native
+checks: the renderer uses its upper twelve bits for volume depth, with zero
+falling back to one. Shape presence itself does not depend on that depth value.
+
+This is conditional on the authored local descriptor being supplied without a
+shape override, under default `RSX_CUBE_TEX`, `RSX_CUBE_HI` and `RSX_TEX3D` behavior.
+It does not prove image upload success or exact live resource ownership. Global
+requirements never inherit local descriptor bits, and the earlier conditional
+global sampler candidates do not supply format/shape information.
+
+The production key packs cube units 0..3 into `cube` bits 0..3 and units 4..15
+into bits 20..31. Volume units occupy `ghi` bits 16..31. The new helper produces
+independent value/mask pairs for these two fields; gamma, output gamma, target
+sample count and unknown units are preserved. A known 2D binding contributes
+explicit zero cube/volume bits, not an inferred default for other units.
+
+The native differential test extracts the actual production texture-binding
+cube/depth assignments and `dr_cube_mask` / `dr_volume_mask` helpers into a
+scratch DLL. **768 cases** across sixteen units, 2D/cube/volume formats, four
+depths (including zero) and unrelated format bits match the independent shape
+implementation. No game or GPU starts. Unsupported dimensions and contradictory
+cube/volume flags are rejected by the independent supported subset; they are not
+claimed to be rejected by the renderer. Synthetic tests cover bit placement,
+unknown/global/unused exclusion, preservation of gamma/sample/unrelated bits,
+changed shape mismatches, capture-input integrity and ignored output containment.
+
+The same 599-container inventory provides **160,461 supported local bindings,
+all 2D**. Known shape candidates match 843/1,497 retained links with no known-bit
+mismatches; 16 cover every sampled shape, 827 are partial and 654 lack known shape
+bindings. These are definition-binding references and same-pair candidates, not
+unique textures, complete pipeline coverage or proof that the game has no cube/
+volume assets. In particular, this stage has not recovered a real authored cube
+or volume example in the supported material subset. Runtime-created/fixed-up
+bindings and unsupported layouts still need tracing.
+
+Add **`--material-texture-shapes`** to a reconstruction command that already
+uses `--prepared-material-state`, `--materials`, and either material sampler
+proof option. Selection requires matching known shape bits from the same
+material definition as the state/sampler candidate. The proof reparses that
+definition again, rebuilds the shape value/mask from original descriptors, then
+replaces those bits in the translation profile before compilation. Captured
+values validate the derived bits; only explicitly unknown bits are retained.
+`texture_shape_origin` reports masks, values and unresolved sampled units.
+
+Two car-material samples with every sampled shape derived and two partial
+character-material samples passed asset shader source/bytecode/native key
+comparison and D3D12 creation. The partial cases retain the nonzero global
+environment cube bit and other unresolved global shapes explicitly; they do not
+replace it with a guessed local 2D value. All four also derive sampler state and
+prepared blend/write-mask/depth fields. Other translation/target/pass/native
+fields remain captured, so none is a complete capture-free pipeline recipe.
+The isolated diagnostic EXE was reused without modifying runtime sources or
+starting guest gameplay.
+
+```powershell
+.venv/Scripts/python scripts/shader_texture_shapes.py --states <state audit.json> --report <flat provenance audit.json> --trace <capture folder> --output scratch/shape-audit
+.venv/Scripts/python scripts/test/shader_texture_shapes.py
+.venv/Scripts/python scripts/test/shader_texture_shapes_native.py --runtime ../ps3recomp-gt5p-provenance
+```
+
+Local evidence:
+
+- `scratch/local-texture-shapes-audit-20261030/report.json`
+- `scratch/texture-shapes-native-e13a138480d547c89a56c83080ad9ef5/report.json`
+- `scratch/complete-local-shapes-proof-input-20261030.json` (original audit rows
+  restricted to complete matching local shape candidates)
+- `scratch/complete-local-shapes-proof-20261030/report.json`
+- `scratch/partial-local-shapes-proof-20261030/report.json`
+
+Original checkout/shared runtime, normal build, player defaults and release
+packaging are unchanged. Next trace global descriptor shapes and their setup/
+overrides, real cube/volume material paths, gamma/unnormalized/shadow translation
+state, and remaining target/culling/pass context. First-run catalogue generation
+and launcher integration are still unfinished.
