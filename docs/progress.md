@@ -9,6 +9,31 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 146 - Derive conditional dither/PCF sampler lanes and rebuild pipelines (2026-10-30)
+
+The local oracle now executes the real dither/PCF emitters and command-building
+helpers with controlled active resource providers. Fallback paths run the real
+default texture initialization, descriptor copy and binding routines. Across
+three identifiers, sixteen units, three resource sizes/addresses and two paths,
+288 emitted sampler address/filter pairs match the independent implementation:
+active nearest/repeat selects bank register 4; fallback linear/repeat selects 8.
+
+The audit and reconstruction CLI accept explicit `--global-sampler-path` with
+active/fallback choices. Only measured name/kind/identifier signatures qualify;
+unknown signatures, duplicate global units and local/global overlaps stay
+unresolved. The selected path is a conditional input, not inferred from capture.
+Same-pair candidates fully cover sampled sampler lanes for 122 active-path or
+26 fallback-path links (132 union; 16 overlap). This is not full pipeline coverage
+or evidence of exact draw ownership. Active-path known-lane matches total 1,030;
+14 disagree, while fallback has matching candidates for those 14 additional links.
+
+Eight active-path and two fallback-path shader/pipeline samples rebuilt from
+assets with complete sampler keys, matching source/bytecode/native keys and
+creating in D3D12. Prepared blend/write-mask/depth replacement remained active.
+Other translation/target/pass fields remain captured. Synthetic malformed,
+overlap, branch-selection and source-integrity checks pass. No runtime or normal
+game build changed. Details: [shader-reconstruction.md](shader-reconstruction.md#conditional-ditherpcf-samplers-phase-146).
+
 ## Phase 145 - Resolve global callback initialization in isolation (2026-10-30)
 
 The new local-only `scripts/test/shader_global_registry_native.py` executes the

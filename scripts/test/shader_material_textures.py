@@ -53,6 +53,28 @@ assert m.complete_sampler_key(dict(d, used=5)) is None
 assert m.known_sampler_key(dict(d, used=5)) == (13 << 8, 15 << 8)
 assert m.complete_sampler_key(dict(d, used=0)) is None
 
+for name, kind, identifier in (('ditherMap', 0x601, 94), ('ditherMap', 0x801, 103),
+                               ('shadowPCFMap', 0x801, 104)):
+    g = dict(name=name, kind=kind, identifier=identifier, unit=15)
+    definition = dict(d, used=d['used'] | (1 << 15), globals=[g])
+    assert m.with_global_sampler_path(definition) is definition
+    for path, sampler in (('active', 4), ('fallback', 8)):
+        resolved = m.with_global_sampler_path(definition, path)
+        assert not resolved['globals'] and len(definition['globals']) == 1
+        assert m.complete_sampler_key(resolved) == (13 << 8) | (sampler << 60)
+        for field, value in (('name', 'unknown'), ('kind', 0x901), ('identifier', 999)):
+            bad = dict(definition, globals=[dict(g, **{field: value})])
+            assert m.complete_sampler_key(m.with_global_sampler_path(bad, path)) is None
+        duplicate = dict(definition, globals=[g, g])
+        assert m.complete_sampler_key(m.with_global_sampler_path(duplicate, path)) is None
+        overlap = dict(definition, globals=[dict(g, unit=2)])
+        assert m.known_sampler_key(m.with_global_sampler_path(overlap, path)) == (0, 0)
+try:
+    m.with_global_sampler_path(definition, 'guessed')
+    raise AssertionError('unknown global path accepted')
+except ValueError:
+    pass
+
 for offset, fmt, value, reason in [(1444, 'I', 42, 'texture index outside table'),
                                   (1284, 'h', 0x602, 'unsupported sampler record'),
                                   (1286, 'h', 16, 'unsupported sampler record'),

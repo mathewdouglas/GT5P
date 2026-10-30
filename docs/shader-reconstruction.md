@@ -630,3 +630,72 @@ game-derived source or payload is packaged. Successful evidence this session:
 `scratch/global-registry-10a6cace5f564692be405b7c78172b7b/report.json`.
 Only the developer oracle and documentation changed; no player setting, runtime
 behavior, shared checkout, game build or catalogue-generation default changed.
+
+## Conditional dither/PCF samplers (Phase 146)
+
+The oracle now executes both branches of the three dither/PCF emitters, their
+real texture-state helpers and command writer. The active resource providers
+are controlled stubs supplying a private resource descriptor; the shader
+callbacks, packed arguments, sampler reset/set operations and command emission
+are real extracted routines. The fallback uses real default-texture creation,
+descriptor copying and binding, with initially zero private BSS. No gameplay
+or original generated source is changed.
+
+Across identifiers 94/103/104, sixteen units, three widths/addresses and two
+branches, **288 emitted address/filter pairs** match an independent sampler
+implementation:
+
+| Path | Address register | Filter register | Effective bank register |
+| --- | --- | --- | --- |
+| active resource | `00030101` | `01012000` | 4 (nearest/repeat) |
+| default fallback | `60010101` | `02022000` | 8 (linear/repeat) |
+
+Identifiers 94 and 103 differ in other texture-format behavior; this change
+derives their sampler settings only. Resource sizes and addresses do not change
+these measured sampler pairs. The fallback default is conditional on that
+initialized template; this is not a claim that arbitrary dynamic textures have
+those settings.
+
+Both `shader_material_textures.py` and `shader_reconstruct.py` accept developer
+option `--global-sampler-path active|fallback`. Reconstruction requires either
+`--material-samplers` or `--material-sampler-lanes` plus prepared material state.
+The path is an explicit conditional input. It is never silently selected from
+captured samplers. A future catalogue may enumerate both variants, but this
+change does not establish which path any particular draw owns.
+
+Only exact supported name/kind/identifier signatures resolve. Unknown kinds,
+names or identifiers, duplicate global units and local/global overlaps remain
+unresolved. Reports preserve original global requirements and show derived
+bindings, the chosen path and remaining unresolved globals. Default behavior
+without the option retains the earlier local-only proof.
+
+For the same 1,497-link corpus, active-path candidates yield 1,030 known-lane
+matches, 14 mismatches and 453 links with no known sampled binding. 122 have
+every sampled sampler lane covered. Fallback candidates match 30 links, 26
+with complete sampled-lane coverage. Their unions are 1,044 known-lane matches
+and 132 complete sampled-lane matches, with 16 overlapping complete matches.
+These are existence-of-candidate counts; exact material/draw ownership remains
+unproven. They do not mean 132 complete native pipeline descriptions are derived.
+
+Eight active-path and two fallback-path samples rebuilt source/VS/PS bytecode,
+matched native keys and created D3D12 pipelines. The character alpha/emission
+alias sample now derives its entire sampler key, including dither, rather than
+retaining the dither lane from capture. Prepared blend/write-mask/depth fields
+also remain independently replaced. Other translation fields and pass/target
+descriptor fields are still captured.
+
+Validation includes the 288 native command checks, synthetic unknown-signature,
+overlap/duplicate/path-selection checks, existing input-integrity checks and
+the ten successful native pipeline proofs. No runtime overlay, normal game
+binary, player setting or release payload changed. Local evidence:
+
+- `scratch/global-registry-09d70a278aa94677a5bcd6f07fde4119/report.json`
+- `scratch/global-sampler-{active,fallback}-audit-20261030/report.json`
+- `scratch/global-sampler-eight-proof-20261030/report.json`
+- `scratch/global-sampler-fallback-proof-20261030/report.json`
+
+Next: recover dynamic shadow/environment/mirror texture descriptors and the
+remaining translation/pass/target context. Their emit wrappers largely bind
+supplied descriptors, so dither's fixed sampler rules cannot be generalized to
+them. Complete catalogue generation and player first-run integration remain
+unfinished.

@@ -263,3 +263,11 @@ pairs in a private-memory native oracle. Two lookup handlers also pass ten
 sentinel checks. The emit callbacks and their eventual sampler settings remain
 unverified, so the coverage figures above are unchanged. See the
 [callback trace](shader-reconstruction.md#global-callback-initialization-phase-145).
+
+Phase 146 derives conditional dither/PCF sampler lanes, checked against 288
+native command emissions. Explicit active/fallback candidates cover every
+sampled sampler lane for 122/26 links (132 union), versus the preceding 16.
+Eight active and two fallback samples recreate native pipelines. These figures
+remain sampler coverage under a chosen path, not complete pipeline or game
+coverage. Other global textures, pass/target state and unmatched programs remain
+unresolved; no complete first-run catalogue is ready to package.

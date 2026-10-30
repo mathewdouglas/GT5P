@@ -36,14 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 145)
+## Start here: state of play (2026-10-30, Phase 146)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 145 is the latest).
+has the evidence, newest phase first (Phase 146 is the latest).
 
 ### What works now
 
+- **Conditional global sampler proof (Phase 146):** 288 native emitter checks
+  recover dither/PCF active and fallback sampler settings. Explicit developer
+  `--global-sampler-path active|fallback` extends the material audit/proof;
+  it never guesses a path from capture. Active/fallback candidates fully cover
+  sampled sampler lanes for 122/26 links (132 union, previously 16). Eight
+  active and two fallback native pipeline proofs pass. Other translation/pass
+  fields remain captured; no player/runtime/default changes. See reconstruction.
 - **Global callback initialization (Phase 145):** a local isolated initializer
   resolves seven global identifiers to lookup/emit callbacks. Two lookup
   handlers pass ten private-memory checks. These are runtime callbacks, not

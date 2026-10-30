@@ -173,7 +173,7 @@ def material_state_matches(values, capture):
 
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
-                 prepared=None, material_samplers=False, sampler_lanes=False):
+                 prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
@@ -187,7 +187,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         state.update(blend=values['blend'], cmask=values['cmask'],
                      stencil=(state['stencil'] & 0x0FFFFFFF) | values['depth_bits'])
     if material_samplers or sampler_lanes:
-        from shader_material_textures import model_textures, complete_sampler_key, known_sampler_key
+        from shader_material_textures import model_textures, complete_sampler_key, known_sampler_key, with_global_sampler_path
         # Reparse the original definition and bindings. A saved audit/captured
         # sampler value is never used to construct the replacement key.
         with Path(candidate['file']).open('rb') as stream:
@@ -197,13 +197,16 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                                    d['material'] == material['material']), None)
                 if definition is None:
                     raise ValueError('selected material texture definition is no longer available')
+                original_globals = definition['globals']
+                definition = with_global_sampler_path(definition, global_sampler_path)
                 known, mask = known_sampler_key(definition)
                 captured_key = int(capture['state']['samplers'], 16)
                 if sampler_lanes and not mask:
                     raise ValueError('selected material no longer resolves any sampled sampler lanes')
                 key = ((captured_key & ~mask) | known) if sampler_lanes else complete_sampler_key(definition)
                 sampler_origin = dict(definition=definition['definition'], used=definition['used'],
-                                      bindings=definition['bindings'], globals=definition['globals'],
+                                      bindings=definition['bindings'], globals=original_globals,
+                                      unresolved_globals=definition['globals'], global_sampler_path=global_sampler_path,
                                       partial=bool(sampler_lanes), derived_lane_mask=mask,
                                       captured_lane_mask=(0xFFFFFFFFFFFFFFFF ^ mask) if sampler_lanes else 0)
         if key is None or key != int(capture['state']['samplers'], 16):
@@ -294,6 +297,8 @@ def main():
                     help='Require every sampled unit resolved by the same material and derive its sampler key')
     ap.add_argument('--material-sampler-lanes', action='store_true',
                     help='Partial proof: derive known material lanes; retain other lanes explicitly from capture')
+    ap.add_argument('--global-sampler-path', choices=('active', 'fallback'),
+                    help='Conditional dither/PCF binding path; never inferred from captured state')
     args = ap.parse_args()
     if args.prepared_material_state and not args.materials:
         ap.error('--prepared-material-state requires --materials')
@@ -301,6 +306,8 @@ def main():
         ap.error('Material sampler proofs require --prepared-material-state')
     if args.material_samplers and args.material_sampler_lanes:
         ap.error('Choose complete samplers or partial sampler lanes, not both')
+    if args.global_sampler_path and not (args.material_samplers or args.material_sampler_lanes):
+        ap.error('--global-sampler-path requires a material sampler proof')
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
         ap.error('Choose a new output directory in gitignored storage')
@@ -335,7 +342,7 @@ def main():
         # trusting offsets or match claims in a saved diagnostic report.
         from shader_materials import model_pairs
         from shader_material_state import model_states
-        from shader_material_textures import model_textures, complete_sampler_key, known_sampler_key
+        from shader_material_textures import model_textures, complete_sampler_key, known_sampler_key, with_global_sampler_path
         for item in json.loads(args.materials.read_text())['pairs']:
             if not item['captured_pair_matches']:
                 continue
@@ -353,6 +360,7 @@ def main():
                         texture_lanes = {}
                         if args.material_samplers or args.material_sampler_lanes:
                             textures, _ = model_textures(data, item['model'])
+                            textures = [with_global_sampler_path(d, args.global_sampler_path) for d in textures]
                             texture_keys = {d['definition']: complete_sampler_key(d) for d in textures}
                             texture_lanes = {d['definition']: known_sampler_key(d) for d in textures}
                         candidates = []
@@ -381,6 +389,7 @@ def main():
                                'This is a bounded sample, not a complete distributable catalogue.'])
     report['material_samplers'] = args.material_samplers
     report['partial_material_sampler_lanes'] = args.material_sampler_lanes
+    report['global_sampler_path'] = args.global_sampler_path
     compiler = NativeCompiler(args.decoder)
     pairs = set()
     for row in rows:
@@ -421,7 +430,7 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes)
+                                  args.material_sampler_lanes, args.global_sampler_path)
             result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])
