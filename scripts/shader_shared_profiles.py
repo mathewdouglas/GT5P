@@ -1,6 +1,6 @@
 """Independent conditional shared-pass facts for the measured disc build.
 
-No capture input. The colour-correction rule requires a successfully initialized
+No capture input. The shared rules require a successfully initialized
 ordinary RGBA8 2D FrameBuffer source, distinct target, supported target context,
 real wrapper binding and no later overrides/unexpected resource redirects.
 """
@@ -24,11 +24,26 @@ def colour_correct_descriptor(words, same, read_gamma):
     return result
 
 
-def colour_correct_profile(pair, target_path, output_gamma, read_gamma, depth_backed=True):
-    if pair['name'] != 'ColorCorrect' or pair['tag'] != 0 or pair['vertex_input_mask'] != 0x101:
+def convolution_descriptor(words, gamma):
+    if len(words) != 13 or not 0 <= gamma <= 0xffffffff or any(not 0 <= w <= 0xffffffff for w in words):
+        raise ValueError('invalid convolution resource arguments')
+    result = list(words)
+    result[0] = (result[0] & 0xffff0000) | 0x1a00
+    result[2] = (result[2] & ~0x00ff0004) | 0x14000
+    result[3] = (result[3] & ~0x0ff00000) | ((7 if (-gamma) & 0x80000000 else 0) << 20)
+    result[6] = (result[6] & ~0x0fff0000) | 0x02020000
+    result[9] = 0x41840
+    return result
+
+
+def _binding(pair, name, kind):
+    if pair['name'] != name or pair['tag'] != 0 or pair['vertex_input_mask'] != 0x101:
         raise ValueError('unsupported shared-pass binding')
-    if pair.get('sampled_units') != 1 or pair.get('global_count') != 0 or pair.get('samplers') != [dict(name='colorMap', kind=0x601, unit=0, extra=[0, 0, 0])]:
-        raise ValueError('unsupported colour-correction sampler ownership')
+    if pair.get('sampled_units') != 1 or pair.get('global_count') != 0 or pair.get('samplers') != [dict(name='colorMap', kind=kind, unit=0, extra=[0, 0, 0])]:
+        raise ValueError('unsupported shared sampler ownership')
+
+
+def _screen_profile(pair, target_path, output_gamma, read_gamma, depth_backed):
     if output_gamma not in (0, 1) or read_gamma not in (0, 1):
         raise ValueError('gamma contexts must be explicit booleans')
     if depth_backed not in (0, 1):
@@ -41,10 +56,21 @@ def colour_correct_profile(pair, target_path, output_gamma, read_gamma, depth_ba
                 cull=0, rtfmt=target['rtfmt'], nrt=1)
 
 
+def colour_correct_profile(pair, target_path, output_gamma, read_gamma, depth_backed=True):
+    _binding(pair, 'ColorCorrect', 0x601)
+    return _screen_profile(pair, target_path, output_gamma, read_gamma, depth_backed)
+
+
+def convolution_profile(pair, target_path, gamma, depth_backed=True):
+    _binding(pair, 'Convolution_8', 0x801)
+    state = _screen_profile(pair, target_path, gamma, gamma, depth_backed)
+    return dict(state, unnorm=0x101)
+
+
 ASSUMPTIONS = [
-    'Measured disc-build ColorCorrect wrapper and named shader binding; no later overrides',
+    'Measured disc-build shared wrapper and named shader binding; no later overrides',
     'Successfully initialized RGBA8 2D FrameBuffer source; source and destination are distinct',
     'Ordinary normalized colour source; no depth/cube/volume or unexpected resource redirects',
     'Explicit source-read/output-gamma arguments and single-colour target/depth-attachment context',
-    'Default renderer translation switches; inherited AA-enable bit is irrelevant with AA bit 4 cleared',
+    'Default renderer translation switches; per-draw constants are supplied by the live game',
 ]

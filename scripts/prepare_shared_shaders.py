@@ -13,7 +13,7 @@ import subprocess
 from shader_coverage import ROOT, fnv64, fp_identity, bounded_read
 from shader_reconstruct import NativeCompiler, word_swap, offline_env, run_offline
 from shader_shared_passes import bank_pairs
-from shader_shared_profiles import DISC_SHA256, colour_correct_profile, ASSUMPTIONS
+from shader_shared_profiles import DISC_SHA256, colour_correct_profile, convolution_profile, ASSUMPTIONS
 from shader_pass_state import native_target_fields
 from prepare_material_shaders import save_code, source_key, request_envelope, compile_fragments, read_result
 
@@ -36,37 +36,42 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
     """Enumerate only the independently supported distinct-target context rule."""
     if hashlib.sha256(data).hexdigest() != DISC_SHA256:
         raise ValueError('Shared pass rules are validated only for the measured disc ELF')
-    selected = [p for p in pairs if p['name'] == 'ColorCorrect' and p['tag'] == 0]
-    if len(selected) != 1:
-        raise ValueError('Expected one unambiguous authored ColorCorrect pair')
-    pair = selected[0]
-    f = pair['fragment']
-    fragment = data[f['offset']:f['offset'] + f['size']]
-    if fp_identity(fragment)['textures'] != 1:
-        raise ValueError('Colour-correction sampled units differ from supported rule')
+    names = ('ColorCorrect', 'Convolution_8')
+    selected = [p for p in pairs if p['name'] in names and p['tag'] == 0]
+    if len(selected) != len(names) or {p['name'] for p in selected} != set(names):
+        raise ValueError('Expected unambiguous authored pairs for each supported shared rule')
+    by_name = {p['name']: p for p in selected}
     targets = ('rgba16-single', 'rgba16-msaa2') + (('rgba8-single',) if args.context_set == 'supported' else ())
     jobs = []
     depths = (True, False) if args.depth_context == 'both' else (args.depth_context == 'backed',)
-    for target, output_gamma, read_gamma, depth_backed in itertools.product(targets, range(2), range(2), depths):
-        state = colour_correct_profile(pair, target, output_gamma, read_gamma, depth_backed)
-        context = dict(target_path=target, output_gamma=output_gamma, read_gamma=read_gamma,
-                       source='successful-rgba8-framebuffer-2d', source_equals_target=False, depth_backed=depth_backed)
-        identity = dict(vertex=pair['vertex']['sha256'], fragment=f['sha256'],
-                        input_mask=pair['vertex_input_mask'], state=state, context=context)
-        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-        jobs.append(dict(id=key, state=state, context=context, used=1, fragment=fragment,
-                         fragment_sha256=f['sha256']))
+    for pair in selected:
+        f = pair['fragment']
+        fragment = data[f['offset']:f['offset'] + f['size']]
+        if fp_identity(fragment)['textures'] != 1:
+            raise ValueError('Shared sampled units differ from supported rule')
+        gammas = tuple(itertools.product(range(2), range(2))) if pair['name'] == 'ColorCorrect' else ((0, 0), (1, 1))
+        for target, (output_gamma, read_gamma), depth_backed in itertools.product(targets, gammas, depths):
+            state = (colour_correct_profile(pair, target, output_gamma, read_gamma, depth_backed)
+                     if pair['name'] == 'ColorCorrect' else convolution_profile(pair, target, read_gamma, depth_backed))
+            context = dict(pass_name=pair['name'], target_path=target, output_gamma=output_gamma, read_gamma=read_gamma,
+                           source='successful-rgba8-framebuffer-2d', source_equals_target=False, depth_backed=depth_backed)
+            identity = dict(vertex=pair['vertex']['sha256'], fragment=f['sha256'],
+                            input_mask=pair['vertex_input_mask'], state=state, context=context)
+            key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+            jobs.append(dict(id=key, state=state, context=context, used=1, fragment=fragment,
+                             fragment_sha256=f['sha256']))
     root = args.output.resolve() / 'pipelines'
     root.mkdir(exist_ok=True)
     (root / 'manifest.json').write_text(json.dumps([
         {k: v for k, v in job.items() if k != 'fragment'} for job in jobs], indent=2))
     compiled, failures = compile_fragments(jobs, root, cache, args.engine.resolve(), args.game_root.resolve())
-    vertex = vertices[pair['vertex']['sha256']]
-    vs = bounded_read(cache / (vertex['source_key'] + '.dxbc'), 4 * 1024 * 1024)
     requests = []
     for job in jobs:
         if job['id'] in failures:
             continue
+        pair = by_name[job['context']['pass_name']]
+        vertex = vertices[pair['vertex']['sha256']]
+        vs = bounded_read(cache / (vertex['source_key'] + '.dxbc'), 4 * 1024 * 1024)
         proof = root / job['id'] / 'pipeline'
         proof.mkdir(parents=True, exist_ok=True)
         ps_key, ps = compiled[job['id']]
@@ -99,7 +104,7 @@ def prepare_pipelines(args, data, pairs, cache, vertices):
             results.append(dict(id=job['id'], context=job['context'], **result))
         except (ValueError, OSError) as exc:
             results.append(dict(id=job['id'], context=job['context'], status='failed', reason=str(exc)))
-    return dict(rule='distinct-source ColorCorrect', assumptions=ASSUMPTIONS, jobs=results,
+    return dict(rules=list(names), assumptions=ASSUMPTIONS, jobs=results,
                 limitation='Conditional context candidates; actual draw ownership and whole-game coverage unproven.')
 
 
@@ -108,7 +113,7 @@ def main():
     ap.add_argument('--elf', required=True, type=Path)
     ap.add_argument('--decoder', required=True, type=Path)
     ap.add_argument('--output', required=True, type=Path)
-    ap.add_argument('--pipelines', action='store_true', help='Prepare supported conditional ColorCorrect pipelines without captures')
+    ap.add_argument('--pipelines', action='store_true', help='Prepare supported conditional shared pipelines without captures')
     ap.add_argument('--engine', type=Path)
     ap.add_argument('--game-root', type=Path)
     ap.add_argument('--context-set', choices=('rgba16', 'supported'), default='rgba16')
@@ -130,7 +135,8 @@ def main():
     config = dict(elf_sha256=hashlib.sha256(data).hexdigest(),
                   decoder_sha256=hashlib.sha256(args.decoder.read_bytes()).hexdigest(),
                   engine_sha256=hashlib.sha256(args.engine.read_bytes()).hexdigest() if args.pipelines else None,
-                  pipelines=args.pipelines, context_set=args.context_set, depth_context=args.depth_context)
+                  pipelines=args.pipelines, context_set=args.context_set, depth_context=args.depth_context,
+                  rule_set_version=2)
     if args.resume:
         previous = json.loads((output / 'report.json').read_text())
         if previous.get('config') != config:
@@ -172,7 +178,7 @@ def main():
     if args.pipelines and not failed:
         try:
             report['pipelines'] = prepare_pipelines(args, data, pairs, cache, vertices)
-            report['scope'] = 'CPU vertex preparation plus explicitly conditional capture-free ColorCorrect pipelines.'
+            report['scope'] = 'CPU vertex preparation plus explicitly conditional capture-free shared pipelines.'
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             report['pipelines'] = dict(error=str(exc), jobs=[])
             pipeline_failed = True

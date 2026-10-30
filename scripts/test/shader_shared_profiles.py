@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from shader_shared_profiles import colour_correct_profile, colour_correct_descriptor
+from shader_shared_profiles import convolution_profile, convolution_descriptor
 from shader_pass_state import TARGET_PATHS
 
 pair = dict(name='ColorCorrect', tag=0, vertex_input_mask=0x101, fragment_control=0,
@@ -52,4 +53,20 @@ for words, same, mode in (([], 0, 0), ([0] * 13, 2, 0), ([0] * 13, 0, -1)):
 result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / 'prepare_shared_shaders.py'),
                          '--elf', 'absent', '--decoder', 'absent', '--output', 'absent', '--pipelines'], capture_output=True, text=True)
 assert result.returncode != 0 and 'requires --engine and --game-root' in result.stderr
-print('Shared context enumeration, unresolved ownership/gamma and pipeline prerequisites passed')
+conv = dict(pair, name='Convolution_8', samplers=[dict(name='colorMap',kind=0x801,unit=0,extra=[0,0,0])])
+for path in TARGET_PATHS:
+    for gamma in (0,1):
+        for depth in (False,True):
+            state=convolution_profile(conv,path,gamma,depth)
+            expected=colour_correct_profile(pair,path,gamma,gamma,depth)
+            assert state == dict(expected,unnorm=0x101)
+for bad in (pair,dict(conv,global_count=1),dict(conv,sampled_units=2)):
+    try:
+        convolution_profile(bad,'rgba16-single',0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Unsupported convolution ownership accepted')
+assert convolution_descriptor([0]*13,1)[2] == 0x14000
+assert convolution_descriptor([0]*13,1)[3] == 0x700000
+print('Shared context enumeration, convolution ownership/gamma and pipeline prerequisites passed')

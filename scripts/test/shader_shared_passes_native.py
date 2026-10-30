@@ -16,7 +16,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from shader_shared_passes import bank_pairs
-from shader_shared_profiles import colour_correct_descriptor
+from shader_shared_profiles import colour_correct_descriptor, convolution_descriptor
 from shader_material_prepare_native import extract
 
 
@@ -37,7 +37,7 @@ def main():
         'ppu_fp_quiet', 'ppu_fp_default_qnan', 'ppu_fp_bin', 'ppu_fp_single',
         'ppu_fdiv', 'ppu_fadd', 'ppu_fmul', 'ppu_fmadd_core', 'ppu_frsp',
         'func_00832920', 'func_008329A8', 'func_00832A50', 'func_00832BC8',
-        'func_00831B78', 'func_00833290', 'func_0081FDA8', 'func_00827DD0', 'func_00823F28'))
+        'func_00831B78', 'func_00833290', 'func_0081FDA8', 'func_00827DD0', 'func_00823F28', 'func_00820A28', 'func_00820C08'))
     libc = (args.generated / 'ppu_recomp_008.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(libc, 'func_' + n) for n in (
         '00BC5540', '00BCFD90', '00BCFFA0', '00BCFEF8', '00BCC3A0', '00BDE360',
@@ -49,8 +49,9 @@ def main():
 #include <string.h>
 #include <assert.h>
 #include <math.h>
+#include <stdio.h>
 #define PPU_MM_SNAP
-#define DRAIN_TRAMPOLINE(ctx) ((void)0)
+#define DRAIN_TRAMPOLINE(ctx) do {while(g_trampoline_fn) {void(*next)(void*)=g_trampoline_fn;g_trampoline_fn=0;next(ctx);}} while(0)
 static unsigned char memory[0x2000000];
 static void (*g_trampoline_fn)(void*);
 static uint32_t vertex,fragment;
@@ -76,12 +77,25 @@ void func_0081FCD0(ppu_context* ctx) {ctx->gpr[3]=0x10000;}
 void func_00832840(ppu_context* ctx) {ctx->gpr[3]=0x1e28000;}
 void func_00832878(ppu_context* ctx) {ctx->gpr[3]=0;}
 void func_00833E50(ppu_context* ctx) {}
+void func_00833908(ppu_context* ctx) {}
+void func_00B5DEB0(ppu_context* ctx) {
+ char format[64],text[64];unsigned i=0;
+ for(;i<63 && vm_read8(ctx->gpr[4]+i);i++)format[i]=vm_read8(ctx->gpr[4]+i);
+ format[i]=0;assert(!strcmp(format,"Convolution_%d"));
+ int n=snprintf(text,sizeof text,"Convolution_%d",(int)ctx->gpr[5]);assert(n>0 && n<64);
+ for(int j=0;j<=n;j++)vm_write8(ctx->gpr[3]+j,text[j]);
+}
 void func_00BC84F8(ppu_context* ctx) {}
 void func_00BC8478(ppu_context* ctx) {}
 void func_00BC7BE0(ppu_context* ctx) {}
 void func_00BC5C40(ppu_context* ctx) {}
 void func_00BC5698(ppu_context* ctx) {draws++;}
 void func_00BC83D0(ppu_context* ctx) {}
+void func_00BCFCE0(ppu_context* ctx) {}
+void func_00BCFCB0(ppu_context* ctx) {draws++;}
+void func_00BD3670(ppu_context* ctx) {}
+void func_00BD3518(ppu_context* ctx) {}
+void func_00BD3608(ppu_context* ctx) {}
 void func_00C064F8(ppu_context* ctx) {
  bounds(ctx->gpr[3],ctx->gpr[5]);bounds(ctx->gpr[4],ctx->gpr[5]);
  memmove(memory+ctx->gpr[3],memory+ctx->gpr[4],ctx->gpr[5]);
@@ -111,8 +125,8 @@ extern "C" __declspec(dllexport) uint32_t select_pair(uint32_t bank,uint32_t nam
  if(g_trampoline_fn) {assert(g_trampoline_fn==(void(*)(void*))func_00832790);func_00832790(&ctx);}
  out[0]=vertex;out[1]=fragment;return record;
 }
-extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned gamma,unsigned mode,unsigned poison,uint32_t* out) {
- ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
+static void setup(ppu_context& ctx,unsigned poison) {
+ ctx={};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
  for(unsigned i=0;i<0x600;i+=4)vm_write32(0x1e70000+i,poison);
  const int offsets[]={0x4c10,0x4918,0x491c,0x49e8,0x4920};
  for(int offset : offsets)vm_write32(ctx.gpr[2]-offset,0x1e70000);
@@ -125,6 +139,9 @@ extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned ga
  vm_write32(0x1e2301c,0x1e24000);vm_write32(0x1e24000,1);vm_write32(0x1e24004,ctx.gpr[2]);
  vm_write32(0x1e23010,0x1e24010);vm_write32(0x1e24010,2);vm_write32(0x1e24014,ctx.gpr[2]);
  vm_write32(0x1e23038,0x1e24020);vm_write32(0x1e24020,3);vm_write32(0x1e24024,ctx.gpr[2]);
+}
+extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned gamma,unsigned mode,unsigned poison,uint32_t* out) {
+ ppu_context ctx;setup(ctx,poison);
  ctx.gpr[3]=same ? 0x1e21000 : 0x1e22000;ctx.gpr[4]=0x1e21000;
  ctx.gpr[5]=0x1e25000;ctx.gpr[6]=ctx.gpr[7]=0x1e25000;ctx.gpr[9]=gamma;ctx.gpr[10]=mode;ctx.fpr[1]=1;
  draws=callbacks=vertex=fragment=0;func_0081FDA8(&ctx);assert(draws==1 && callbacks==2);
@@ -139,6 +156,21 @@ extern "C" __declspec(dllexport) void colour_resource(unsigned same,unsigned gam
  output[13]=0xffffffff;
  for(unsigned i=2;i+1<n+2;i+=2)if(commands[i]==0x41fec)output[13]=commands[i+1];
  assert(output[13]!=0xffffffff);
+}
+extern "C" __declspec(dllexport) unsigned convolution_resource(unsigned record,unsigned gamma,unsigned taps,unsigned poison,const uint32_t* input,uint32_t* output) {
+ ppu_context ctx;setup(ctx,poison);
+ for(unsigned i=0;i<13;i++)vm_write32(0x1e27000+i*4,input[i]);
+ ctx.gpr[3]=0x1e29000;ctx.gpr[4]=taps;func_00820A28(&ctx);assert(vm_read32(0x1e29000)==record);
+ ctx.gpr[3]=0x1e22000;ctx.gpr[4]=0x1e27000;ctx.gpr[5]=0x1e25000;
+ ctx.gpr[6]=gamma;ctx.gpr[7]=ctx.gpr[8]=0x1e25000;ctx.gpr[9]=0x1e29000;ctx.gpr[10]=taps;
+ resource_mode=1;draws=callbacks=vertex=fragment=0;func_00820C08(&ctx);resource_mode=0;
+ assert(draws==1 && callbacks==2);
+ for(unsigned i=0;i<13;i++)output[i]=vm_read32(0x1e80000+4*i);
+ output[13]=0xffffffff;output[14]=vertex;output[15]=fragment;
+ unsigned n=(vm_read32(0x1e70008)-0x1e71000)/4;assert(n<=64);
+ for(unsigned i=0;i<n;i++)output[16+i]=vm_read32(0x1e71000+4*i);
+ for(unsigned i=16;i+1<n+16;i+=2)if(output[i]==0x41fec)output[13]=output[i+1];
+ assert(output[13]!=0xffffffff);return n;
 }
 '''
     (folder / 'oracle.cpp').write_text(prefix + snippets + suffix)
@@ -156,6 +188,8 @@ extern "C" __declspec(dllexport) void colour_resource(unsigned same,unsigned gam
     dll.colour_state.argtypes = [ctypes.c_uint32] * 4 + [ctypes.POINTER(ctypes.c_uint32)]
     dll.colour_state.restype = ctypes.c_uint32
     dll.colour_resource.argtypes = [ctypes.c_uint32] * 4 + [ctypes.POINTER(ctypes.c_uint32)] * 2
+    dll.convolution_resource.argtypes = [ctypes.c_uint32] * 4 + [ctypes.POINTER(ctypes.c_uint32)] * 2
+    dll.convolution_resource.restype = ctypes.c_uint32
     dll.vertex_mask.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
     dll.vertex_mask.restype = ctypes.c_uint32
     mask_checks = 0
@@ -239,8 +273,24 @@ extern "C" __declspec(dllexport) void colour_resource(unsigned same,unsigned gam
                         assert list(outgoing)[:13] == colour_correct_descriptor(words, same, mode)
                         assert outgoing[13] == int(bool(gamma))
                         resource_checks += 1
+    convolution = next(p for p in pairs if p['name'] == 'Convolution_8')
+    convolution_checks = 0
+    for gamma in (0, 1, 2, 255, 0x80000000, 0xffffffff):
+        for poison in (0, 0xffffffff, 0xa5a5a5a5):
+            for _ in range(32):
+                words = [rng.getrandbits(32) for _ in range(13)]
+                incoming = (ctypes.c_uint32 * 13)(*words)
+                outgoing = (ctypes.c_uint32 * 80)()
+                n = dll.convolution_resource(0x10000 + convolution['record'] - base, gamma, 8, poison, incoming, outgoing)
+                assert list(outgoing)[:13] == convolution_descriptor(words, gamma)
+                assert outgoing[13] == int(bool(gamma))
+                assert outgoing[14] == 0x10000 + vt + convolution['vertex_index'] * 40
+                assert outgoing[15] == 0x10000 + ft + convolution['fragment_index'] * 72
+                assert list(outgoing)[16:16+len(expected)] == expected
+                convolution_checks += 1
     report = dict(elf_sha256=digest, checks=checks, colour_state_checks=state_checks, vertex_mask_checks=mask_checks,
                   colour_resource_checks=resource_checks, banks=reports,
+                  convolution_checks=convolution_checks,
                   colour_commands=expected,
                   scope='Real lookup, pair indices, framebuffer getter copy, ColorCorrect edits/gamma and texture command emission. Source descriptor provider, target activation, sampler metadata and draw/constant upload boundaries controlled.')
     (folder / 'report.json').write_text(json.dumps(report, indent=2))
