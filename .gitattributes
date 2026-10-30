@@ -1,3 +1,5 @@
 # The runtime has a few mixed-newline headers. Preserve the patch's literal
 # context bytes; normalizing CRLF during commit/checkout breaks clean installs.
 patches/ps3recomp-4e8f3ca8-local.patch -text
+# Metadata shards have byte-level checksums; preserve their LF bytes on Windows.
+assets/pipeline-templates/**/part-*.json text eol=lf
