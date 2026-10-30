@@ -9,6 +9,41 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 159 - Measure the conditional subset in live cold-cache races (2026-10-31)
+
+Six isolated 1080p/2x/VSync HSR trials compare empty application caches with the
+Phase 158 subset. Four bulk-scan trials use control/prepared/prepared/control
+order; another control/prepared pair uses prepared files on demand. OS/driver
+caches remain warm. Every trial starts with copied save data and its own cache;
+the original checkout/runtime/processes are untouched. Runtime defaults do not
+change. The script now refuses another game and cleans up only its own process.
+
+**No consistent first-visit stutter reduction is established.** Bulk-prepared
+early p99 is 82.0/84.4 ms, versus 57.5/54.4 ms controls; gaps over 50 ms are 65/66
+versus 29/23. Later p99 is mixed (52.0/74.8 versus 54.3/50.6 ms). The on-demand
+pair leaves early p99 essentially unchanged, 69.3 -> 69.9 ms, and improves later
+p99 53.6 -> 49.3 ms / FPS 46.8 -> 50.0. One pair cannot establish a reliable gain.
+
+Bulk startup loads 3,509-3,511 pipelines in 62.7-65.5 seconds while the guest
+boots, including live-learned recipes. Only 142-144 of the 3,402 seeded keys are
+marked used in prepared runs. On-demand startup loads zero upfront and reuses
+files as requested. Significant new compilation remains. Workloads differ with
+race progression, so compiler totals are not a controlled draw-for-draw reduction.
+The first 45-second window includes the intended 30-FPS rolling start; loading
+transitions are measured separately. One control has a retained unexplained
+4.44-second later gap. Early screenshots show mostly HUD under all conditions;
+no visual-readiness improvement is established. No cause for that appearance is
+proven by these tests alone.
+
+`scripts/test/shader_stutter.py` preserves logs/frames/screenshots and supports
+both policies. Frame-metric threshold/window tests and PowerShell syntax checks
+pass. Two setup trials (wrong title-ID path handling and hidden game window) were
+discarded before the valid comparisons; only owned processes were stopped.
+Conclusion: native-key coverage is useful provenance evidence, not a stutter
+metric. Do not enable blanket startup scanning as a new player default. Target
+shared critical passes/unresolved resource contexts and rerun the benchmark.
+Detailed results: [shader-reconstruction.md](shader-reconstruction.md#live-first-visit-stutter-benchmark-phase-159).
+
 ## Phase 158 - Audit and prepare explicit context unions (2026-10-31)
 
 The cheapest supported expansion is to enumerate independent conditional variants

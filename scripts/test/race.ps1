@@ -19,6 +19,8 @@
 # frame (from GT5P_FRAME_LOG). -SampleDelay <s> moves the start.
 # -ExtraHold "<PAD_HOLD entries>" appends presses to the drive (e.g.
 # "@QuickArcadeRoot+75000-75200:START").
+# -Engine/-GameRoot/-OutputDirectory support isolated audit runs. Another game
+# makes launch fail; cleanup stops only this script's own process.
 # -Cpu also reports per-thread CPU over the sampling window, named from the log
 # (guest thread names, host thread names), in scratch/pv/<tag>.cpu.txt.
 [CmdletBinding(PositionalBinding = $false)]
@@ -28,17 +30,35 @@ param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
       [ValidateRange(0,3600)][int]$GridIdleSeconds = 0, [switch]$Cpu,
       [ValidateRange(0,3600)][int]$RaceShots = 0, [switch]$FrameTest,
       [ValidateRange(0,3600)][int]$SampleDelay = 25,
+      [string]$Engine = "", [string]$GameRoot = "", [string]$OutputDirectory = "",
       [string]$ExtraHold = "",
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$dir = Join-Path $root "scratch/pv"
+$dir = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $root "scratch/pv" }
+if (-not $Engine) { $Engine = Join-Path $root "build/gt5p.exe" }
+if (-not $GameRoot) { $GameRoot = $root }
+$Engine = [IO.Path]::GetFullPath($Engine)
+$GameRoot = [IO.Path]::GetFullPath($GameRoot)
 New-Item -ItemType Directory -Force $dir | Out-Null
 Add-Type -AssemblyName System.Drawing
 if (-not ("RaceWindowShot" -as [type])) {
     Add-Type @'
 using System; using System.Runtime.InteropServices;
 public class RaceWindowShot {
+ public delegate bool EnumCallback(IntPtr h,IntPtr data);
+ [DllImport("user32.dll")] public static extern bool EnumWindows(EnumCallback callback,IntPtr data);
+ [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h,System.Text.StringBuilder text,int count);
+ [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int how);
+ [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+ public static IntPtr GameWindow(int pid) {
+  IntPtr result=IntPtr.Zero;
+  EnumWindows((h,data)=>{uint owner;GetWindowThreadProcessId(h,out owner);
+   var text=new System.Text.StringBuilder(512);GetWindowText(h,text,512);
+   if(owner==pid && text.ToString().Contains("Gran Turismo")){result=h;return false;}return true;},IntPtr.Zero);
+  return result;
+ }
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out Rect r);
  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
@@ -92,13 +112,27 @@ if ($FrameTest) {
 $set = @{ GT5P_NO_SETTINGS = "1"; FS_HIDE = "grim/file/contents"; PS3_VERBOSE = "0";
           GT5P_PROFVIEW = "0"; PAD_HOLD = $hold; GT5P_RESOLUTION = "720p";
           RSX_MSAA = "2"; GT5P_PRESENT_PROF = "1"; RSX_PSO_TIMING = "1" }
+$set['GT5P_ROOT'] = $GameRoot
 if ($FrameTest) { $set["GT5P_FRAME_LOG"] = (Join-Path $dir "$Tag.frames.csv") }
 foreach ($v in $Vars) { if ($v) { $k, $val = "$v" -split "=", 2; $set[$k] = $val } }
+$p = $null
 try {
-    Stop-Stragglers
+    if (@(Get-Process gt5p -ErrorAction SilentlyContinue).Count) { throw "Another gt5p.exe is running; no process was stopped" }
     foreach ($k in $set.Keys) { Set-Item "Env:$k" $set[$k] }
-    $p = Start-Process -FilePath "$root/build/gt5p.exe" -WorkingDirectory $root -PassThru `
+    $launchMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $p = Start-Process -FilePath $Engine -WorkingDirectory $GameRoot -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput "$dir/$Tag.out" -RedirectStandardError "$dir/$Tag.err"
+    # Keep the console hidden, but show the owned game window for representative
+    # presentation timing and visual validation. Never touch another process.
+    $windowWait = [Diagnostics.Stopwatch]::StartNew()
+    $gameWindow = [IntPtr]::Zero
+    while ($gameWindow -eq [IntPtr]::Zero -and $windowWait.Elapsed.TotalSeconds -lt 20) {
+        $gameWindow = [RaceWindowShot]::GameWindow($p.Id)
+        if ($gameWindow -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+    }
+    if ($gameWindow -eq [IntPtr]::Zero) { throw "Owned game window was not created" }
+    [RaceWindowShot]::ShowWindow($gameWindow,5) | Out-Null
+    [RaceWindowShot]::SetForegroundWindow($gameWindow) | Out-Null
     foreach ($k in $set.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
     $tail = New-LogTail "$dir/$Tag.out"
     if ($PitIdleSeconds -gt 0) {
@@ -115,6 +149,7 @@ try {
         }
     }
     if ((Wait-Milestone $p $tail "QuickArcadeRoot" 240) -lt 0) { throw "Starting grid not reached" }
+    $gridMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     if ($GridIdleSeconds -gt 0) { Watch-RaceIdle $p "grid" ($GridIdleSeconds + 4) }
     # Allow the first Start press and camera transition before sampling.
     if ($IntroShots) {
@@ -172,6 +207,10 @@ try {
         $cpuReport
     }
     $tS1 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    @{ launch_ms = $launchMs; grid_observed_ms = $gridMs; sample_start_ms = $tS0;
+       sample_end_ms = $tS1; engine = $Engine; game_root = $GameRoot; pid = $p.Id;
+       track = $Track; seconds = $Seconds; sample_delay = $SampleDelay } |
+        ConvertTo-Json | Set-Content (Join-Path $dir "$Tag.window.json")
     $rows | Export-Csv "$dir/$Tag.fps.csv" -NoTypeInformation
     if ($FrameTest) {
         Start-Sleep -Milliseconds 1500   # the log is flushed every 30 frames
@@ -199,8 +238,8 @@ try {
     }
     $ordered = @($rows.Fps | Sort-Object)
     if ($ordered.Count) { "$Track`: median $($ordered[[int]($ordered.Count/2)]) fps over $Seconds s" }
-    "Cache warming finished for the materials seen in this run; logs and shot: scratch/pv/$Tag.*"
+    "Cache warming finished for the materials seen in this run; logs and shot: $dir/$Tag.*"
 } finally {
-    Get-Process gt5p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    if ($p) { $p.Refresh(); if (-not $p.HasExited) { $p.Kill(); $p.WaitForExit(10000) | Out-Null } }
     foreach ($k in $set.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
 }

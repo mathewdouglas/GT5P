@@ -98,6 +98,40 @@ The native audit checks preparation results and persisted recipe checksums/blob
 presence. Its denominator is the retained snapshot, not every draw or all game
 content. No measured stutter reduction follows from a key-match percentage alone.
 
+### Measuring first-visit frame times
+
+`scripts/test/shader_stutter.py` compares fresh application caches with the
+generated subset on an automated HSR route. Supply a private ignored fixture
+containing copied `input/EMAIN.ELF`, `input/pkg/`, `gamedata/` and `assets/`.
+Each trial copies the fixture's writable game data, uses a separate shadercache,
+and shows only its owned game window. Other `gt5p.exe` processes block launch;
+cleanup never stops an unrelated session. All trial files remain ignored.
+
+```powershell
+.venv\Scripts\python scripts\test\shader_stutter.py `
+  --fixture scratch\shader-stutter-20261031\fixture `
+  --engine scratch\pass-build\gt5p.exe `
+  --prepared scratch\material-variant-union-prepare-20261030\shadercache `
+  --output scratch\stutter-demand-abba --startup-policy demand --trials 4
+```
+
+The order is control/prepared/prepared/control. `--trials 2` runs one pair.
+`--startup-policy demand` uses normal learned-index startup without scanning every
+recipe; `scan` explicitly tests bulk startup scanning. Both use async shaders and
+pipelines, VSync, 1080p/2x MSAA, `PS3_VERBOSE=0` and race prewarming disabled.
+The OS and driver caches are preserved. This is a cold **application-cache** test,
+not a clean-driver first-install test. It excludes offline subset preparation.
+
+Frame CSVs, window timestamps, logs and screenshots distinguish the first 45 s
+after the grid from 45-90 s and the whole presented route. The first window
+includes the intentional 30-FPS rolling start; route gaps also include loading
+transitions. Reports include p99/max intervals and counts over 50/100/250 ms.
+Five-second compiler counters can omit a final partial interval. Used recipe
+timestamps help check actual subset encounters without provenance recording.
+Inspect the screenshots: higher FPS while drawing incomplete geometry is not a
+visual-readiness improvement. Scripted navigation does not ensure identical draw
+workloads or race progression across runs, so small differences need caution.
+
 ## Existing raw-program preparation
 
 `scripts/precompile_shaders.py` reads embedded `SHDS` fragment programs from

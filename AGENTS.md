@@ -36,13 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 158)
+## Start here: state of play (2026-10-31, Phase 159)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 158 is the latest).
+has the evidence, newest phase first (Phase 159 is the latest).
 
 ### What works now
+
+- **Live stutter benchmark (Phase 159):** six isolated HSR trials do not establish
+  a consistent stutter reduction. Bulk startup scanning regresses early p99
+  (82-84 ms versus 54-57 ms controls). One on-demand pair leaves early p99 near
+  69-70 ms and improves later p99 53.6 -> 49.3 ms, insufficient for a reliable win.
+  Only 142-144 seeded keys are used in prepared runs; scanning all 3,402 costs
+  63-65 s in the background. Use the new reproducible benchmark and avoid making
+  blanket scan a player default. OS/driver caches remained warm; live draw
+  workloads vary. Original checkout/caches/processes remain untouched.
 
 - **Explicit context union (Phase 158):** preparation supports named `rgba16`
   and `supported` context sets, deduplicating independent shader/state candidates

@@ -1426,3 +1426,76 @@ Commands are in [shader-precompile.md](shader-precompile.md#explicit-context-uni
 These percentages describe this retained HSR snapshot. Whole-game coverage,
 actual context ownership, launcher integration and first-run stutter reduction
 remain unmeasured. No original-checkout, player-default or release changes.
+
+## Live first-visit stutter benchmark (Phase 159)
+
+The conditional subset is now tested in live races, not just pipeline creation.
+`scripts/test/shader_stutter.py` creates independent game/save/cache copies and
+drives HSR with `race.ps1`. Four trials compare empty caches with the Phase 158
+subset using a full startup recipe scan in ABBA order. A second empty/prepared
+pair tests normal on-demand cache reuse without the scan. Shader/PSO async stay
+enabled, race prewarm stays off, `PS3_VERBOSE=0`, 1080p/2x MSAA/VSync and the same
+diagnostic EXE are used throughout. CPU: i5-12400F; RAM: 16 GB; GPU: RTX 4060,
+reported driver `32.0.16.1088`. Engine SHA-256 is recorded in the local reports.
+
+These are cold application caches with preserved, already warm OS/driver caches.
+They do not simulate a clean-driver first install or include the 11.3-minute
+offline preparation cost. Navigation is repeated, but race progress/draw requests
+are not deterministic. Window timing divides the first 45 seconds after the grid
+from seconds 45-90. The first window includes intended 30-FPS rolling start;
+whole-route gaps also include loading transitions. Larger frame gaps, rather than
+the standard 20-ms late-frame percentage, are used to assess this mixed-rate run.
+
+| Trial | Early p99 ms | Early gaps >50 ms | Later p99 ms | Later FPS |
+| --- | ---: | ---: | ---: | ---: |
+| Scan control 1 | 57.5 | 29 | 54.3 | 46.0 |
+| Scan prepared 1 | 82.0 | 65 | 52.0 | 49.2 |
+| Scan prepared 2 | 84.4 | 66 | 74.8 | 43.1 |
+| Scan control 2 | 54.4 | 23 | 50.6 | 44.7 |
+| Demand control | 69.3 | 49 | 53.6 | 46.8 |
+| Demand prepared | 69.9 | 62 | 49.3 | 50.0 |
+
+**No consistent overall stutter reduction is demonstrated.** The bulk-scan
+configuration worsens early tail latency in both prepared repeats; later results
+vary. On-demand reuse shows a small later improvement in one pair, with early
+p99 unchanged and more early gaps over 50 ms. This is not statistical proof or a
+general causal estimate. One scan control also has an unexplained 4,438.4-ms later
+gap, retained in the data; it occurred before the next screenshot capture. No
+speedup is inferred from that single outlier. The screenshots show mostly HUD at
+the early checkpoint in all conditions, then visible racing later. These tests
+do not independently establish why that early appearance occurs, or a readiness
+improvement from this subset.
+
+Bulk background startup loads 3,509/3,511 recipes in 62,672/65,469 ms, including
+new live-learned recipes. Only 142-144 seeded keys are marked actually used in
+prepared trials, out of 3,402 available. Existing recipe timestamps are refreshed
+by the worker on live use; startup reads alone do not change them. On-demand
+startup loads zero upfront and accesses compatible files as needed. Reported
+compilation totals remain roughly 1,400-1,700 and reflect different workloads;
+five-second summaries can omit the final partial interval. No claim of an exact
+number of avoided compilations follows from those totals.
+
+The benchmark accepts only a private ignored fixture. Its disc junction targets
+the copied fixture, and each trial gets its own writable game data and cache.
+`race.ps1` gains explicit engine/root/output overrides, visible owned-game
+validation with a hidden console, timestamp metadata, refusal to launch beside
+another game and cleanup scoped to its own process. The original checkout,
+shared runtime and other sessions are untouched. No cache is deleted or moved.
+Metric tests validate thresholds, sampling boundaries and timestamp rejection;
+PowerShell parsing passes. Two preliminary setup trials were discarded: the
+diagnostic EXE predates absolute PARAM.SFO path support, then a hidden window
+made presentation timing unsuitable. Valid runs use relative paths into the
+private fixture and a visible game window. Only owned processes were stopped.
+
+Local evidence:
+
+- `scratch/shader-stutter-20261031/final-report.json`
+- `scratch/shader-stutter-20261031/visible/report.json` (four bulk-scan trials)
+- `scratch/shader-stutter-20261031/demand/report.json` (on-demand pair)
+- Each trial retains raw frame CSVs, window JSON, stdout/stderr and screenshots.
+
+The [benchmark command](shader-precompile.md#measuring-first-visit-frame-times)
+is reproducible. Blanket scanning is not justified as a new player default.
+The next useful work is preparing shared critical passes and unresolved binding
+contexts, then measuring again; increasing catalogue key counts alone is not
+evidence of a smoother first run. Launcher/release/default behavior is unchanged.
