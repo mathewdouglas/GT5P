@@ -9,6 +9,32 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 140 - Decode authored material state and falsify direct reuse (2026-10-30)
+
+The isolated branch adds `scripts/shader_material_state.py`, a read-only audit
+of MDL3 material definitions and their GCM state indices. The 0xA0-byte state
+blocks contain three fixed RSX method packets and a return; trailing words stay
+uninterpreted. The reader derives blend key, colour mask, depth bits and cull
+enable, bounds all references and rejects unsupported packet layouts/enums.
+
+The accepted-pair inventory covers 599 containers / 1,098 models and 3,644
+decoded state blocks, without invalid bindings/rejected state blocks. Of 1,497
+verified captured links, 1,164 have same-pair authored candidates: blend matches
+1,163, colour mask 1,146, cull-enable 1,164, depth bits only 13, and all four in
+the same candidate only 9. In 1,110 links where the other three fields matched,
+assets specify LESS/write-on while live state is LEQUAL/write-on; another 24
+show that compare difference with writes off. Do not use asset state unchanged
+or substitute LEQUAL globally. Exact draw ownership and the source of the state
+change remain unproven; a pass override/runtime material patch is a hypothesis.
+
+The differential native test compiles this runtime's own key functions into a
+scratch DLL. All 2,048 varied synthetic cases and 3,644 real decoded blocks
+matched (5,692 checks); no game/GPU starts. Synthetic reader/CLI tests cover
+malformed packets/enums/indices, extent checks, capture integrity, deliberate
+depth mismatch, ignored output/no-overwrite and unchanged inputs. Shared runtime
+and game build are unchanged. Full evidence/commands and next ownership/pass
+analysis: [shader-reconstruction.md](shader-reconstruction.md).
+
 ## Phase 139 - Recover material-authored shader pairs (2026-10-30)
 
 On the isolated `feature/shader-coverage-audit` worktree, the new read-only

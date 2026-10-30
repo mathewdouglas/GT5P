@@ -243,7 +243,10 @@ Local evidence:
 - Audit worktree: `scratch/shader-coverage-hash-sample-20261030/result.json`
   and `scratch/shader-coverage-native/decoder.dll`.
 
-The practical next step is the provenance recorder described above, followed
-by ownership/fixup analysis for the unmatched programs. Extending catalogue
-size or cross-multiplying pooled profiles alone cannot establish complete
-pipeline reconstruction.
+The provenance recorder and sampled asset reconstruction are now implemented;
+see [shader-reconstruction.md](shader-reconstruction.md) for material pairings
+and the subsequent state audit. The current next step is establishing draw
+ownership and the source of the authored/live depth-state disagreement, followed
+by remaining pass/target/texture state and unmatched-program analysis. Extending
+catalogue size or cross-multiplying pooled profiles alone cannot establish
+complete pipeline reconstruction.

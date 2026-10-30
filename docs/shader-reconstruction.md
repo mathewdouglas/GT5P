@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138–139, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138–140, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -207,6 +207,72 @@ Existing vertex checks passed; native negative checks again rejected truncated
 recipes, damaged code and a checksum-valid wrong pipeline key without executing
 guest gameplay. No runtime behavior changed and no shared build was replaced.
 
-Next: recover and validate material/pass rendering state, including which fields
-are authored and which depend on the current render pass. Complete catalogue
+## Material state audit (Phase 140)
+
+`scripts/shader_material_state.py` follows material definitions' material-data
+and GCM-state indices, keeping those separate from the shader-bearing data
+records. It reparses original models and rematches verified vertex inputs and
+fragment identities; the previous material report supplies only a model inventory.
+No saved pairing or state assertions are trusted as decoded state.
+
+The observed 0xA0-byte state block is a short RSX command list:
+
+| Word | Meaning used by the reader |
+| --- | --- |
+| 0 | `0x00780304`: 30 incrementing writes starting at alpha-test enable |
+| 31 | `0x000C0A6C`: depth compare, depth write mask, depth-test enable |
+| 35 | `0x0004183C`: cull enable |
+| 37 | `0x00020000`: return; decoding stops here |
+| 38–39 | Preserved as uninterpreted trailing metadata |
+
+The reader requires this exact packet layout, checks model/table extents and
+material indices, and rejects unsupported values rather than guessing their
+meaning. The zero/unset alpha blend-equation half observed in twenty blocks
+maps to ADD, following this backend. The four comparable outputs are packed
+blend key, colour write mask, depth bits, and cull-enable. Cull direction/winding,
+full stencil state, texture state, targets and pass overrides remain unresolved.
+
+The inventory with accepted shader pairs spans 599 containers / 1,098 models.
+All **3,644** state blocks in that subset decoded with no rejected blocks or
+invalid binding indices. This subset excludes models without accepted pairs;
+it is not a count of every state block in the game.
+
+Among the snapshot's 1,497 verified pipeline links, 1,164 had authored state
+candidates through the same structural shader pair. Candidate comparisons were:
+
+| Field | Links with a matching candidate / 1,164 |
+| --- | ---: |
+| Blend key | 1,163 |
+| Colour mask | 1,146 |
+| Cull enable | 1,164 |
+| Depth bits | 13 |
+| All four in the same candidate block | 9 |
+
+Of links whose candidates matched blend/mask/cull-enable together, 1,110 had
+authored LESS with writes on against live LEQUAL with writes on. Another 24
+showed the same compare difference with writes off. This is measured disagreement,
+**not proof of its cause**: shader pairs can belong to several materials, and
+the audit does not identify exact draw ownership or the command that changed
+depth. A pass override or runtime material patch remains a hypothesis. Do not
+silently replace authored LESS with LEQUAL or treat these candidates as complete
+pipeline recipes.
+
+```powershell
+.venv/Scripts/python scripts/shader_material_state.py --materials <material audit.json> --report <flat provenance audit.json> --trace <matching trace folder> --output scratch/material-state-audit
+.venv/Scripts/python scripts/test/shader_material_state.py
+.venv/Scripts/python scripts/test/shader_material_state_native.py --runtime <isolated runtime> --state-report scratch/material-state-audit/report.json
+```
+
+The native differential test extracts this runtime's own blend/depth/cull key
+functions into a scratch DLL, compiles them with clang-cl and calls them without
+starting the game or a GPU. **2,048 varied synthetic cases plus all 3,644 decoded
+blocks matched (5,692 checks)**. Synthetic tests also cover packet signatures,
+invalid enums/indices, table bounds, missing state, depth mismatch accounting,
+captured-input integrity, output containment/no-overwrite and unchanged inputs.
+
+Local evidence: `scratch/material-state-20261030/final/report.json`. No shared
+runtime or game build was modified; this adds developer audit tools only.
+
+Next: identify the live draw's exact material and the source of depth-state
+changes, then derive the remaining pass/target/texture state. Complete catalogue
 generation and player first-run integration remain separate work.
