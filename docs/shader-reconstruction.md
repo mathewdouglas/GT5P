@@ -574,3 +574,59 @@ records, starting with dither and shadow samplers. Array/relocation layouts,
 texture-dependent translation fields and culling/pass/target context remain
 separate work. Complete catalogue generation and player first-run integration
 are still not implemented.
+
+## Global callback initialization (Phase 145)
+
+The global record identifier's low 16 bits select callback slots, rather than
+directly identifying a texture-info record. A native oracle now executes the
+local lifted initializer `00830050` with the measured disc ELF loaded into
+private memory. It never starts the game or modifies the original generated
+files. The table is BSS at `015fa4e0`, reached through the TOC pointer at
+`TOC-66f8` and its `-7fe0` cell. Emit slots begin at `+388`, lookup slots at
+`+7b0`, each with four-byte OPD pointers.
+
+| Identifier | Requirement | Emit code | Lookup code |
+| --- | --- | --- | --- |
+| 71 | environment | `00d6caa0` | `00d6ad38` |
+| 87 | shadow | `00d6d930` | `00d6de98` |
+| 94 | dither, alternate kind | `00d77cc0` | `00d6de78` |
+| 96 | shadow color | `00d6d898` | `00d6de98` |
+| 103 | dither | `00d77c20` | `00d6de78` |
+| 104 | PCF | `00d77a90` | `00d6de78` |
+| 115 | mirror | `00d6d9c0` | `00d6deb8` |
+
+All fourteen OPDs resolved to nonzero code addresses with the expected TOC.
+The initializer requires its first argument to equal 1 and the second to equal
+`0000ffff`; negative gate checks left selected slots empty. Its fallback-value
+helper was stubbed, and two different return values produced identical callback
+slots. The real memory-fill routine was included. Trampoline draining is omitted
+only for extracted routines checked not to schedule trampolines. This verifies
+the selected callback initialization under those conditions, not the entire
+renderer initialization or actual runtime dispatch.
+
+Two real lookup callbacks were executed separately on private sentinel fields:
+dither/PCF read registry `+70`; shadow/color-shadow read the object reached via
+the same TOC root's `-8000` cell, at object `+1cb0`. Ten checks, including
+high-bit-set values, passed. These are lookup values used by the binding path;
+they have not been established as texture addresses or sampler registers.
+
+Read-only structural inspection of emit callbacks suggests dither and PCF route
+through `0081f0f0` with different packed arguments, while shadow routes a dynamic
+texture object through `00ba6cf0`, with a fallback path when absent. These emit
+paths have **not** been executed in this oracle. Their packed arguments must not
+be treated as proven sampler keys. Next: trace and execute those helpers with
+controlled texture descriptors, then compare the emitted commands with captured
+state. No new global lane is currently derived; complete coverage stays at 16.
+
+Run locally with x64 VS/LLVM available:
+
+```powershell
+python scripts/test/shader_global_registry_native.py --generated ../GT5P/generated --elf ../GT5P/input/EMAIN.ELF
+```
+
+The test requires the measured ELF checksum, rejects other builds, and leaves
+extracted source, DLL and report under a unique ignored scratch directory. No
+game-derived source or payload is packaged. Successful evidence this session:
+`scratch/global-registry-10a6cace5f564692be405b7c78172b7b/report.json`.
+Only the developer oracle and documentation changed; no player setting, runtime
+behavior, shared checkout, game build or catalogue-generation default changed.

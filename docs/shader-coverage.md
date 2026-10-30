@@ -257,3 +257,9 @@ global requirements; known-lane candidates increase to 843 links, while complete
 sampled-unit coverage remains 16. Unmatched programs also need analysis. Extending
 catalogue size or cross-multiplying pooled profiles alone cannot establish
 complete pipeline reconstruction.
+
+Phase 145 resolves the seven global identifiers to their initialized callback
+pairs in a private-memory native oracle. Two lookup handlers also pass ten
+sentinel checks. The emit callbacks and their eventual sampler settings remain
+unverified, so the coverage figures above are unchanged. See the
+[callback trace](shader-reconstruction.md#global-callback-initialization-phase-145).

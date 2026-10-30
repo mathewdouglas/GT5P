@@ -36,14 +36,19 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 144)
+## Start here: state of play (2026-10-30, Phase 145)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 144 is the latest).
+has the evidence, newest phase first (Phase 145 is the latest).
 
 ### What works now
 
+- **Global callback initialization (Phase 145):** a local isolated initializer
+  resolves seven global identifiers to lookup/emit callbacks. Two lookup
+  handlers pass ten private-memory checks. These are runtime callbacks, not
+  texture indices; sampler settings remain unresolved. No gameplay/runtime
+  changes. Next trace the dither/PCF emit helpers and shadow texture wrapper.
 - **Sampler aliases/global requirements (Phase 144):** coherent scalar aliases
   resolve only when every name selects the same texture record. Known-lane
   candidates now match 843 captured links (349 before); complete coverage stays

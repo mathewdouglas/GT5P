@@ -9,6 +9,23 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 145 - Resolve global callback initialization in isolation (2026-10-30)
+
+The new local-only `scripts/test/shader_global_registry_native.py` executes the
+disc build's initializer against private ELF/BSS memory. All seven inventoried
+identifiers resolve to lookup/emit callback OPDs. Negative initialization gates
+leave the selected slots empty; changing the stubbed fallback result does not
+change their final callback pointers. Two real lookup handlers additionally pass
+ten private-memory sentinel checks, including values with the high bit set.
+
+Dither/PCF share one lookup handler; shadow/color-shadow share another. Their
+emit handlers differ. No emit callback was executed, and this does not recover
+sampler registers or expand complete pipeline coverage. Structural inspection
+points next to the dither/PCF emitter helper and shadow texture wrapper, still
+unverified for sampler derivation. No game process, normal build or shared
+runtime was changed. Details and local evidence:
+[shader-reconstruction.md](shader-reconstruction.md#global-callback-initialization-phase-145).
+
 ## Phase 144 - Resolve coherent scalar aliases and inventory global requirements (2026-10-30)
 
 The material sampler reader now accepts distinct scalar sampler names sharing a
