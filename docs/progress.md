@@ -9,6 +9,39 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 160 - Recover named shared shader pairs and colour-correction setup (2026-10-31)
+
+`scripts/shader_shared_passes.py` adds bounded capture-free SHDS name-table
+selection. Three embedded banks supply 38 authored pairs: 6 menu, 15 scene
+effects and 17 graphics. Names join directly to vertex/fragment indices; no
+cross product or capture-selected pairing is used. Unknown wrappers, malformed
+tables, duplicate/unsorted names and invalid payload joins are rejected. The
+texture-UI bank has an unsupported wrapper and remains excluded.
+
+The isolated native oracle executes the original lookup/comparison/index/bind
+routines on privately relocated bank tables. All 88 selection and rejection
+checks pass. It also executes the full `0081FDA8` colour-correction wrapper and
+real state emitters: 128 cases pass across source/target identity, explicit gamma
+and mode arguments, and poisoned incoming state. It selects `ColorCorrect`,
+enables colour writes, disables depth writes and front/back stencil, alpha,
+depth, culling and blending tests. The shader-control packet retains an
+inherited low bit. Resource providers, constants, target activation, gamma
+callbacks and final draw/upload boundaries are controlled; actual texture and
+target facts remain unresolved. This is not a whole-pass translation proof.
+
+The reconstruction CLI gains explicit named-bank selection. Two `SimpleBias`
+samples rebuild both programs from the named original slices, match source/
+bytecode identifiers and native keys, and create D3D12 pipelines. Remaining
+translation and native descriptor state is explicitly captured. These proofs
+do not add independent pipeline coverage. Twenty-six synthetic bounds/selection
+checks and existing reconstruction regression checks pass. No runtime/default/
+launcher/release changes, no shared-checkout writes and no live benchmark runs.
+
+Evidence and repeat commands are in
+[shader reconstruction](shader-reconstruction.md#named-shared-passes-phase-160).
+The next step is deriving shared texture/target context and the normal vertex
+path's native input layout. Stutter reduction remains unproven.
+
 ## Phase 159 - Measure the conditional subset in live cold-cache races (2026-10-31)
 
 Six isolated 1080p/2x/VSync HSR trials compare empty application caches with the

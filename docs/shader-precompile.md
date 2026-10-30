@@ -3,6 +3,10 @@
 For measured asset/raw-program coverage, recipe dependency checks and the
 remaining provenance gap, see [shader coverage audit](shader-coverage.md).
 
+Phase 160 adds [named shared-pass selection and isolated state checks](shader-reconstruction.md#named-shared-passes-phase-160).
+This is developer reconstruction work; shared texture/target context and native
+CPU vertex layout still need recovery before independent pipeline preparation.
+
 ## Capture-free material subset (developer only)
 
 Phase 157 adds a conditional asset-to-native preparation path that needs no live

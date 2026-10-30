@@ -176,7 +176,7 @@ def material_state_matches(values, capture):
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
                  prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None,
-                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None, material_fragment_control=False, independent_profile_path=None):
+                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None, material_fragment_control=False, independent_profile_path=None, shared_pair=None):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
@@ -275,7 +275,8 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
 
     digest = row['payloads'][0]
     # Independently reread the original indexed container, not the .fp cache.
-    fragment_source = (material['fragment'] if material else dict(sources[digest][0], sha256=digest))
+    fragment_source = (shared_pair['fragment'] if shared_pair else
+                       material['fragment'] if material else dict(sources[digest][0], sha256=digest))
     fragment = read_slice(fragment_source)
     library = output / 'library'; library.mkdir()
     (library / 'asset.fp').write_bytes(fragment)
@@ -364,6 +365,9 @@ def main():
     ap.add_argument('--samples', type=int, default=3, choices=range(1, 9))
     ap.add_argument('--start-line', type=int, default=0, help='First capture line eligible for a proof sample')
     ap.add_argument('--materials', type=Path, help='Require an authored pair from shader_materials.py report')
+    ap.add_argument('--shared-elf', type=Path, help='Original ELF containing a named shared SHDS bank')
+    ap.add_argument('--shared-bank-offset', type=lambda s: int(s, 0), help='Explicit SHDS file offset')
+    ap.add_argument('--shared-pass', help='Explicit authored pass name (tag zero); draw state stays captured')
     ap.add_argument('--prepared-material-state', action='store_true',
                     help='Require material state and replace native blend/write-mask/depth fields')
     ap.add_argument('--material-samplers', action='store_true',
@@ -394,6 +398,14 @@ def main():
     ap.add_argument('--independent-profile-path', choices=('ordinary-uploads',),
                     help='Build whole conditional translation profile from assets and explicit context; reject unknowns')
     args = ap.parse_args()
+    shared_pair = None
+    if any(x is not None for x in (args.shared_elf, args.shared_bank_offset, args.shared_pass)):
+        if any(x is None for x in (args.shared_elf, args.shared_bank_offset, args.shared_pass)) or args.materials:
+            ap.error('Named shared proof requires ELF, bank offset and pass, without --materials')
+        from shader_shared_passes import named_pair
+        shared_pair = named_pair(args.shared_elf.read_bytes(), args.shared_bank_offset, args.shared_pass)
+        for key in ('vertex', 'fragment'):
+            shared_pair[key]['file'] = str(args.shared_elf.resolve())
     if args.independent_profile_path and not (args.native_target_path and args.material_fragment_control and
                                               args.material_texture_state and args.material_samplers):
         ap.error('Independent profile requires native target, fragment control, texture state and complete samplers')
@@ -419,7 +431,7 @@ def main():
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
         ap.error('Choose a new output directory in gitignored storage')
     for path in (args.trace, args.catalog, args.cache, args.game_root, args.report,
-                 *([args.materials] if args.materials else [])):
+                 *([args.materials] if args.materials else []), *([args.shared_elf] if args.shared_elf else [])):
         path = path.resolve()
         if output == path or path in output.parents or output in path.parents:
             ap.error('Output must be separate from inputs/game root')
@@ -442,7 +454,14 @@ def main():
         if len(prefix) >= 32:
             targets.setdefault(len(prefix), {}).setdefault(prefix, set()).add(c['vp_raw'])
     files = [Path(p) for p in sorted({x['file'] for x in index['sources']})]
-    matches, count = discover_vertices(files, targets, lambda text: print(text, flush=True))
+    if shared_pair:
+        selected = shared_pair['vertex']
+        code = word_swap(read_slice(selected))
+        matches = {raw: selected for lookup in targets.values() for prefix, ids in lookup.items()
+                   if code.startswith(prefix) for raw in ids}
+        count = 1
+    else:
+        matches, count = discover_vertices(files, targets, lambda text: print(text, flush=True))
     materials = {}
     if args.materials:
         # Reparse each selected material from the original asset, rather than
@@ -543,6 +562,8 @@ def main():
         material = None
         prepared = None
         candidate = matches[c['vp_raw']]
+        if shared_pair and row['identity'] != shared_pair['identity']:
+            continue
         if args.materials:
             for group in materials.values():
                 eligible = (p for p in group if p['identity'] == row['identity'] and
@@ -574,8 +595,11 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path, args.material_fragment_control, args.independent_profile_path)
-            result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
+                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path, args.material_fragment_control, args.independent_profile_path, shared_pair)
+            result['pairing_origin'] = ('reparsed named SHDS record' if shared_pair else
+                                        'reparsed direct material pointers' if material else 'captured shader pair')
+            if shared_pair:
+                result['shared_pass'] = shared_pair
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])
             result['status'] = 'verified'

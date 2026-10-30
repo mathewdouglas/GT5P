@@ -36,13 +36,23 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 159)
+## Start here: state of play (2026-10-31, Phase 160)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 159 is the latest).
+has the evidence, newest phase first (Phase 160 is the latest).
 
 ### What works now
+
+- **Named shared passes (Phase 160):** bounded SHDS name-table selection recovers
+  38 authored pairs across menu/scene-effect/graphics banks; 88 native lookup/
+  binding checks pass. The real colour-correction wrapper passes 128 isolated
+  state-emission checks, disabling depth/stencil/alpha/cull/blend and enabling
+  colour writes. Resource/target/gamma callbacks are controlled; an inherited
+  shader-control bit remains unknown. Two named `SimpleBias` shader/native proofs
+  pass with captured translation/descriptor state. Unsupported UI wrappers are
+  rejected. No new independent pipeline coverage or stutter benefit is claimed.
+  Next derive shared resource/target context and CPU vertex input layout.
 
 - **Live stutter benchmark (Phase 159):** six isolated HSR trials do not establish
   a consistent stutter reduction. Bulk startup scanning regresses early p99

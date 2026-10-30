@@ -1,9 +1,73 @@
 # Asset shader reconstruction proof
 
-Phases 138-157, branch `feature/shader-coverage-audit`. The original proof is
+Phases 138-160, branch `feature/shader-coverage-audit`. The original proof is
 extended by a capture-free conditional subset preparer in Phase 157 below.
 This is not complete player first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
+
+## Named shared passes (Phase 160)
+
+`scripts/shader_shared_passes.py` reads the embedded SHDS name table, selecting
+the authored vertex/fragment indices from each 12-byte record. It validates
+bank extent, sorted unique `(tag, name)` keys, both program tables, wrappers and
+the compact-fragment payload join. It rejects unknown wrappers instead of
+constructing a shader cross product. Reports contain offsets and hashes and
+must remain ignored. This supplies programs, not complete pipeline profiles.
+
+On this disc ELF, file offsets `0x1328680`, `0x134a580` and `0x134d400` supply
+6 menu, 15 scene-effect and 17 graphics pairs. Names include colour correction,
+averaging, convolution, defocus and motion blur. The texture-UI bank at
+`0x1344900` uses an unsupported vertex wrapper and is rejected. These names do
+not establish which live draw owns a pass.
+
+The isolated native test executes the real lookup/comparison routines
+`00832BC8/00832A50/00832920/008329A8`, fragment-index selector `00831B78` and
+pair-binding wrapper `00833290`. All 88 checks pass, including absent names and
+tags that bind neither program. Relocation is controlled; libc comparison and
+the final GPU uploads are intercepted. No guest game runs.
+
+The same oracle executes the full colour-correction wrapper `0081FDA8` and real
+state emitters. Across 128 combinations of equal/distinct source and target,
+gamma selector, mode argument and poisoned incoming state, it selects
+`ColorCorrect` and emits full colour writes, depth writes off, and disables
+front/back stencil tests, alpha test, depth test, culling and blending. The
+MRT colour-mask packet is `0xfff0`. Shader-control packet `0x1d7c` has upper
+`0xffff0000` but retains an inherited low bit; it is not fully reconstructed.
+Resource descriptors, constants, target activation, gamma callbacks and drawing
+are controlled boundaries. In particular, this does **not** derive texture
+gamma/sampler/alias facts, target format or the whole translation profile.
+
+The proof tool accepts `--shared-elf`, `--shared-bank-offset` and `--shared-pass`
+together, separately from material selection. It reparses the explicit named
+record before consulting the capture, then compiles both programs from those
+original slices. The capture only validates the selected pair and supplies the
+remaining translation/native descriptor state. Two `SimpleBias` samples match
+source/bytecode identifiers and native keys and create D3D12 pipelines. This is
+partial validation, not capture-free shared-pipeline preparation; independent
+CPU vertex input layout and resource/target ownership remain open.
+
+Example (PowerShell, isolated offline EXE):
+
+```powershell
+& C:/GT5P-CI/venv/Scripts/python.exe scripts/shader_shared_passes.py `
+  --elf ../GT5P/input/EMAIN.ELF --bank-offset 0x134d400 `
+  --output scratch/shared-bank/report.json
+& C:/GT5P-CI/venv/Scripts/python.exe scripts/test/shader_shared_passes_native.py `
+  --elf ../GT5P/input/EMAIN.ELF --generated ../GT5P/generated
+```
+
+Append the following to the normal reconstruction proof's report/trace/catalogue/
+cache/decoder/engine/game-root/output arguments:
+
+```text
+--shared-elf ../GT5P/input/EMAIN.ELF --shared-bank-offset 0x134d400 --shared-pass SimpleBias --samples 2
+```
+
+Evidence: `scratch/shared-pass-native-8882aa89df7746f894e3c386f2e62a78/report.json`
+and `scratch/shared-simplebias-final-20261031/report.json`. No runtime behavior,
+player defaults or prepared coverage counts change. Stutter benefit remains
+unproven. Next derive these passes' actual texture/target context and the normal
+vertex path's native input layout before adding independent pipeline recipes.
 
 **Measured result:** seven sampled shader pairs were rebuilt from original
 asset slices, matched captured VS/PS bytecode identifiers, reproduced the exact
