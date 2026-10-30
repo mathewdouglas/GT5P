@@ -121,7 +121,8 @@ def compile_fragments(jobs, root, cache, engine, game_root):
         (profiles / 'independent-state.txt').write_text(' '.join(f'{x:x}' for x in key[:-1]) + '\n', encoding='ascii')
         env = offline_env(game_root, fresh)
         env.update(RSX_SHADER_LIBRARY=str(library), RSX_SHADER_LIBRARY_PROFILE_LIMIT='1',
-                   RSX_SHADER_LIBRARY_RESULT=str(work / 'compiled.tsv'), RSX_FINAL_DITHER=str(key[-1]))
+                   RSX_SHADER_LIBRARY_RESULT=str(work / 'compiled.tsv'), RSX_FINAL_DITHER=str(key[-1]),
+                   RSX_SHADER_LIBRARY_EXACT='1')
         try:
             run_offline(engine, game_root, env, work / 'fragment.log')
             rows = [line.split() for line in (work / 'compiled.tsv').read_text().splitlines()]

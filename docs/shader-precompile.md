@@ -7,7 +7,7 @@ Phase 160 adds [named shared-pass selection and isolated state checks](shader-re
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.
 
-## Identifier-only templates (Phase 166 checkpoint; validation unfinished)
+## Identifier-only templates (Phase 167; live validation pending)
 
 This adapts the hash/numeric-state design in [Project Pyrrhus's template patch](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2071-pipeline-template-prewarm.patch),
 [context/key correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2077-pso-key-vp-start-template-default.patch)
@@ -45,8 +45,9 @@ Diagnostic recording is off during performance tests. Export each session:
 
 Templates contain hashes, translation state, numeric native state and canonical
 ATTR inputs. No game-derived shader bytes/source/binaries are included. Keep all
-experimental outputs ignored; no starter template is shipped yet. Full game,
-engine/decoder, schema/key/Windows x64 ABI compatibility is required. Rebuilt
+experimental outputs ignored; no starter template is shipped yet. Game ELF, renderer source contract, explicit default settings and
+schema/key/Windows x64 ABI compatibility are required. Format 2 excludes
+per-install EXE/DLL timestamps; actual helper hashes stay in diagnostic reports. Rebuilt
 source and bytecode identifiers and exact native keys verify settings/root
 compatibility. Current export excludes branching vertices until their start-slot
 context can be represented. Unknown or conflicting records fail safely; a user
@@ -58,7 +59,19 @@ off. Rollback: omit preparation/use the normal launcher; `=0` disables this
 extension. No live draw policy or player defaults changed. Preparation uses the
 existing two compiler workers, bounded queues and sequential native device owner,
 then exits before play. Accepted recipes use the existing startup worker/resident
-caps/deduplication/shutdown. Limits and current evidence are in Phase 166.
+caps/deduplication/shutdown. Offline windows stay hidden. `RSX_SHADER_LIBRARY_EXACT=1` omits unnecessary
+base-profile compiles in explicit preparation only; ordinary library defaults
+remain unchanged. Limits and current evidence are in Phases 166/167.
+
+For a versioned metadata bundle (no shader contents):
+
+```powershell
+.venv/Scripts/python scripts/pipeline_template.py bundle `
+  --template scratch/starter-template.json --output scratch/starter-template-bundle
+```
+
+`--template` accepts the bundle directory directly. Each part is checksum checked;
+conflicting/incompatible generations are rejected. No starter is shipped yet.
 
 Fresh-cache paired validation is wired but **has not run**:
 

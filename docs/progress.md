@@ -9,6 +9,44 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 167 - Quiet preparation and portable template contracts (2026-10-31)
+
+User observed repeated windows flashing/closing during template preparation.
+Those were the offline compiler's per-profile processes, not live-game crashes.
+Under the existing `GT5P_SHADER_PRECOMPILE_ONLY=1` guard, D3D windows now omit
+WS_VISIBLE. Normal play remains visible. The native visibility test observes
+owned windows throughout both compiler runs and confirms zero visible windows,
+normal exit and the no-guest-entry guard.
+
+`RSX_SHADER_LIBRARY_EXACT=1`, accepted only in offline mode, skips the two broad
+base profiles when an explicit template/material profile is requested. The same
+native test compares legacy/exact result rows: requested source identifiers are
+identical, while exact mode emits only the requested profile. Ordinary library
+precompilation keeps its previous default. This removes unnecessary work and
+keeps the two compiler-worker/source-queue limits.
+
+Template format 2 replaces per-install EXE/DLL binary hashes with a source
+renderer contract (pinned upstream commit + normalized compatibility patch),
+explicit default anisotropy/root-key/constant-buffer settings and the game ELF
+hash. Actual helper/build hashes remain diagnostic report fields. Exact rebuilt
+source/bytecode and current native-key checks still gate every entry, including
+root signature compatibility. Independently built copies can now share a
+compatible template; format 1 is rejected rather than guessed.
+
+Identifier/numeric-only metadata can be bundled into checksum-verified text
+shards, each below the repository's 1 MB text limit. Bundle names, versions,
+parts, checksums and total size are bounded/validated; no shader contents enter
+them. Multi-session merge deduplicates before enforcing the union cap and rejects
+conflicts/incompatible generations. Tests cover malformed versions/state,
+pointers, bounds, settings, duplicate conflicts and altered bundle parts.
+
+The isolated build and runtime reverse-check pass. Native evidence:
+`scratch/hidden-preparation-test-20261031/report.json` and
+`scratch/pass-build/build-hidden-preparation.log`. The old interrupted run is
+retained; `scratch/template-hidden-route-20261031` is the fresh restarted
+preparation/paired-route experiment. It is still running at this phase: no
+new live coverage or stutter claim, starter publication or player default.
+
 ## Phase 166 - Checkpoint identifier-only pipeline templates (2026-10-31)
 
 User requested investigation of Project Pyrrhus's shared templates, then requested

@@ -36,13 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 166)
+## Start here: state of play (2026-10-31, Phase 167)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 166 is the latest).
+has the evidence, newest phase first (Phase 167 is the latest).
 
 ### What works now
+
+- **Quiet portable templates (Phase 167):** offline compiler windows stay hidden;
+  native visibility/explicit-profile source parity checks pass. Format 2 pins
+  renderer source/ABI/default settings instead of per-install executable/DLL
+  hashes. Checked metadata shards and merge conflict/union bounds pass tests.
+  Fresh preparation/paired benchmark is running in
+  scratch/template-hidden-route-20261031; no benefit claim or defaults changed.
+
 
 - **Template checkpoint (Phase 166, unfinished):** identifier/numeric-state
   export/merge and asset-based offline preparation are implemented, default-off.

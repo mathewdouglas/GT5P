@@ -14,12 +14,14 @@ import re
 import struct
 import time
 
-from shader_coverage import bounded_read, fnv64, fp_identity, MAX_FP
+from shader_coverage import ROOT, bounded_read, fnv64, fp_identity, MAX_FP
 from shader_reconstruct import NativeCompiler, vertex_programs, word_swap, offline_env, run_offline
 from prepare_material_shaders import compile_fragments, save_code, source_key, request_envelope
 from train_pipeline_cache import isolated, idle, inventory, validate_recipe, save_report
 
 SCHEMA = 'gt5p-pipeline-template'
+VERSION = 2
+SETTINGS = {'RSX_ANISO': '16', 'RSX_PSO_KEY_RS': '1', 'FP_CONSTBUF': '1'}
 MAX_RECORDS = 4096
 MAX_FILE = 32 * 1024 * 1024
 STATE = {'blend', 'nrt', 'rtfmt', 'exp32', 'cmask', 'cull', 'stencil',
@@ -33,11 +35,18 @@ def sha(data):
 
 
 def compatibility(engine, decoder, elf):
-    # Conservative implementation/translator pin. Final native-key verification
-    # additionally checks the actual root signature, bytecode and every state bit.
+    # Pin the distributable renderer source contract, not per-install executable
+    # or DLL timestamps. Exact source/bytecode/native hashes still gate reuse.
+    if not engine.is_file() or not decoder.is_file():
+        raise ValueError('Engine/decoder missing')
+    manifest = json.loads((ROOT / 'config/ps3recomp.json').read_text())
+    patch = (ROOT / manifest['patch']).read_bytes().replace(b'\r\n', b'\n')
+    patch = b'\n'.join(b'' if line == b' ' else line for line in patch.split(b'\n'))
+    contract = sha(manifest['commit'].encode() + b'\n' + patch)
     return dict(abi='windows-x64-recipe-v1', key_version=1, root_signature_keyed=True,
-                engine_sha256=sha(engine.read_bytes()), decoder_sha256=sha(decoder.read_bytes()),
+                renderer_sha256=contract, renderer_settings=SETTINGS.copy(),
                 elf_sha256=sha(elf.read_bytes()), translation_policy='default-constbuf-v1')
+
 
 
 def native_state(data):
@@ -59,14 +68,14 @@ def native_state(data):
     return dict(words=words, inputs=inputs)
 
 
-def validate(document):
-    if set(document) != {'schema', 'version', 'compatibility', 'records'} or document['schema'] != SCHEMA or document['version'] != 1:
+def _validate(document):
+    if set(document) != {'schema', 'version', 'compatibility', 'records'} or document['schema'] != SCHEMA or document['version'] != VERSION:
         raise ValueError('Incompatible template schema/version')
     c = document['compatibility']
-    if (set(c) != {'abi', 'key_version', 'root_signature_keyed', 'engine_sha256', 'decoder_sha256', 'elf_sha256', 'translation_policy'} or
+    if (set(c) != {'abi', 'key_version', 'root_signature_keyed', 'renderer_sha256', 'renderer_settings', 'elf_sha256', 'translation_policy'} or
             c['abi'] != 'windows-x64-recipe-v1' or c['key_version'] != 1 or c['root_signature_keyed'] is not True or
-            c['translation_policy'] != 'default-constbuf-v1' or
-            any(not isinstance(c[k], str) or not SHA.fullmatch(c[k]) for k in ('engine_sha256', 'decoder_sha256', 'elf_sha256'))):
+            c['translation_policy'] != 'default-constbuf-v1' or c['renderer_settings'] != SETTINGS or
+            any(not isinstance(c[k], str) or not SHA.fullmatch(c[k]) for k in ('renderer_sha256', 'elf_sha256'))):
         raise ValueError('Incompatible template key/translator ABI')
     if not isinstance(document['records'], list) or len(document['records']) > MAX_RECORDS:
         raise ValueError('Template record limit exceeded')
@@ -105,8 +114,77 @@ def validate(document):
     return document
 
 
+def validate(document):
+    try:
+        return _validate(document)
+    except (TypeError, KeyError, struct.error, OverflowError) as exc:
+        raise ValueError('Malformed template record') from exc
+
+
+def merge(documents):
+    if not documents:
+        raise ValueError('No templates supplied')
+    first = validate(documents[0])
+    records = {}
+    for document in documents:
+        document = validate(document)
+        if document['compatibility'] != first['compatibility']:
+            raise ValueError('Cannot merge incompatible generations')
+        for record in document['records']:
+            key = record['key']
+            if key in records and records[key] != record:
+                raise ValueError('Conflicting duplicate pipeline key')
+            records[key] = record
+            if len(records) > MAX_RECORDS:
+                raise ValueError('Merged template record limit exceeded')
+    return validate(dict(first, records=list(records.values())))
+
+
 def read(path):
+    if path.is_dir():
+        index = json.loads(bounded_read(path / 'index.json', 65536))
+        if (set(index) != {'schema','version','parts'} or index['schema'] != SCHEMA + '-bundle' or
+                index['version'] != VERSION or not isinstance(index['parts'],list) or not 1 <= len(index['parts']) <= 32):
+            raise ValueError('Incompatible template bundle')
+        documents, seen, total = [], set(), 0
+        for part in index['parts']:
+            if set(part) != {'file','sha256'} or not re.fullmatch(r'part-\d{4}\.json',part['file']) or part['file'] in seen:
+                raise ValueError('Invalid/duplicate bundle part')
+            seen.add(part['file'])
+            payload = bounded_read(path / part['file'], MAX_FILE)
+            total += len(payload)
+            if total > MAX_FILE or sha(payload) != part['sha256']:
+                raise ValueError('Template bundle size/checksum mismatch')
+            documents.append(validate(json.loads(payload)))
+        return merge(documents)
     return validate(json.loads(bounded_read(path, MAX_FILE)))
+
+
+def template_digest(path):
+    if path.is_dir():
+        # read() separately verifies every referenced part checksum.
+        return sha(bounded_read(path / 'index.json',65536))
+    return sha(bounded_read(path,MAX_FILE))
+
+
+def bundle(document, output):
+    document = validate(document)
+    if output.exists():
+        raise ValueError('Bundle output exists; nothing was overwritten')
+    parts = []
+    payloads = []
+    records = document['records']
+    for start in range(0,max(1,len(records)),128):
+        name = f'part-{len(parts):04d}.json'
+        data = (json.dumps(dict(document,records=records[start:start+128]),separators=(',',':'))+'\n').encode()
+        if len(data) > 1_000_000:
+            raise ValueError('Metadata shard exceeds repository text limit')
+        parts.append(dict(file=name,sha256=sha(data)))
+        payloads.append((name,data))
+    output.mkdir(parents=True)
+    for name,data in payloads:
+        (output/name).write_bytes(data)
+    save_report(output/'index.json',dict(schema=SCHEMA+'-bundle',version=VERSION,parts=parts))
 
 
 def envelope(record, vs, ps, check_lengths=True):
@@ -168,7 +246,7 @@ def export(trace, cache, compat):
                     rejected[str(exc).split(':')[0]] += 1
     if len(records) > MAX_RECORDS:
         raise ValueError('Template exceeds record cap')
-    return validate(dict(schema=SCHEMA, version=1, compatibility=compat, records=list(records.values()))), dict(rejected)
+    return validate(dict(schema=SCHEMA, version=VERSION, compatibility=compat, records=list(records.values()))), dict(rejected)
 
 
 def locate(records, catalog, elf):
@@ -224,20 +302,23 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output):
         raise ValueError('Use a fresh ignored output; existing caches are preserved')
     document = read(template)
     if document['compatibility'] != compatibility(engine, decoder, elf):
-        raise ValueError('Template implementation/game/decoder mismatch; demand fallback remains available')
+        raise ValueError('Template renderer/game/settings mismatch; demand fallback remains available')
     output.mkdir(parents=True)
     cache = output / 'shadercache'
     cache.mkdir()
     started = time.perf_counter()
     vertices, fragments, lookup = locate(document['records'], catalog, elf)
     lookup['seconds'] = time.perf_counter() - started
-    report = dict(schema=1, template_sha256=sha(template.read_bytes()), lookup=lookup,
+    report = dict(schema=1, template_sha256=template_digest(template), lookup=lookup,
                   requested=len(document['records']), records=[], preparation_seconds=None,
+                  engine_sha256=sha(engine.read_bytes()), decoder_sha256=sha(decoder.read_bytes()),
                   policy='Offline before guest entry; default renderer translation; demand fallback for missing/rejected entries')
     save_report(output / 'report.json', report)
     compiler = NativeCompiler(decoder)
     vs_cache, jobs, by_id = {}, [], {}
-    for r in document['records']:
+    for number, r in enumerate(document['records'],1):
+        if number % 128 == 0:
+            print(f"Vertex/state validation {number}/{len(document['records'])}; unique vertex variants {len(vs_cache)}",flush=True)
         try:
             v = vertices[r['vp']['sha256']]
             f = fragments[r['fp']['sha256']]
@@ -317,7 +398,13 @@ def main():
     p = sub.add_parser('prepare')
     for name in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game-root', 'output'):
         p.add_argument('--' + name, type=Path, required=True)
+    b = sub.add_parser('bundle',help='Write verified identifier/numeric metadata shards; no shader contents')
+    b.add_argument('--template',type=Path,required=True)
+    b.add_argument('--output',type=Path,required=True)
     args = ap.parse_args()
+    if args.command == 'bundle':
+        bundle(read(args.template),args.output)
+        return
     if args.command == 'prepare':
         result = prepare(*(getattr(args, k).resolve() for k in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game_root', 'output')))
         print(json.dumps(dict(counts=result['counts'], lookup=result['lookup'], seconds=result['preparation_seconds'])))
@@ -328,13 +415,7 @@ def main():
         result, rejected = export(args.trace, args.cache, compatibility(args.engine, args.decoder, args.elf))
         print('Export exclusions:', json.dumps(rejected))
     else:
-        documents = [read(path) for path in args.templates]
-        result = documents[0]
-        for document in documents[1:]:
-            if document['compatibility'] != result['compatibility']:
-                ap.error('Cannot merge incompatible generations')
-            result['records'].extend(document['records'])
-        result = validate(result)
+        result = merge([read(path) for path in args.templates])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     save_report(args.output, result)
     print(len(result['records']), 'template records:', args.output)
