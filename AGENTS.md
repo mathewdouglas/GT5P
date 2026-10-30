@@ -36,14 +36,20 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 151)
+## Start here: state of play (2026-10-30, Phase 152)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 151 is the latest).
+has the evidence, newest phase first (Phase 152 is the latest).
 
 ### What works now
 
+- **Conditional framebuffer cube (Phase 152):** 512 native initialized RGBA8
+  setup checks derive 2D/cube shape from an explicit creation argument, using the
+  real initializer and format conversion. `--environment-texture-path` adds these
+  conditional facts; inherited read gamma stays unknown. Shape-only candidates
+  match 1,044 links (265 complete for shape); three proofs derive a global cube
+  bit and recreate pipelines. Other state remains captured; no player changes.
 - **Texture sampling bits (Phase 151):** read gamma and upper-coordinate masks
   match 2,304 native cases; 288 emitter checks add conditional dither/PCF texture
   facts. Explicit active candidates match known bits on 1,028 links (122 complete

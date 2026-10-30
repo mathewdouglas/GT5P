@@ -144,13 +144,13 @@ def known_sampler_key(definition):
     return key, mask
 
 
-def with_global_sampler_path(definition, path=None, shadow_path=None, environment_path=None, mirror_path=None):
+def with_global_sampler_path(definition, path=None, shadow_path=None, environment_path=None, mirror_path=None, environment_texture_path=None):
     """Add measured global sampler candidates for explicitly chosen pass paths.
 
     Captures never choose the path here. Unknown signatures, duplicate global
     units and local/global overlaps stay unresolved. Only sampler state is added.
     """
-    if path is None and shadow_path is None and environment_path is None and mirror_path is None:
+    if path is None and shadow_path is None and environment_path is None and mirror_path is None and environment_texture_path is None:
         return definition
     if path not in (None, 'active', 'fallback'):
         raise ValueError('unsupported global sampler path')
@@ -160,6 +160,10 @@ def with_global_sampler_path(definition, path=None, shadow_path=None, environmen
         raise ValueError('unsupported environment sampler path')
     if mirror_path not in (None, 'scene-copy'):
         raise ValueError('unsupported mirror sampler path')
+    if environment_texture_path not in (None, 'framebuffer-2d', 'framebuffer-cube'):
+        raise ValueError('unsupported environment texture path')
+    if environment_texture_path and not environment_path:
+        raise ValueError('environment texture path requires framebuffer sampler setup')
     signatures = {('ditherMap', 0x601, 94), ('ditherMap', 0x801, 103),
                   ('shadowPCFMap', 0x801, 104)}
     globals_ = definition.get('globals', ())
@@ -191,6 +195,9 @@ def with_global_sampler_path(definition, path=None, shadow_path=None, environmen
             selected_path = path
         facts = (dict(shape='2d', gamma=False, unnormalized=path == 'active' and g['identifier'] != 94)
                  if dither else None)
+        if environment and environment_texture_path:
+            facts = dict(shape='cube' if environment_texture_path == 'framebuffer-cube' else '2d',
+                         gamma=None, unnormalized=False)
         bindings.append(dict(g, address=address, filtering=filtering, texture_facts=facts,
                              sampler=sampler_register(address, filtering),
                              global_path=selected_path, sampler_mask=12 if mirror else 15,
@@ -221,6 +228,7 @@ def main():
                     help='Conditional successful framebuffer setup; no later sampler overrides')
     ap.add_argument('--mirror-sampler-path', choices=('scene-copy',),
                     help='Partial mirror filter bits; wrap stays unresolved')
+    ap.add_argument('--environment-texture-path', choices=('framebuffer-2d', 'framebuffer-cube'))
     args = ap.parse_args()
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
@@ -261,7 +269,7 @@ def main():
                         global_signatures.update((g['name'], g['kind'], g['unit'], g['identifier']) for g in definition['globals'])
                         sampled_globals.update(g['name'] for g in definition['globals'] if definition['used'] & (1 << g['unit']))
                         original_binding_count = len(definition['bindings'])
-                        definition = with_global_sampler_path(definition, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path)
+                        definition = with_global_sampler_path(definition, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.environment_texture_path)
                         derived_globals += len(definition['bindings']) - original_binding_count
                         global_units = {g['unit'] for g in definition['globals']}
                         known = tuple(sorted((b['unit'], b['sampler'], b.get('sampler_mask', 15)) for b in definition['bindings']
@@ -289,7 +297,7 @@ def main():
                                 known_match=bool(matching), complete_match=complete,
                                 profiles=[dict(used=used, lanes={unit: sampler for unit, sampler, _ in known},
                                                    lane_masks={unit: mask for unit, _, mask in known}) for used, known in sorted(profiles)]))
-    result = dict(schema=2, mirror_sampler_path=args.mirror_sampler_path, global_sampler_path=args.global_sampler_path,
+    result = dict(schema=2, environment_texture_path=args.environment_texture_path, mirror_sampler_path=args.mirror_sampler_path, global_sampler_path=args.global_sampler_path,
                   shadow_sampler_path=args.shadow_sampler_path, environment_sampler_path=args.environment_sampler_path,
                   resolved_bindings=total, unresolved_bindings=unresolved,
                   conditional_global_bindings=derived_globals,

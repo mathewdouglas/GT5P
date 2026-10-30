@@ -233,3 +233,9 @@ Developer `--material-texture-state` additionally derives supported read-gamma
 and upper-coordinate bits, including conditional dither/PCF facts. It preserves
 unknown global/pass fields and does not enable a player preparation path; see
 [sampling-state reconstruction](shader-reconstruction.md#texture-sampling-state-bits-phase-151).
+
+
+Developer `--environment-texture-path` adds an explicit initialized RGBA8
+framebuffer shape candidate. It retains unknown read gamma and requires the
+corresponding sampler/texture proof options; it does not enable player setup.
+See [framebuffer shape](shader-reconstruction.md#conditional-initialized-framebuffer-shape-phase-152).

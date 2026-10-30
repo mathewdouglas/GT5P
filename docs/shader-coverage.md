@@ -309,3 +309,10 @@ Phase 151 extends masked texture comparisons to read gamma, upper-coordinate
 flags and explicit dither/PCF texture facts. Active-path known bits match 1,028
 links; 122 cover every sampled unit for the selected fields. Other translation/
 pass state remains captured. See [sampling-state proof](shader-reconstruction.md#texture-sampling-state-bits-phase-151).
+
+
+Phase 152 adds explicit initialized RGBA8 framebuffer shape candidates. With
+active dither and cube creation selected, known shapes match 1,044 links, 265
+complete for shapes alone. Read gamma and other pass state remain unresolved;
+three native pipeline proofs derive the environment cube bit. See
+[framebuffer shape](shader-reconstruction.md#conditional-initialized-framebuffer-shape-phase-152).

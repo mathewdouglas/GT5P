@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138-151, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138-152, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -1054,3 +1054,55 @@ checks pass. Original checkout, shared runtime and normal game build are
 unchanged. Next recover global environment/shadow descriptor facts and remaining
 target/culling/pass state, then generate independently complete preparation
 recipes and validate them against fresh automated content routes.
+
+
+## Conditional initialized framebuffer shape (Phase 152)
+
+The environment oracle now executes the real `00B9F430` descriptor initializer
+(with `00B9EEF8` / `00BA6998`) and `00BD0080` format conversion, rather than
+stubbing that conversion. The resource allocation boundary remains mocked.
+For this shape check the setup uses internal format argument 5, which yields a
+supported RGBA8 descriptor. It tests a successfully initialized RGBA8 framebuffer,
+not all framebuffer formats or actual resource allocation.
+
+Across explicit 2D/cube creation arguments, four mip counts, four descriptor
+slots and sixteen units, **512 checks** show dimension 2 and the cube bit derived
+from the creation argument. The real setup/getter/assignment/emitter preserve
+that result. Both variants are normalized in the tested setup. Sampler checks,
+allocation-failure checks, mirror checks and earlier emit/registry tests still
+pass. Deliberately poisoned incoming address words retain read-gamma bits, so
+this setup alone does not justify an environment gamma default.
+
+New developer input `--environment-texture-path framebuffer-2d|framebuffer-cube`
+is an explicit successful initialized RGBA8 creation candidate, with no later
+shape override. It requires an explicit framebuffer sampler path; reconstruction
+also requires one of the texture proof options. `texture_facts` carries known
+shape/coordinate facts and `gamma: null`. The decoder masks only known facts;
+shape-known/gamma-unknown units remain unresolved in sampling-state mode. This
+prevents the new cube rule from silently replacing unknown gamma with zero.
+
+With active dither and a cube candidate, shape-only known candidates match
+1,044 retained links with no known-shape mismatch. Of these, 265 cover every
+sampled shape, while 779 are partial; 453 have no known shape bindings. These
+counts exclude gamma and all other translation/pass fields. They do not establish
+that a selected framebuffer is the actual live resource for every matched draw.
+
+Three pipeline proofs derive the nonzero unit-14 environment cube bit in the
+fragment translation profile. Source/bytecode/native keys match and D3D12
+creation succeeds. The same unit's read-gamma bit remains explicitly captured;
+shadow shape and remaining output/target/pass fields are still unresolved. This
+is a stronger conditional proof, not complete first-run preparation.
+
+Local evidence:
+
+- `scratch/global-registry-bd475d9691544785bf62b51cde44daa2/report.json`
+- `scratch/environment-cube-shape-audit-20261030/report.json`
+- `scratch/environment-cube-sampling-audit-20261030/report.json`
+- `scratch/environment-cube-texture-proof-20261030/report.json`
+
+Synthetic checks cover both shape choices, inherited gamma, unknown-unit
+accounting and option prerequisites. No runtime source or player behavior
+changed. Original assets/generated inputs were read only, and all native oracle
+outputs remain ignored. Next trace environment gamma writers and shadow
+resource construction, then output/target/culling/pass state needed for native
+recipes independent of captures.

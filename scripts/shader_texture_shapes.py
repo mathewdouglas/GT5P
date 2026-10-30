@@ -21,6 +21,7 @@ def texture_fields(definition, sampling=False):
     values = dict(cube=0, ghi=0, **({'unhi': 0} if sampling else {}))
     masks = dict(values)
     known_units = 0
+    complete_units = 0
     unresolved = []
     global_units = {g['unit'] for g in definition.get('globals', ())}
     for binding in definition['bindings']:
@@ -51,16 +52,19 @@ def texture_fields(definition, sampling=False):
         if sampling:
             gamma_field = 'cube' if unit < 4 else 'ghi'
             gamma_bit = 1 << (unit + 8 if unit < 4 else unit)
-            masks[gamma_field] |= gamma_bit
-            if facts['gamma']:
-                values[gamma_field] |= gamma_bit
-            if unit >= 4:
+            if facts.get('gamma') is not None:
+                masks[gamma_field] |= gamma_bit
+                if facts['gamma']:
+                    values[gamma_field] |= gamma_bit
+            if unit >= 4 and facts.get('unnormalized') is not None:
                 masks['unhi'] |= 1 << unit
                 if facts['unnormalized']:
                     values['unhi'] |= 1 << unit
         known_units |= 1 << unit
+        if not sampling or (facts.get('gamma') is not None and (unit < 4 or facts.get('unnormalized') is not None)):
+            complete_units |= 1 << unit
     return dict(values=values, masks=masks, known_units=known_units,
-                unresolved_units=definition['used'] & ~known_units, rejected=unresolved)
+                unresolved_units=definition['used'] & ~complete_units, rejected=unresolved)
 
 
 def shape_fields(definition):
@@ -91,6 +95,8 @@ def main():
         ap.add_argument('--' + name, type=Path, required=True)
     ap.add_argument('--sampling-state', action='store_true', help='Also derive read gamma and upper-unit coordinate flags')
     ap.add_argument('--global-sampler-path', choices=('active', 'fallback'))
+    ap.add_argument('--environment-sampler-path', choices=('framebuffer-single', 'framebuffer-mipped'))
+    ap.add_argument('--environment-texture-path', choices=('framebuffer-2d', 'framebuffer-cube'))
     args = ap.parse_args()
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
@@ -127,7 +133,8 @@ def main():
                                 shapes[texture_shape(binding)] += 1
                             except ValueError as error:
                                 rejected[str(error)] += 1
-                        definition = with_global_sampler_path(definition, args.global_sampler_path)
+                        definition = with_global_sampler_path(definition, args.global_sampler_path, environment_path=args.environment_sampler_path,
+                                                              environment_texture_path=args.environment_texture_path)
                         fields = texture_fields(definition, args.sampling_state)
                         if not fields['known_units']:
                             continue
@@ -154,8 +161,8 @@ def main():
         comparisons.append(dict(line=row['line'], known_match=bool(matching), complete_match=complete,
                                 profiles=[dict(cube=p[0], ghi=p[1], cube_mask=p[2], ghi_mask=p[3],
                                                known_units=p[4], unresolved_units=p[5], unhi=p[6], unhi_mask=p[7]) for p in sorted(profiles)]))
-    result = dict(schema=2, sampling_state=args.sampling_state, global_sampler_path=args.global_sampler_path, shapes=dict(shapes), rejected=dict(rejected), counts=dict(counts), comparisons=comparisons,
-                  limitations=['Supported local descriptors and explicitly chosen dither/PCF paths only; other global bindings stay unknown.',
+    result = dict(schema=2, environment_texture_path=args.environment_texture_path, sampling_state=args.sampling_state, global_sampler_path=args.global_sampler_path, shapes=dict(shapes), rejected=dict(rejected), counts=dict(counts), comparisons=comparisons,
+                  limitations=['Supported local descriptors and explicitly chosen dither/PCF/framebuffer paths only; other global bindings stay unknown.',
                                'Same-pair candidates do not establish unique draw ownership.',
                                'Output gamma, low-unit coordinate mapping, target/pass state and resource upload success are not reconstructed.'])
     output.mkdir(parents=True)

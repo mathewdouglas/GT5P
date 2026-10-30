@@ -14,6 +14,7 @@ import uuid
 
 from shader_material_prepare_native import extract
 from shader_material_textures import sampler_register, with_global_sampler_path
+from shader_texture_shapes import texture_fields
 
 
 def main():
@@ -30,7 +31,7 @@ def main():
     source = (args.generated / 'ppu_recomp_005.cpp').read_text()
     libc = (args.generated / 'ppu_recomp_008.cpp').read_text()
     snippets = '\n'.join(extract(source, n) for n in (
-        'ppc_rotl64', 'ppc_mask64', 'ppc_rlw64', 'ppc_rldicl', 'ppc_rldicr', 'ppc_sraw',
+        'ppc_rotl64', 'ppc_mask64', 'ppc_rlw64', 'ppc_rldicl', 'ppc_rldicr', 'ppc_rldic', 'ppc_sraw',
         'ppu_f2i64', 'ppu_fp_quiet', 'ppu_fp_default_qnan', 'ppu_fp_bin',
         'ppu_fmul', 'ppu_fp_single', 'ppu_frsp'))
     snippets += '\n' + extract(libc, 'func_00C11F10')
@@ -48,11 +49,11 @@ def main():
     snippets += '\n' + '\n'.join(extract(libc, n) for n in (
         'func_00BCEBB0', 'func_00BCEE18', 'func_00BCF1B0',
         'func_00BCED48', 'func_00BCEED0', 'func_00BCEBC0',
-        'func_00BD2660', 'func_00BD5B88', 'func_00C05D58'))
+        'func_00BD2660', 'func_00BD5B88', 'func_00C05D58', 'func_00BD0080'))
     wrappers = (args.generated / 'ppu_recomp_007.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(wrappers, n) for n in (
         'func_00BA6998', 'func_00BA6590', 'func_00BA6BD8', 'func_00BA6CF0',
-        'func_00BA6B40', 'func_00BA6C68', 'func_00BA6628', 'func_00BA1080', 'func_00B9F1F8'))
+        'func_00BA6B40', 'func_00BA6C68', 'func_00BA6628', 'func_00BA1080', 'func_00B9F1F8', 'func_00B9F430', 'func_00B9EEF8'))
     assert 'g_trampoline_fn' not in snippets, 'Isolated routines must not schedule trampolines'
     prefix = '''#define PPU_NO_INLINE_LOADS
 #define PPU_NO_INLINE_STORES
@@ -83,7 +84,7 @@ void func_00BA08B8(ppu_context* ctx) {
  ctx->gpr[3]=1;
 }
 void func_00B9EE50(ppu_context* ctx) { ctx->gpr[3]=6; }
-void func_00BD0080(ppu_context* ctx) { ctx->gpr[3]=0x1000; }
+void ps3_indirect_tail(ppu_context* ctx) {assert(!"Unexpected indirect tail");}
 void func_00BCB520(ppu_context* ctx) { ctx->gpr[3]=0x2000; }
 static uint32_t mirror_mode;
 void func_00705020(ppu_context* ctx) { ctx->gpr[3]=0x1e62000; }
@@ -132,15 +133,17 @@ extern "C" __declspec(dllexport) void load(uint32_t a,const void* p,uint32_t n) 
  bounds(a,n);memcpy(memory+a,p,n);
 }
 extern "C" __declspec(dllexport) uint32_t word(uint32_t a) { return vm_read32(a); }
-extern "C" __declspec(dllexport) void environment_setup(uint32_t mips,uint32_t slot,uint32_t unit,uint32_t poison,uint32_t success) {
+extern "C" __declspec(dllexport) void environment_setup(uint32_t mips,uint32_t slot,uint32_t unit,uint32_t poison,uint32_t success,uint32_t cube) {
  assert(slot<4 && unit<16);
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
  allocation_success=success;
  const uint32_t object=0x1e50000, texture=object+0x2c, descriptor=object+0x54;
  for(uint32_t j=0;j<0x90;j+=4) vm_write32(object+j,poison);
  vm_write32(object+4,64);vm_write32(object+8,32);
- ctx.gpr[3]=texture;ctx.gpr[4]=64;ctx.gpr[5]=32;ctx.gpr[6]=7;
- ctx.gpr[7]=mips;ctx.gpr[8]=0;ctx.gpr[9]=0;ctx.gpr[10]=0;
+ ctx.gpr[3]=texture;func_00B9F430(&ctx);
+ vm_write32(descriptor+0xc,poison);vm_write32(descriptor+0x18,poison);
+ ctx.gpr[3]=texture;ctx.gpr[4]=64;ctx.gpr[5]=32;ctx.gpr[6]=5;
+ ctx.gpr[7]=mips;ctx.gpr[8]=cube;ctx.gpr[9]=0;ctx.gpr[10]=0;
  func_00BA1080(&ctx);
  if(!success) {assert(ctx.gpr[3]==0);return;}
  assert(ctx.gpr[3]==1);
@@ -274,7 +277,7 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
     lib.emit.argtypes = [ctypes.c_uint32] * 5
     lib.emit.restype = ctypes.c_uint32
     lib.mirror_pass.argtypes = [ctypes.c_uint32] * 4
-    lib.environment_setup.argtypes = [ctypes.c_uint32] * 5
+    lib.environment_setup.argtypes = [ctypes.c_uint32] * 6
     lib.dynamic_emit.argtypes = [ctypes.c_uint32] * 5
     lib.shadow_pass.argtypes = [ctypes.c_uint32] * 3
     assert data[:6] == b'\x7fELF\x02\x02', 'Expected ELF64 big endian'
@@ -387,10 +390,10 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
         for slot in range(4):
             for unit in range(16):
                 for poison in (0, 0xffffffff, 0x01012000, 0x02062000):
-                    lib.environment_setup(mips, slot, unit, poison, 0)
+                    lib.environment_setup(mips, slot, unit, poison, 0, 0)
                     assert lib.word(0x1e50060) == poison and lib.word(0x1e5006c) == poison
                     environment_failures += 1
-                    lib.environment_setup(mips, slot, unit, poison, 1)
+                    lib.environment_setup(mips, slot, unit, poison, 1, 0)
                     address, filtering = lib.word(0x1e1000c), lib.word(0x1e10018)
                     d = dict(bindings=[], globals=[dict(name='envMapSampler', kind=0x901, identifier=71, unit=unit)])
                     b = with_global_sampler_path(d, environment_path=path)['bindings'][0]
@@ -399,6 +402,26 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                     assert sampler_register(address, filtering) == b['sampler']
                     environment_checks += 1
                     environment_states[path] = dict(address=address, filtering=filtering, sampler=b['sampler'])
+    environment_shape_checks = 0
+    environment_shape_examples = []
+    for cube in (0, 1):
+        for mips in (1, 2, 4, 8):
+            for slot in range(4):
+                for unit in range(16):
+                    lib.environment_setup(mips, slot, unit, 0xffffffff, 1, cube)
+                    fmt = lib.word(0x1e10008)
+                    assert (fmt >> 4) & 15 == 2 and bool(fmt & 4) == bool(cube)
+                    assert (fmt >> 8) & 0x9f == 0x85 and not fmt & 0x4000
+                    assert (lib.word(0x1e1000c) >> 20) & 7 == 7
+                    d = dict(bindings=[], used=1 << unit, globals=[dict(name='envMapSampler', kind=0x901, identifier=71, unit=unit)])
+                    resolved = with_global_sampler_path(d, environment_path='framebuffer-single' if mips == 1 else 'framebuffer-mipped',
+                                                        environment_texture_path='framebuffer-cube' if cube else 'framebuffer-2d')
+                    fields = texture_fields(resolved, sampling=True)
+                    assert fields['values']['cube'] == (1 << (unit if unit < 4 else unit + 16) if cube else 0)
+                    assert fields['unresolved_units'] == 1 << unit
+                    if mips == 1 and slot == 0 and unit == 0:
+                        environment_shape_examples.append(dict(cube=cube, format=fmt, address=lib.word(0x1e1000c)))
+                    environment_shape_checks += 1
     mirror_definition = dict(bindings=[], used=1, globals=[dict(name='mirrorMapSampler', kind=0x601, identifier=115, unit=0)])
     mirror_binding = with_global_sampler_path(mirror_definition, mirror_path='scene-copy')['bindings'][0]
     assert mirror_binding['sampler_mask'] == 12 and mirror_binding['address_mask'] == 0
@@ -425,6 +448,8 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
               'mirror_scene_copy_checks': mirror_checks,
               'mirror_examples': mirror_examples,
               'mirror_scope': 'Real consumer/copy getter/framebuffer getter/setter/emitter; scene render and plane normalization mocked',
+              'environment_shape_checks': environment_shape_checks,
+              'environment_shape_examples': environment_shape_examples,
               'environment_framebuffer_checks': environment_checks,
               'environment_allocation_failure_checks': environment_failures,
               'environment_examples': environment_states,

@@ -9,6 +9,30 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 152 - Verify conditional initialized framebuffer cube descriptors (2026-10-30)
+
+The environment oracle now retains the real descriptor initializer and native
+format conversion. 512 controlled RGBA8 setup checks vary explicit cube/2D
+creation, mip count, descriptor slot and unit. Initialized shape follows the
+creation argument and survives getter/assignment/emission. Allocation remains
+mocked. Poisoned incoming address tests show read gamma remains inherited.
+
+Developer `--environment-texture-path framebuffer-2d|framebuffer-cube` requires
+an explicit framebuffer sampler setup and texture reconstruction. It derives
+shape/normalized-coordinate facts for the tested successful RGBA8 setup, retaining
+unknown read gamma. A unit with shape known but gamma unknown remains incomplete
+in sampling-state mode. No shape/path is inferred from capture.
+
+With active dither and explicit cube setup, shape-only candidates match 1,044
+retained links with no known-shape mismatch; 265 cover every sampled shape.
+These are conditional shape candidates, not complete translation/pipeline
+coverage. Three shader/native pipeline proofs now derive the nonzero global
+environment cube bit and match source/bytecode/native creation while explicitly
+retaining its read gamma. Original checkout/shared runtime, player defaults and
+release packaging are unchanged. Work continues on producer context and the
+remaining output/pass/target state. Evidence:
+[shader-reconstruction.md](shader-reconstruction.md#conditional-initialized-framebuffer-shape-phase-152).
+
 ## Phase 151 - Derive read-gamma/coordinate bits and conditional dither texture facts (2026-10-30)
 
 Texture constraints now include read-gamma bits and upper-unit unnormalized

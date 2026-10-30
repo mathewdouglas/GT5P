@@ -57,6 +57,21 @@ for unit in range(16):
             assert not f['masks']['cube'] & 0x000f1000  # Output gamma/sample count stay unknown.
             assert not f['masks']['ghi'] & 15  # Low units' gamma lives in cube, not ghi.
 
+from shader_material_textures import with_global_sampler_path
+for path, cube_value in (('framebuffer-2d', 0), ('framebuffer-cube', 1 << 30)):
+    d = dict(bindings=[], globals=[dict(name='envMapSampler', kind=0x901, identifier=71, unit=14)], used=1 << 14)
+    resolved = with_global_sampler_path(d, environment_path='framebuffer-mipped', environment_texture_path=path)
+    f = texture_fields(resolved, sampling=True)
+    assert f['values']['cube'] == cube_value and f['masks']['cube'] == 1 << 30
+    assert not f['masks']['ghi'] & (1 << 14)  # Incoming environment read gamma is still unknown.
+    assert f['unresolved_units'] == 1 << 14
+    assert shape_fields(resolved)['unresolved_units'] == 0
+try:
+    with_global_sampler_path(d, environment_texture_path='framebuffer-cube')
+    raise AssertionError('shape without framebuffer setup accepted')
+except ValueError:
+    pass
+
 def fixture():
     data = bytearray(4096)
     def put(offset, fmt, *values):
