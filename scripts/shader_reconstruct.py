@@ -165,7 +165,7 @@ def run_offline(engine, game_root, env, log):
     return text
 
 
-def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output):
+def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None):
     output.mkdir()
     capture = row['capture']
     state = capture['state']
@@ -181,7 +181,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
 
     digest = row['payloads'][0]
     # Independently reread the original indexed container, not the .fp cache.
-    fragment_source = dict(sources[digest][0], sha256=digest)
+    fragment_source = (material['fragment'] if material else dict(sources[digest][0], sha256=digest))
     fragment = read_slice(fragment_source)
     library = output / 'library'; library.mkdir()
     (library / 'asset.fp').write_bytes(fragment)
@@ -234,11 +234,13 @@ def main():
     ap.add_argument('--output', required=True, type=Path, help='New ignored output directory')
     ap.add_argument('--samples', type=int, default=3, choices=range(1, 9))
     ap.add_argument('--start-line', type=int, default=0, help='First capture line eligible for a proof sample')
+    ap.add_argument('--materials', type=Path, help='Require an authored pair from shader_materials.py report')
     args = ap.parse_args()
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
         ap.error('Choose a new output directory in gitignored storage')
-    for path in (args.trace, args.catalog, args.cache, args.game_root):
+    for path in (args.trace, args.catalog, args.cache, args.game_root, args.report,
+                 *([args.materials] if args.materials else [])):
         path = path.resolve()
         if output == path or path in output.parents or output in path.parents:
             ap.error('Output must be separate from inputs/game root')
@@ -262,6 +264,30 @@ def main():
             targets.setdefault(len(prefix), {}).setdefault(prefix, set()).add(c['vp_raw'])
     files = [Path(p) for p in sorted({x['file'] for x in index['sources']})]
     matches, count = discover_vertices(files, targets, lambda text: print(text, flush=True))
+    materials = {}
+    if args.materials:
+        # Reparse each selected material from the original asset, rather than
+        # trusting offsets or match claims in a saved diagnostic report.
+        from shader_materials import model_pairs
+        for item in json.loads(args.materials.read_text())['pairs']:
+            if not item['captured_pair_matches']:
+                continue
+            key = (item['file'], item['model'])
+            if key not in materials:
+                with Path(item['file']).open('rb') as stream:
+                    with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                        parsed, _ = model_pairs(data, item['model'])
+                        candidates = []
+                        for pair in parsed:
+                            def source(offset, size):
+                                body = data[offset:offset + size]
+                                return dict(file=item['file'], offset=offset, size=size,
+                                            sha256=hashlib.sha256(body).hexdigest())
+                            candidates.append(dict(vertex=dict(order='swap32', **source(pair['vertex_offset'], pair['vertex_size'])),
+                                                   fragment=source(pair['fragment_offset'], pair['fragment_size']),
+                                                   identity=pair['fragment_identity'], code=pair['vertex_code'],
+                                                   model=item['model'], material=pair['material']))
+                        materials[key] = candidates
     output.mkdir(parents=True)
     report = dict(vertex_records=count, matched_vertex_inputs=len(matches), candidates=matches, samples=[],
                   limitations=['Source container set comes from the existing FP catalogue, not an exhaustive asset inventory.',
@@ -278,13 +304,28 @@ def main():
         pair = (c['vs'], c['ps'])
         if pair in pairs:
             continue
+        material = None
+        candidate = matches[c['vp_raw']]
+        if args.materials:
+            for group in materials.values():
+                material = next((p for p in group if p['identity'] == row['identity'] and
+                                 any(p['code'].startswith(prefix) and c['vp_raw'] in ids
+                                     for lookup in targets.values() for prefix, ids in lookup.items())), None)
+                if material:
+                    break
+            if material is None:
+                continue
+            candidate = material['vertex']
         pairs.add(pair)
         number = len(report['samples'])
         print(f'Proving sample {number + 1}: {c["pipeline"]}', flush=True)
         try:
-            result = prove_sample(row, matches[c['vp_raw']], sources, compiler,
+            result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
-                                  output / f'sample-{number + 1}')
+                                  output / f'sample-{number + 1}', material)
+            result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
+            if material:
+                result['material'] = dict(model=material['model'], index=material['material'])
             result['status'] = 'verified'
         except (ValueError, OSError, subprocess.SubprocessError) as exc:
             result = dict(pipeline=c['pipeline'], status='failed', reason=str(exc))

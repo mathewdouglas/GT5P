@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phase 138, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138–139, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -149,7 +149,64 @@ guest gameplay.
 .venv/Scripts/python scripts/test/shader_reconstruct_native.py --engine build/gt5p.exe --game-root . --sample <verified sample folder>
 ```
 
-The next implementation target is deriving shader pairing and rendering state
-from material/pass data, so preparation no longer depends on a captured native
-descriptor. Complete catalogue generation and player first-run integration are
-still separate work.
+## Material-derived pairings (Phase 139)
+
+`scripts/shader_materials.py` reads original MDL3 version-1 material-data records
+and follows their direct shader references. The chain measured on this build is:
+
+1. The model's material table points to 0x28-byte material-data entries.
+2. A material-data entry's +0x24 reference points to a structure whose +0x0C
+   and +0x10 fields point into the declared SHDS vertex and fragment tables.
+3. The fragment-table record's payload pointer joins the first field of a
+   SHDS 0x40 record; that record provides the fragment instruction offset/size.
+
+This uses actual pointer relationships, not every possible VP/FP combination.
+The reader bounds all tables/payloads to the enclosing model's declared size,
+requires exact table membership and a unique fragment-descriptor join, and
+rejects unsupported versions and malformed shader bodies. Layout research used
+PDTools' MIT-licensed readers; their unknown field names remain unknown here.
+No blend, depth, target, sampler or other rendering state is inferred.
+
+The 601 indexed containers contain 1,106 parseable model candidates and
+**16,768 accepted direct material-data pairs**. Another 122 entries were rejected:
+9 invalid vertex wrappers, 93 fragment programs without bounded END, and 20
+truncated inline constants. These are material records, not distinct pipelines.
+
+The HSR snapshot has 562 distinct captured vertex-input/fragment-instruction
+pairs. Authored material references supplied candidates for **452 (80.4%)** of
+them, appearing in 3,440 material records across 427 source containers. Vertex
+matching uses the recorded instruction identity extent; fragment matching
+normalizes inline constants as in the coverage audit. This is structural
+pair coverage, not compiled-pipeline coverage. The capture includes boot/menu/pit
+content, and the container inventory is still inherited from the FP catalogue.
+The remaining 110 pairs need investigation; this does not prove they are absent
+from all game assets.
+
+```powershell
+.venv/Scripts/python scripts/shader_materials.py --catalog <library-v1/all> --report <flat provenance audit.json> --trace <matching trace folder> --output scratch/material-audit
+```
+
+Add `--materials scratch/material-audit/report.json` to the reconstruction
+command to require a material-derived pair. The proof reparses material pointers
+from the original container, rereads both shader slices from that same model,
+and checks translation/bytecode/native creation against the captured oracle.
+It does not trust the saved report's pairing assertions or shader offsets.
+
+Two samples (a character material and a car-interior material) passed this
+stronger path, matching bytecode/source keys and native pipeline keys and
+successfully creating D3D12 pipelines. State still came from captured profiles
+and descriptors. Local evidence:
+
+- `scratch/shader-materials-prefix-20261030/report.json`
+- `scratch/shader-material-proof-20261030/report.json`
+
+Synthetic checks in `scripts/test/shader_materials.py` cover embedded models,
+table/payload bounds, exact pointer membership, ambiguous descriptors, malformed
+shaders, CLI joining, output containment/no-overwrite, and unchanged inputs.
+Existing vertex checks passed; native negative checks again rejected truncated
+recipes, damaged code and a checksum-valid wrong pipeline key without executing
+guest gameplay. No runtime behavior changed and no shared build was replaced.
+
+Next: recover and validate material/pass rendering state, including which fields
+are authored and which depend on the current render pass. Complete catalogue
+generation and player first-run integration remain separate work.

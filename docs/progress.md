@@ -9,6 +9,34 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 139 - Recover material-authored shader pairs (2026-10-30)
+
+On the isolated `feature/shader-coverage-audit` worktree, the new read-only
+`scripts/shader_materials.py` follows MDL3 material-data pointers into declared
+SHDS vertex/fragment tables. Fragment descriptor pointers join the 0x40 table's
+instruction ranges. Exact table membership, unique joins and enclosing model
+bounds are required; unsupported/malformed data is rejected.
+
+Across 601 indexed containers, 1,106 models provided 16,768 accepted material
+records with direct pairs; 122 records failed shader-wrapper/fragment bounds.
+Authored pairs matched 452 of the HSR snapshot's 562 distinct captured shader
+pairs (80.4%). This measures structural candidate pairs, not native pipeline
+coverage or a complete asset inventory. Match normalization follows the existing
+vertex identity extent and fragment inline-constant rules.
+
+`shader_reconstruct.py --materials <audit report>` reparses original material
+references before choosing both shaders from the same model. A character and a
+car-interior sample matched rebuilt VS/PS bytecode and native keys and created
+successfully in D3D12. Rendering state is still captured, so independent
+first-run preparation is not complete. No player/runtime behavior changed.
+
+Synthetic pointer/bounds/ambiguity and CLI containment/no-mutation checks passed,
+as did existing vertex checks and native negative checks for truncated recipes,
+damaged bytecode and wrong pipeline keys. These used the existing isolated
+diagnostic EXE; no full rebuild or race performance test was needed. Shared
+runtime and development binary were untouched. Local reports and next state
+extraction work are recorded in [shader-reconstruction.md](shader-reconstruction.md).
+
 ## Phase 138 - Rebuild sampled shaders from assets (2026-10-30)
 
 On `feature/shader-coverage-audit`, `scripts/shader_reconstruct.py` finds bounded
