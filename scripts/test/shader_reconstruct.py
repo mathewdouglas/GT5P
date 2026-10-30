@@ -91,3 +91,16 @@ result = subprocess.run(command + ['--environment-texture-path', 'framebuffer-cu
 assert result.returncode != 0 and 'requires framebuffer sampler and texture reconstruction options' in result.stderr
 
 print('SHDS bounds, source integrity and prepared material-state eligibility checks passed')
+
+from shader_pass_state import object_pass_fields, pass_matches, replace_pass_fields
+for path, enabled_key in (('ccw', 5), ('cw', 1)):
+    for enable in (0, 1):
+        fields = object_pass_fields(path, dict(cull_enable=enable))
+        state = dict(cull=enabled_key if enable else 0, cube=0x80011000, ghi=7)
+        assert pass_matches(fields, state)
+        assert replace_pass_fields(fields, dict(state, cull=7, cube=0x80010000)) == state
+        assert not pass_matches(fields, dict(state, cube=state['cube'] ^ 4096))
+        assert not pass_matches(fields, dict(state, cull=7))
+result = subprocess.run(command + ['--object-pass-path', 'ccw'], capture_output=True, text=True)
+assert result.returncode != 0 and 'requires --prepared-material-state' in result.stderr
+print('Conditional object-pass selection, independent replacement and prerequisites passed')

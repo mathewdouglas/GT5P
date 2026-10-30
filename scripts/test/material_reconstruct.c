@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <d3d12.h>
 #include "rsx_material_reconstruct.h"
+#include "rsx_pass_reconstruct.h"
 static void write_state(const char* dir,const char* text) {
     char path[640];snprintf(path,sizeof path,"%s/material.state",dir);
     FILE* f=fopen(path,"wb");assert(f);fwrite(text,1,strlen(text),f);fclose(f);
@@ -38,6 +39,28 @@ int main(int argc,char** argv) {
     assert(pd.RTVFormats[0]==before.RTVFormats[0]);
     pd=before;pd.DepthStencilState.StencilEnable=TRUE;before=pd;
     assert(!pso_material_apply(argv[1],&pd));assert(!memcmp(&pd,&before,sizeof pd));
+    /* Start with deliberately wrong face state; independent replacements must
+     * overwrite it and preserve every unrelated descriptor byte. */
+    const unsigned keys[]={0,1,5};
+    for(unsigned i=0;i<3;i++) {
+        pd=before;pd.RasterizerState.CullMode=D3D12_CULL_MODE_FRONT;
+        pd.RasterizerState.FrontCounterClockwise=(keys[i]&4)?FALSE:TRUE;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC expected=pd;
+        expected.RasterizerState.CullMode=keys[i]?D3D12_CULL_MODE_BACK:D3D12_CULL_MODE_NONE;
+        expected.RasterizerState.FrontCounterClockwise=(keys[i]&4)?TRUE:FALSE;
+        char path[640];snprintf(path,sizeof path,"%s/pass.state",argv[1]);
+        FILE* f=fopen(path,"wb");assert(f);fprintf(f,"GT5P_PASS_V1 %x\n",keys[i]);fclose(f);
+        assert(pso_pass_apply(argv[1],&pd));assert(!memcmp(&pd,&expected,sizeof pd));
+    }
+    const char* invalid_pass[]={"", "GT5P_PASS_V1 2", "GT5P_PASS_V1 4", "GT5P_PASS_V1 ffffffff",
+        "GT5P_PASS_V1 5 extra", "GT5P_PASS_V2 5", "GT5P_PASS_V1 5\0trailing", "GT5P_PASS_V1 100000005"};
+    for(unsigned i=0;i<sizeof invalid_pass/sizeof *invalid_pass;i++) {
+        char path[640];snprintf(path,sizeof path,"%s/pass.state",argv[1]);
+        FILE* f=fopen(path,"wb");assert(f);
+        fwrite(invalid_pass[i],1,i==6?sizeof "GT5P_PASS_V1 5\0trailing"-1:strlen(invalid_pass[i]),f);fclose(f);
+        before=pd;assert(!pso_pass_apply(argv[1],&pd));assert(!memcmp(&pd,&before,sizeof pd));
+    }
+    puts("Conditional pass descriptor replacement and malformed pass rejection passed");
     puts("Partial descriptor replacement, MRT fields, untouched pass fields and invalid-input rejection passed");
     return 0;
 }

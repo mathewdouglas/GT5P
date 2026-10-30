@@ -316,3 +316,10 @@ active dither and cube creation selected, known shapes match 1,044 links, 265
 complete for shapes alone. Read gamma and other pass state remain unresolved;
 three native pipeline proofs derive the environment cube bit. See
 [framebuffer shape](shader-reconstruction.md#conditional-initialized-framebuffer-shape-phase-152).
+
+
+Phase 153 adds developer-only conditional object-pass winding/culling and output
+gamma reconstruction. Five partial shader/native pipeline proofs pass; live
+pass ownership and remaining target/translation fields are unresolved. See
+[the reconstruction scope](shader-reconstruction.md#conditional-object-pass-fields-phase-153).
+This does not change player preparation or release defaults.

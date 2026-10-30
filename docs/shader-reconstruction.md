@@ -1106,3 +1106,58 @@ changed. Original assets/generated inputs were read only, and all native oracle
 outputs remain ignored. Next trace environment gamma writers and shadow
 resource construction, then output/target/culling/pass state needed for native
 recipes independent of captures.
+
+
+## Conditional object pass fields (Phase 153)
+
+The isolated oracle executes `00306290` plus the real front-face, cull-face and
+method enable/disable emitters. In 1,536 private-memory checks, a disabled object
+gate emits nothing. An enabled gate sets BACK, selects CCW for a zero low-byte
+argument and CW otherwise, and enables output gamma before model draw entry.
+After the mocked model draw it disables culling and output gamma. Lighting and
+model rendering remain mocked; this verifies entry/exit setup, not live ownership
+or state changes inside the model draw.
+
+Developer `--object-pass-path ccw|cw` explicitly selects this conditional setup.
+It requires prepared material state, derives cull enable from that material and
+face/winding from the chosen wrapper argument, and replaces output gamma bit 12.
+The candidate assumes entry through this wrapper, application of the selected
+prepared material, no later face/output-gamma overrides, and default renderer
+switches. Matching a capture does not prove those ownership assumptions. No path
+is inferred from captured culling or gamma.
+
+The default-off, offline-only `RSX_PSO_RECONSTRUCT_PASS=1` additionally requires
+successful material reconstruction. A bounded `pass.state` input replaces native
+`CullMode` and `FrontCounterClockwise` before recomputing the native key and
+creating an uncached pipeline. Missing, malformed, unsupported and overflowing
+values fail closed. The host proof requires `pass_applied`; merely comparing the
+capture's cull key is insufficient. Explicit mode 0 preserves the earlier proof.
+Inherited `CULL_*` diagnostic variables are removed from offline proof children.
+
+Three CCW and two CW samples derive output gamma and native culling alongside
+prepared blend/write-mask/depth, sampler lanes and known texture sampling bits.
+All five match reconstructed shader source/bytecode and native keys and create
+D3D12 pipelines. Other texture gamma/shape, low-unit mapping, targets, sample
+count, shadow translation and remaining native fields still use captured values.
+These remain conditional partial reconstruction proofs, not player preparation.
+
+Native descriptor tests start with deliberately wrong face state, verify all
+three supported cull keys (disabled, BACK/CW, BACK/CCW), preserve unrelated bytes
+and reject invalid input without mutation. Twelve offline process cases cover
+recipe/code/key corruption, material and pass failures, switch-off behavior and
+the material prerequisite; guest entry never executes. Existing material,
+sampler, shape and reconstruction checks pass. The isolated backend builds and
+the pinned runtime compatibility patch checks successfully. All link inputs were
+copied into ignored audit storage before building; original checkout, runtime,
+processes and shadercache were not changed.
+
+Local evidence:
+
+- `scratch/global-registry-91223384862c49049c7c7e165927496c/report.json`
+- `scratch/object-pass-ccw-proof-20261030/report.json`
+- `scratch/object-pass-cw-proof-20261030/report.json`
+- `scratch/pass-build/rebuild.log`
+
+Next recover resource construction and gamma producers for unresolved globals,
+then target/sample/shadow/coordinate translation and actual pass ownership. The
+launcher must not present this developer proof as complete first-run coverage.

@@ -36,6 +36,8 @@ def main():
         'ppu_fmul', 'ppu_fp_single', 'ppu_frsp'))
     snippets += '\n' + extract(libc, 'func_00C11F10')
     snippets += '\n' + extract(source, 'func_00830050')
+    object_source = (args.generated / 'ppu_recomp_001.cpp').read_text()
+    snippets += '\n' + extract(object_source, 'func_00306290')
     handlers = (args.generated / 'ppu_recomp_009.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(handlers, n) for n in (
         'func_00D6DE78', 'func_00D6DE98', 'func_00D77C20', 'func_00D77CC0', 'func_00D77A90',
@@ -49,6 +51,7 @@ def main():
     snippets += '\n' + '\n'.join(extract(libc, n) for n in (
         'func_00BCEBB0', 'func_00BCEE18', 'func_00BCF1B0',
         'func_00BCED48', 'func_00BCEED0', 'func_00BCEBC0',
+        'func_00BCFD90', 'func_00BC5540', 'func_00BCEA98', 'func_00BCEAD0',
         'func_00BD2660', 'func_00BD5B88', 'func_00C05D58', 'func_00BD0080'))
     wrappers = (args.generated / 'ppu_recomp_007.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(wrappers, n) for n in (
@@ -87,6 +90,25 @@ void func_00B9EE50(ppu_context* ctx) { ctx->gpr[3]=6; }
 void ps3_indirect_tail(ppu_context* ctx) {assert(!"Unexpected indirect tail");}
 void func_00BCB520(ppu_context* ctx) { ctx->gpr[3]=0x2000; }
 static uint32_t mirror_mode;
+static uint32_t object_calls,object_front,object_face,object_cull,object_gamma;
+void func_00837F80(ppu_context* ctx) {}
+void func_0082F108(ppu_context* ctx) {}
+void func_0082C858(ppu_context* ctx) {}
+void func_0082C828(ppu_context* ctx) {}
+void func_0082C540(ppu_context* ctx) {}
+void func_0082C7D0(ppu_context* ctx) {}
+void func_00839710(ppu_context* ctx) {
+ object_calls++;
+ uint32_t end=vm_read32(0x1e70008);assert(end>=0x1e71000 && end<=0x1e71100);
+ for(uint32_t a=0x1e71000;a<end;a+=8) {
+  uint32_t method=vm_read32(a),value=vm_read32(a+4);
+  if(method==0x41834)object_front=value;
+  if(method==0x41830)object_face=value;
+  if(method==0x4183c)object_cull=value;
+  if(method==0x41fec)object_gamma=value;
+ }
+}
+
 void func_00705020(ppu_context* ctx) { ctx->gpr[3]=0x1e62000; }
 void func_00712F30(ppu_context* ctx) {}
 void func_0080EC50(ppu_context* ctx) {}
@@ -133,6 +155,26 @@ extern "C" __declspec(dllexport) void load(uint32_t a,const void* p,uint32_t n) 
  bounds(a,n);memcpy(memory+a,p,n);
 }
 extern "C" __declspec(dllexport) uint32_t word(uint32_t a) { return vm_read32(a); }
+extern "C" __declspec(dllexport) void object_pass(uint32_t flip,uint32_t gate,uint32_t poison) {
+ ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
+ for(uint32_t i=0;i<0x600;i+=4)vm_write32(0x1e70000+i,poison);
+ const int offsets[]={0x4954,0x4950,0x4c10,0x4920};
+ for(int offset : offsets) vm_write32(ctx.gpr[2]-offset,0x1e70000);
+ vm_write32(0x1e70008,0x1e71000);
+ vm_write32(0x1e7200c,gate ? 0x1e73000 : 0);vm_write32(0x1e73068,0x1e74000);
+ vm_write32(0x1e74000,0x1e75000);
+ vm_write32(vm_read32(ctx.gpr[2]-0x7d04)-0x7ffc,0x1e76000);
+ object_calls=0;object_front=object_face=object_cull=object_gamma=poison;
+ ctx.gpr[3]=0x1e72000;ctx.gpr[4]=flip;func_00306290(&ctx);
+ assert(object_calls==(gate ? 1 : 0));
+ if(gate) {
+  assert(object_face==0x405 && object_cull==1 && object_gamma==1);
+  assert(object_front==((flip&255) ? 0x900 : 0x901));
+  uint32_t end=vm_read32(0x1e70008);
+  assert(vm_read32(end-16)==0x4183c && vm_read32(end-12)==0);
+  assert(vm_read32(end-8)==0x41fec && vm_read32(end-4)==0);
+ } else assert(vm_read32(0x1e70008)==0x1e71000);
+}
 extern "C" __declspec(dllexport) void environment_setup(uint32_t mips,uint32_t slot,uint32_t unit,uint32_t poison,uint32_t success,uint32_t cube) {
  assert(slot<4 && unit<16);
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
@@ -276,6 +318,7 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
     lib.lookup.restype = ctypes.c_uint32
     lib.emit.argtypes = [ctypes.c_uint32] * 5
     lib.emit.restype = ctypes.c_uint32
+    lib.object_pass.argtypes = [ctypes.c_uint32] * 3
     lib.mirror_pass.argtypes = [ctypes.c_uint32] * 4
     lib.environment_setup.argtypes = [ctypes.c_uint32] * 6
     lib.dynamic_emit.argtypes = [ctypes.c_uint32] * 5
@@ -442,8 +485,16 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                         mirror_examples.append(dict(input_address=address, input_filtering=filtering,
                                                     emitted_address=actual_address, emitted_filtering=actual_filter))
                     mirror_checks += 1
+    object_checks = 0
+    for flip in range(256):
+        for poison in (0, 0xffffffff, 0x12345678):
+            for gate in (0, 1):
+                lib.object_pass(flip, gate, poison)
+                object_checks += 1
     report = {'elf_sha256': digest, 'registry_base': f'{base:08x}',
               'scope': 'Isolated callbacks, ShadowLV pass and framebuffer setup; render/scene/allocation helpers mocked; synthetic resources',
+              'object_pass_checks': object_checks,
+              'object_pass_scope': 'Real setup and face/enable emitters; model draw and lighting helpers mocked; state sampled at draw entry',
               'dynamic_descriptor_checks': dynamic_checks,
               'mirror_scene_copy_checks': mirror_checks,
               'mirror_examples': mirror_examples,

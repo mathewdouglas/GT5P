@@ -9,6 +9,24 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 153 - Reconstruct conditional object-pass culling and output gamma (2026-10-30)
+
+1,536 isolated native checks recover object-wrapper entry/exit face, winding,
+cull and output-gamma setup. Model draw and lighting helpers remain mocked;
+live ownership and nested overrides are not established. Explicit developer
+`--object-pass-path ccw|cw` combines this candidate with prepared material cull
+enable and derives output gamma; capture only validates the selected candidate.
+
+A new default-off offline switch `RSX_PSO_RECONSTRUCT_PASS=1` replaces native
+cull mode/winding before key comparison and uncached D3D12 creation. Three CCW
+and two CW shader/native pipeline proofs pass. Descriptor mutation/rejection
+tests and twelve process checks pass, including malformed/missing/wrong state,
+material prerequisite and explicit switch-off. Existing material/sampler/texture
+checks pass; isolated build and runtime patch check succeed. Other translation,
+target and pass fields remain captured; complete first-run preparation is open.
+Original checkout/shared runtime and player/release defaults are unchanged.
+Evidence: [shader-reconstruction.md](shader-reconstruction.md#conditional-object-pass-fields-phase-153).
+
 ## Phase 152 - Verify conditional initialized framebuffer cube descriptors (2026-10-30)
 
 The environment oracle now retains the real descriptor initializer and native

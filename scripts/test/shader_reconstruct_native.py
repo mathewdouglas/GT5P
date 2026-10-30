@@ -22,11 +22,13 @@ source = args.sample / 'pipeline'
 cases = ['truncated-recipe', 'damaged-code', 'wrong-pipeline-key']
 if (source / 'material.state').is_file():
     cases += ['material-missing', 'material-malformed', 'material-wrong-state', 'material-off']
+if (source / 'pass.state').is_file():
+    cases += ['pass-missing', 'pass-malformed', 'pass-wrong-state', 'pass-off', 'pass-without-material']
 for case in cases:
     work = Path(tempfile.mkdtemp(prefix='reconstruct-negative-', dir=ROOT / 'scratch'))
     proof = work / 'pipeline'; proof.mkdir()
     for path in source.iterdir():
-        if path.name in ('request.recipe', 'material.state') or path.suffix == '.dxbc':
+        if path.name in ('request.recipe', 'material.state', 'pass.state') or path.suffix == '.dxbc':
             shutil.copy2(path, proof / path.name)
     if case == 'truncated-recipe':
         (proof / 'request.recipe').write_bytes(b'bad')
@@ -45,10 +47,21 @@ for case in cases:
         path = proof / 'material.state'; fields = path.read_text().split()
         fields[2] = f'{int(fields[2], 16) ^ 1:x}'
         path.write_text(' '.join(fields) + '\n')
+    if case == 'pass-missing':
+        (proof / 'pass.state').unlink()  # Only the newly copied fixture.
+    elif case in ('pass-malformed', 'pass-off'):
+        (proof / 'pass.state').write_text('invalid')
+    elif case == 'pass-wrong-state':
+        path = proof / 'pass.state'; fields = path.read_text().split()
+        fields[1] = '1' if fields[1] == '5' else '5'
+        path.write_text(' '.join(fields) + '\n')
     env = offline_env(args.game_root.resolve(), work / 'cache')
     env['RSX_PSO_RECONSTRUCT'] = str(proof)
     if case.startswith('material-'):
         env['RSX_PSO_RECONSTRUCT_MATERIAL'] = '0' if case == 'material-off' else '1'
+    if case.startswith('pass-'):
+        env['RSX_PSO_RECONSTRUCT_MATERIAL'] = '0' if case == 'pass-without-material' else '1'
+        env['RSX_PSO_RECONSTRUCT_PASS'] = '0' if case == 'pass-off' else '1'
     run_offline(args.engine.resolve(), args.game_root.resolve(), env, work / 'run.log')
     result = json.loads((proof / 'result.json').read_text())
     if case == 'material-off':
@@ -56,6 +69,15 @@ for case in cases:
         assert not result['material_requested'] and not result['material_applied']
         print('Explicit material mode 0 ignored malformed state and preserved legacy proof')
         continue
+    if case == 'pass-off':
+        assert result['created'] and result['expected'] == result['actual']
+        assert not result['pass_requested'] and not result['pass_applied']
+        print('Explicit pass mode 0 ignored malformed state and preserved legacy proof')
+        continue
+    if case in ('pass-missing', 'pass-malformed', 'pass-without-material'):
+        assert result['pass_requested'] and not result['pass_applied']
+    if case == 'pass-wrong-state':
+        assert result['pass_applied'] and result['expected'] != result['actual']
     assert result['created'] is False, (case, result)
     if case == 'wrong-pipeline-key':
         assert result['expected'] != result['actual'] and result['actual'] != '0000000000000000'

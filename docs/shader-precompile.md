@@ -239,3 +239,10 @@ Developer `--environment-texture-path` adds an explicit initialized RGBA8
 framebuffer shape candidate. It retains unknown read gamma and requires the
 corresponding sampler/texture proof options; it does not enable player setup.
 See [framebuffer shape](shader-reconstruction.md#conditional-initialized-framebuffer-shape-phase-152).
+
+
+Phase 153 adds developer-only conditional object-pass winding/culling and output
+gamma reconstruction. Five partial shader/native pipeline proofs pass; live
+pass ownership and remaining target/translation fields are unresolved. See
+[the reconstruction scope](shader-reconstruction.md#conditional-object-pass-fields-phase-153).
+This does not change player preparation or release defaults.

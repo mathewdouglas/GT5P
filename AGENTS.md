@@ -36,13 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 152)
+## Start here: state of play (2026-10-30, Phase 153)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 152 is the latest).
+has the evidence, newest phase first (Phase 153 is the latest).
 
 ### What works now
+
+- **Conditional object pass (Phase 153):** 1,536 native wrapper checks recover
+  entry/exit cull/winding/output gamma. Developer `--object-pass-path ccw|cw`
+  combines explicit winding with prepared material cull enable; the offline-only
+  `RSX_PSO_RECONSTRUCT_PASS=1` replaces native face state. Three CCW and two CW
+  shader/native pipeline proofs and twelve rejection/switch checks pass. Model
+  rendering is mocked in the oracle; live ownership/later overrides remain open.
+  Other translation/target fields stay captured; player defaults are unchanged.
 
 - **Conditional framebuffer cube (Phase 152):** 512 native initialized RGBA8
   setup checks derive 2D/cube shape from an explicit creation argument, using the
