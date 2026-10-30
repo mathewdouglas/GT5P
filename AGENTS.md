@@ -36,14 +36,20 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 137)
+## Start here: state of play (2026-10-30, Phase 138)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 137 is the latest).
+has the evidence, newest phase first (Phase 138 is the latest).
 
 ### What works now
 
+- **Asset shader reconstruction proof (Phase 138):** seven selected shader
+  pairs rebuilt from original assets matched captured bytecode and native
+  pipeline keys and created successfully in D3D12. State still comes from a
+  captured descriptor. `RSX_PSO_RECONSTRUCT` is offline-only and default-off;
+  see [docs/shader-reconstruction.md](docs/shader-reconstruction.md). No full
+  first-run catalogue or material/pass-state extraction is implemented yet.
 - **Shader provenance diagnostic (Phases 136/137):** branch
   `feature/shader-coverage-audit` adds a local asset/corpus audit and opt-in
   `RSX_PSO_PROVENANCE=<ignored directory>` recording of actual per-draw shader

@@ -1,5 +1,9 @@
 # Shader and pipeline coverage audit
 
+For the subsequent asset-to-bytecode and native pipeline proof, see
+[shader reconstruction](shader-reconstruction.md). It verifies a small sample
+using captured state; full material/pass reconstruction remains open.
+
 `scripts/shader_coverage.py` compares extracted SHDS fragment programs against
 raw programs recorded by the renderer. It also inventories learned fragment
 state profiles and checks recorded native-pipeline bytecode dependencies.

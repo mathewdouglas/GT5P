@@ -9,6 +9,35 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 138 - Rebuild sampled shaders from assets (2026-10-30)
+
+On `feature/shader-coverage-audit`, `scripts/shader_reconstruct.py` finds bounded
+SHDS vertex payloads, removes the observed wrapper and converts BE words to
+native decoder input. The 601 indexed containers contain 7,265 bounded payloads;
+211 / 216 captured vertex-input IDs have exact instruction-prefix candidates.
+This is candidate discovery, not proof for all those programs.
+
+Seven shader pairs were independently rebuilt from original asset slices:
+three executable programs, three GPU-fetch car LOD cases and one GPU-fetch car
+case targeting R16G16B16A16_UNORM. Generated VS HLSL and both compiled shader
+identifiers matched; the PS pass used a fresh cache and matched its captured
+source key too. With the captured descriptor as state oracle, all seven native
+pipeline keys matched and D3D12 creation succeeded. No captured raw shader or
+cached DXBC was used for shader compilation. The native proof bypasses the
+application's driver-blob cache but does not clear driver-internal caches.
+
+`RSX_PSO_RECONSTRUCT` is an opt-in offline-only proof mode; it does nothing in
+normal startup without `GT5P_SHADER_PRECOMPILE_ONLY=1`. Synthetic extraction and
+mutation checks passed. Native negative checks rejected malformed recipes,
+changed bytecode and an incorrect pipeline key without guest entry. The updated
+backend was compiled/relinked separately, preserving the shared runtime and
+normal game EXE. Reports and all game-derived outputs stay ignored and local.
+See [shader reconstruction](shader-reconstruction.md) for commands/evidence.
+
+**Open:** material/pass state and shader pairing are still captured or selected
+using diagnostic records. Derive those from assets/rendering rules next, before
+claiming a portable catalogue or player first-run preparation.
+
 ## Phase 137 - Record shader-input to pipeline provenance (2026-10-30)
 
 Branch `feature/shader-coverage-audit`. The runtime overlay now includes an
