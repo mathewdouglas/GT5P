@@ -9,6 +9,73 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 169 - Recover non-SHDS programs with verified asset locations (2026-10-31)
+
+The largest immediate template gap was lookup: of the 298 unresolved records,
+279 lacked only FP, 14 lacked both stages and five lacked only VP. The missing
+program set is four VP and 68 FP identities. A read-only search of the original
+ELF/unpacked assets finds all of them outside the currently supported SHDS table
+lookup. This is an extraction gap; the evidence does not require inventing shader
+variants or choosing pipeline state from guessed pass ownership.
+
+`scripts/pipeline_asset_map.py` adds independently versioned location metadata:
+stage/program SHA-256, program size, original container SHA-256/size, file offset
+and native/swap32 encoding. No shader bytes/source/binaries, filenames or guest
+addresses enter the map. Developer generation uses bounded captured programs as
+search anchors, verifies each candidate against the expected program identity,
+then emits only locations into original assets. End-user preparation needs no
+captures: it hashes original containers, reads and verifies slices, and follows
+the existing exact source/bytecode/native-key checks. FP identity still ignores
+inline constant values under the explicit constant-buffer policy.
+
+Map schema/version/counts/offsets/sizes/encodings are validated before use. A
+changed asset cannot serve an old location; an incorrect program slice fails
+verification before compilation. Renaming/moving identical assets is supported.
+Missing containers remain unresolved on the existing demand path. The lookup
+uses one CPU thread, at most 8,192 input files/1 GiB per container/16 GiB hashing,
+a 60 s between-container deadline, 4 MiB metadata and 128 MiB resolved code.
+Developer generation has a 600 s between-candidate deadline, 16 GiB search budget
+and 4,096 anchor candidates per program/container. No live memory scout, worker,
+queue owner, shutdown or asynchronous draw-policy change is introduced.
+
+The initial generator locates all 121 identities referenced by the unresolved
+record subset in 116.133 s; filtering out programs already available through
+SHDS leaves 72 supplemental locations. `--catalog` now performs this omission
+automatically for subsequent generation. Full template lookup finds 214 VP and
+498 FP identities, resolving all 1,494 exported records. Supplemental lookup
+hashes five containers (438,542,896 bytes), measured 1.112 s with warm OS caches.
+Three branching VP contexts remain excluded. Evidence:
+`scratch/template-asset-map-20261031/{report,full-lookup,minimal-map}.json` and
+`scratch/template-missing-diagnostic.json`.
+
+All 298 recovered records then rebuild both shader stages, match expected
+source/bytecode identifiers, match exact current native keys, create successfully
+in D3D12 and persist validated recipes/driver blobs in a fresh application cache.
+No incompatible/unresolved/key-rejected entries remain in this subset. The old
+working template header was reissued against the current normalized source
+contract before validation; no mismatch bypass was added. Preparation takes
+256.764 s, including 91 fragment-profile processes and vertex translation;
+298 fresh driver calls take 7.156 s with zero cached-blob calls. Driver blobs
+occupy 23.299 MiB. The existing private game fixture is reused; guest entry is
+never executed. No additional game copy or gameplay benchmark was needed.
+Evidence: `scratch/template-recovered-proof-20261031/{report.json,native.log}`.
+
+The optional metadata starter now has all 1,494 positively verified records
+(Phase 168's 1,196 plus these 298), and the 72-entry map. Supply `--assets` to
+use the bundled map automatically, or explicit `--asset-map` for standalone
+templates. A separate one-record bundled fresh-cache native smoke verifies
+automatic map selection. Synthetic checks cover byte order, misleading prefix
+candidates, container modification, bad offsets/versions, duplicate records,
+unknown fields, empty requests and timeout behavior. Template/shared-profile
+regressions pass. Rollback: omit supplemental lookup or skip optional preparation.
+
+This is 1,494/1,497 retained HSR pipeline links, **not whole-game coverage** or
+independent recovery of unseen material/pass state. It closes the measured
+lookup gap without more driving. No new stutter/screenshot result is inferred
+from an offline creation proof; Phase 168's live limitations still apply. No
+player/launcher/release default changes. Broader route/session templates and
+unrecorded branch/pass contexts remain future work.
+
 ## Phase 168 - Verified optional template, measured routes and bounded storage (2026-10-31)
 
 Completed the Phase 167 experiment. Asset lookup finds 210 VP/430 FP identities;

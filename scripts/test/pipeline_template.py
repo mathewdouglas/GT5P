@@ -101,3 +101,9 @@ if starter.exists():
     assert metadata['compatibility']['renderer_sha256']==renderer_contract()
     assert len(metadata['records'])<=4096
     print('Bundled starter metadata matches the current renderer contract')
+    if (starter/'asset-map.json').exists():
+        from pipeline_asset_map import read as read_map
+        locations=read_map(starter/'asset-map.json')
+        programs={(s,r[s]['sha256'],r[s]['size']) for r in metadata['records'] for s in ('vp','fp')}
+        assert all((r['stage'],r['id'],r['size']) in programs for r in locations['records'])
+        print('Supplemental asset locations reference only bundled program identifiers')

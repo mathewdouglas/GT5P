@@ -252,7 +252,7 @@ def export(trace, cache, compat):
     return validate(dict(schema=SCHEMA, version=VERSION, compatibility=compat, records=list(records.values()))), dict(rejected)
 
 
-def locate(records, catalog, elf):
+def locate(records, catalog, elf, asset_map=None, assets=None):
     """One bounded, read-only container pass, no address-space polling."""
     index = json.loads(bounded_read(catalog / 'index.json', 64 * 1024 * 1024))
     wanted_fp = {r['fp']['sha256'] for r in records}
@@ -294,11 +294,21 @@ def locate(records, catalog, elf):
                             vertices.setdefault(identity, code)
         if len(vertices) == len(vertex_ids):
             break
+    extra = {}
+    if asset_map is not None:
+        from pipeline_asset_map import read as read_map, resolve
+        if assets is None:
+            raise ValueError('An asset root is required with a program location map')
+        wanted = {(stage,r[stage]['sha256'],r[stage]['size']) for r in records for stage,found in
+                  (('vp',vertices),('fp',fragments)) if r[stage]['sha256'] not in found}
+        mapped_vp,mapped_fp,extra = resolve(read_map(asset_map),assets,elf,wanted)
+        vertices.update(mapped_vp)
+        fragments.update(mapped_fp)
     return vertices, fragments, dict(containers=visited, addressable_bytes=size, vertex_wrappers=wrappers,
-                                     vertex_found=len(vertices), fragment_found=len(fragments))
+                                     vertex_found=len(vertices), fragment_found=len(fragments),asset_map=extra)
 
 
-def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False):
+def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False, asset_map=None, assets=None):
     idle()
     output = isolated(output)
     if output.exists():
@@ -321,7 +331,9 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_f
     cache = output / 'shadercache'
     cache.mkdir()
     started = time.perf_counter()
-    vertices, fragments, lookup = locate(document['records'], catalog, elf)
+    if asset_map is None and assets is not None and template.is_dir() and (template/'asset-map.json').is_file():
+        asset_map = template/'asset-map.json'
+    vertices, fragments, lookup = locate(document['records'], catalog, elf,asset_map,assets)
     lookup['seconds'] = time.perf_counter() - started
     report = dict(schema=1, template_sha256=template_digest(template), lookup=lookup,
                   requested=len(document['records']), records=[], preparation_seconds=None,
@@ -413,6 +425,8 @@ def main():
     m.add_argument('--output', type=Path, required=True)
     m.add_argument('templates', type=Path, nargs='+')
     p = sub.add_parser('prepare')
+    p.add_argument('--asset-map',type=Path,help='Optional verified hash/offset map for non-SHDS programs')
+    p.add_argument('--assets',type=Path,help='Original unpacked asset root used with --asset-map')
     p.add_argument('--demand-fallback',action='store_true',help='Report incompatible templates and provide an empty demand cache')
     for name in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game-root', 'output'):
         p.add_argument('--' + name, type=Path, required=True)
@@ -425,7 +439,7 @@ def main():
         return
     if args.command == 'prepare':
         result = prepare(*(getattr(args, k).resolve() for k in ('template', 'catalog', 'elf', 'engine', 'decoder', 'game_root', 'output')),
-                         demand_fallback=args.demand_fallback)
+                         demand_fallback=args.demand_fallback,asset_map=args.asset_map,assets=args.assets)
         print(json.dumps(dict(counts=result['counts'], lookup=result['lookup'], seconds=result['preparation_seconds'])))
         return
     if args.output.exists():

@@ -36,13 +36,23 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 168)
+## Start here: state of play (2026-10-31, Phase 169)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 168 is the latest).
+has the evidence, newest phase first (Phase 169 is the latest).
 
 ### What works now
+
+- **Asset-location recovery (Phase 169):** all 298 previously unresolved template
+  records rebuild both shaders and exact native pipelines in an empty cache.
+  Optional starter now contains 1,494 verified retained-route records; three
+  branching VP contexts remain excluded. A separate hash/offset map locates
+  4 VP/68 FP programs outside supported SHDS tables in original assets; no shader
+  contents or filenames are shipped. Use --assets with the bundled starter.
+  Supplemental lookup hashes five containers in about 1.1 s with warm OS caches.
+  This expands observed-state coverage, not whole-game or independent material
+  coverage; no new gameplay/stutter claim or player defaults.
 
 - **Optional verified template and storage cleanup (Phase 168):** 1,196 records
   rebuild both stages and exact native pipelines from local assets; optional
