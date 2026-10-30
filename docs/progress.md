@@ -9,6 +9,55 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 163 - Build the first independent shared-pass pipeline candidates (2026-10-31)
+
+`prepare_shared_shaders.py --pipelines` now constructs complete conditional
+ColorCorrect shader/native requests without captures, learned profiles, manual
+bank offsets or pass names. The original named pair and sampler metadata must
+declare exactly `colorMap` on unit zero, no globals and sampled mask one. Unknown
+or different ownership is rejected. Explicit contexts enumerate source-read and
+output gamma with supported depth-backed single-colour targets. Source must be a
+successfully initialized ordinary RGBA8 2D FrameBuffer, distinct from the target;
+feedback, depth/cube/volume and unexpected redirects remain excluded.
+
+The native oracle now runs the real FrameBuffer getter-copy wrapper `00827DD0`,
+full colour-correction wrapper `0081FDA8`, gamma callbacks and texture-emission/
+copy chain `00823F28/00BA6CF0/00BD2660/00BD5B88/00C05D58`. All 1,152 random
+descriptor/poison/identity/gamma cases match the independent transform. It forces
+one mip, read gamma from the low byte of the explicit mode argument, min filter
+one and mag filter two for distinct objects (one for identical objects). S/T
+wrap remains inherited; the supported initializer supplies clamp. The source
+descriptor provider, sampler metadata lookup, target activation, constants and
+draw boundary are controlled, not claimed as independently executed ownership.
+
+**Correction:** `0x1d7c` is anti-alias control, not shader control as labelled in
+Phase 160. Its inherited low bit remains, but bit four is cleared, so it does
+not enable the backend's alpha-to-coverage substitute in this pass. Fragment
+export precision still comes from the authored compact descriptor. Source shape
+and normalized coordinates use the already measured successful 2D framebuffer
+initializer; read gamma is now explicitly overridden by this pass.
+
+All 12 `supported` contexts rebuild shaders and create distinct persisted native
+pipelines from zero native descriptors and expected key zero. Existing guarded
+offline material/pass/target/input field writers are reused for independently
+derived pass values; no material state is read for this shared rule. A repeat
+run accepts all 12 and uses cached driver blobs. Recipe, bytecode and driver
+checksums validate independently. None matches the retained HSR snapshot; actual
+pass/context use and whole-game coverage remain unproven. No live performance
+comparison or player/launcher/release change is made.
+
+Resume verifies ELF/decoder/engine/context identity and marks each request pending
+before native execution so stale results cannot count as a new success. Failed
+outputs remain reviewable. Synthetic ownership/gamma/prerequisite checks and
+bank/reconstruction regressions pass. All game-derived files remain ignored and
+the original checkout/shared runtime/processes are untouched.
+
+Evidence: `scratch/shared-pass-native-a1b5426ab1f14f1a8bd6316461e8c274/report.json`,
+`scratch/shared-color-prep-20261031/pipelines/native.log` (initial creation), and
+`scratch/shared-color-final-20261031/report.json`, `validation.json`,
+`pipelines/native.log` (cache reuse). Next add explicit colour-only host targets
+and recover more shared-pass rules, retaining unresolved ownership as conditions.
+
 ## Phase 162 - Automatically prepare shared vertex programs and derive CPU layouts (2026-10-31)
 
 `scripts/prepare_shared_shaders.py` scans original ELF SHDS headers and bounded

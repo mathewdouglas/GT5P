@@ -1,9 +1,43 @@
 # Asset shader reconstruction proof
 
-Phases 138-162, branch `feature/shader-coverage-audit`. The original proof is
+Phases 138-163, branch `feature/shader-coverage-audit`. The original proof is
 extended by a capture-free conditional subset preparer in Phase 157 below.
 This is not complete player first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
+
+## Conditional colour-correction pipelines (Phase 163)
+
+`shader_shared_profiles.py` supplies a whole conditional ColorCorrect profile
+from the original pair/compact control, the measured pass and explicit context.
+`prepare_shared_shaders.py --pipelines` automatically enumerates it and constructs
+fresh CPU-input native recipes with expected key zero. It never reads a capture
+or learned profile. Twelve supported target/gamma contexts create and persist;
+repeat native preparation uses cached blobs. Other named pairs remain excluded
+from complete pipeline generation.
+
+The supported source is an ordinary successfully initialized RGBA8 2D framebuffer
+with normalized coordinates and inherited clamp wrapping, distinct from the
+destination. The pass forces a single mip, min filter one/mag filter two, source
+gamma from its low-byte mode argument and output gamma from its separate flag.
+It disables blend/cull/depth/stencil/alpha and writes all colour channels. Target
+format/sample count and depth attachment are explicit context assumptions.
+No depth/cube/volume, feedback or unexpected resource redirects are supported.
+All original sampler metadata and sampled-unit requirements must match the rule;
+no defaults fill unknown bindings. Standard renderer settings/no later overrides
+are assumptions, not live ownership claims.
+
+The getter-copy/pass/gamma/texture-emitter chain passes 1,152 native differential
+cases. The underlying source descriptor provider, sampler metadata lookup,
+target activation, constants and draw boundary stay controlled. Initializer,
+compact-control and production-key derivations use the earlier independent
+oracles. This proves conditional construction, not complete execution of every
+live pass. The twelve keys do not match retained HSR draws; stutter improvement
+and whole-game coverage remain unproven.
+
+Correction to the Phase 160 label: `0x1d7c` is anti-alias control. The low inherited
+bit does not turn on alpha-to-coverage because the wrapper clears bit four.
+It is not an unresolved shader-export control field. See Phase 163 progress for
+evidence paths and [preparation commands](shader-precompile.md).
 
 ## Automatic shared vertex preparation (Phase 162)
 

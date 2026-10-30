@@ -36,13 +36,23 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 162)
+## Start here: state of play (2026-10-31, Phase 163)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 162 is the latest).
+has the evidence, newest phase first (Phase 163 is the latest).
 
 ### What works now
+
+- **First independent shared-pass recipes (Phase 163):** automatic shared
+  preparation's explicit `--pipelines` mode builds 12 conditional ColorCorrect
+  pipelines without captures, from original named pairs and independently
+  expressed state. All persist; repeat preparation reuses the driver blobs.
+  1,152 native getter/edit/gamma/texture-emitter checks pass. Context requires a
+  distinct successfully initialized RGBA8 2D framebuffer source and an explicit
+  depth-backed target/gamma combination; feedback/unknown resources stay excluded.
+  No retained HSR match or stutter gain is established. `0x1d7c` is anti-alias
+  control, correcting the earlier shader-control label. No player defaults change.
 
 - **Automatic shared vertex preparation (Phase 162):** capture-free embedded-bank
   scanning enumerates 46 authored pairs across five banks and prepares 14 unique

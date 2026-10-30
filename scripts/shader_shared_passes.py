@@ -78,18 +78,31 @@ def bank_pairs(data, base):
         if descriptor not in maps:
             raise ValueError('missing fragment payload')
         fo, fl = maps[descriptor]
+        sampler_count = unpack('B', fragments[fi] + 11)[0]
+        sampler_table = unpack('I', fragments[fi] + 20)[0]
+        samplers = []
+        if sampler_count:
+            for item in table(sampler_table, sampler_count, 16):
+                no, kind, unit, a, b, c = unpack('I4hI', item)
+                ns = span(no, 1)
+                ne = data.find(b'\0', ns, min(base + size, ns + 256))
+                if ne < 0:
+                    raise ValueError('unterminated sampler name')
+                samplers.append(dict(name=bytes(data[ns:ne]).decode('ascii'), kind=kind,
+                                     unit=unit, extra=[a, b, c]))
         vb, fb = data[wrapper + code:wrapper + code + length], data[span(fo, fl):base + fo + fl]
         result.append(dict(name=name, tag=tag, header=base, record=base + entry,
                            vertex_input_mask=struct.unpack_from('>I', data, wrapper + 4)[0],
                            vertex_input_source=dict(offset=wrapper + 4, size=4,
                                sha256=hashlib.sha256(data[wrapper + 4:wrapper + 8]).hexdigest()),
                            vertex_index=vi, fragment_index=fi,
+                           samplers=samplers, global_count=unpack('B', fragments[fi] + 10)[0],
                            vertex=dict(header=base, offset=wrapper + code, size=length,
                                        wrapper=wrapper, wrapper_size=vl, order='swap32',
                                        sha256=hashlib.sha256(vb).hexdigest()),
                            fragment=dict(offset=base + fo, size=fl, sha256=hashlib.sha256(fb).hexdigest()),
                            fragment_control=unpack('I', descriptor + 8)[0],
-                           identity=fp_identity(fb)['identity']))
+                           identity=fp_identity(fb)['identity'], sampled_units=fp_identity(fb)['textures']))
     return result
 
 

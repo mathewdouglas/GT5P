@@ -30,6 +30,28 @@ into the launcher or material precompiler, and does not establish stutter impact
 or compatibility with GT5's asset layouts. See
 [input-layout validation](shader-reconstruction.md#automatic-shared-vertex-preparation-phase-162).
 
+Phase 163 adds the first complete conditional shared-pass rule. Add `--pipelines`
+with an isolated `--engine` and `--game-root`; `--context-set supported` enumerates
+12 explicit ColorCorrect contexts (the default `rgba16` set has eight):
+
+```powershell
+.venv\Scripts\python scripts\prepare_shared_shaders.py `
+  --elf ../GT5P/input/EMAIN.ELF --decoder scratch\reconstruction-build\decoder.dll `
+  --output scratch\shared-pipelines --pipelines --engine scratch\pass-build\gt5p.exe `
+  --game-root ../GT5P --context-set supported
+```
+
+This is offline only. Source/target read/write gamma and supported depth-backed
+target choices are explicit candidates; real draw ownership is unproven. The
+source must be a successfully initialized RGBA8 2D FrameBuffer, distinct from
+the destination, with no unexpected redirects or later overrides. Unknown
+resources and feedback are excluded. All 12 candidates create and persist, and
+repeat preparation reuses their driver blobs. They do not match the retained
+HSR snapshot, so no live coverage/stutter gain is claimed. Other pairs still
+receive vertex preparation only. No player defaults or launcher integration.
+Use the same command with `--resume` to revalidate/reuse matching output. All
+outputs remain local/ignored. See the [shared rule](shader-reconstruction.md#conditional-colour-correction-pipelines-phase-163).
+
 ## Automated route learning and preparation (developer only)
 
 `scripts/train_pipeline_cache.py` provides a pragmatic alternative to recovering

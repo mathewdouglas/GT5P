@@ -7,6 +7,7 @@ import argparse
 import ctypes
 import hashlib
 import json
+import random
 from pathlib import Path
 import struct
 import subprocess
@@ -15,6 +16,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from shader_shared_passes import bank_pairs
+from shader_shared_profiles import colour_correct_descriptor
 from shader_material_prepare_native import extract
 
 
@@ -31,14 +33,16 @@ def main():
     folder.mkdir(parents=True)
     source = (args.generated / 'ppu_recomp_005.cpp').read_text()
     snippets = '\n'.join(extract(source, n) for n in (
-        'ppc_rotl64', 'ppc_mask64', 'ppc_rlw64', 'ppc_rldicl', 'ppc_sraw', 'ppc_rldimi',
+        'ppc_rotl64', 'ppc_mask64', 'ppc_rlw64', 'ppc_rldicl', 'ppc_rldicr', 'ppc_sraw', 'ppc_rldimi',
         'ppu_fp_quiet', 'ppu_fp_default_qnan', 'ppu_fp_bin', 'ppu_fp_single',
         'ppu_fdiv', 'ppu_fadd', 'ppu_fmul', 'ppu_fmadd_core', 'ppu_frsp',
         'func_00832920', 'func_008329A8', 'func_00832A50', 'func_00832BC8',
-        'func_00831B78', 'func_00833290', 'func_0081FDA8'))
+        'func_00831B78', 'func_00833290', 'func_0081FDA8', 'func_00827DD0', 'func_00823F28'))
     libc = (args.generated / 'ppu_recomp_008.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(libc, 'func_' + n) for n in (
-        '00BC5540', '00BCFFA0', '00BCFEF8', '00BCC3A0', '00BDE360'))
+        '00BC5540', '00BCFD90', '00BCFFA0', '00BCFEF8', '00BCC3A0', '00BDE360',
+        '00BD2660', '00BD5B88', '00C05D58'))
+    snippets += '\n' + extract((args.generated / 'ppu_recomp_007.cpp').read_text(), 'func_00BA6CF0')
     prefix = '''#define PPU_NO_INLINE_LOADS
 #define PPU_NO_INLINE_STORES
 #include "ppu_recomp.h"
@@ -67,9 +71,9 @@ void func_00C09258(ppu_context* ctx) {
 void func_00833268(ppu_context* ctx) {vertex=ctx->gpr[3];}
 void func_00832790(ppu_context* ctx) {fragment=ctx->gpr[3];}
 static unsigned draws,callbacks;
+static unsigned resource_mode;
 void func_0081FCD0(ppu_context* ctx) {ctx->gpr[3]=0x10000;}
-void func_00832840(ppu_context* ctx) {ctx->gpr[3]=0;}
-void func_00823F28(ppu_context* ctx) {}
+void func_00832840(ppu_context* ctx) {ctx->gpr[3]=0x1e28000;}
 void func_00832878(ppu_context* ctx) {ctx->gpr[3]=0;}
 void func_00833E50(ppu_context* ctx) {}
 void func_00BC84F8(ppu_context* ctx) {}
@@ -78,10 +82,18 @@ void func_00BC7BE0(ppu_context* ctx) {}
 void func_00BC5C40(ppu_context* ctx) {}
 void func_00BC5698(ppu_context* ctx) {draws++;}
 void func_00BC83D0(ppu_context* ctx) {}
+void func_00C064F8(ppu_context* ctx) {
+ bounds(ctx->gpr[3],ctx->gpr[5]);bounds(ctx->gpr[4],ctx->gpr[5]);
+ memmove(memory+ctx->gpr[3],memory+ctx->gpr[4],ctx->gpr[5]);
+}
 void ps3_indirect_call(ppu_context* ctx) {
+ if(resource_mode && ctx->ctr==1) {func_00827DD0(ctx);return;}
+ if(resource_mode && ctx->ctr==3) {ctx->gpr[3]=0x1e27000;return;}
  if(ctx->ctr==1) {for(unsigned i=0;i<32;i+=4)vm_write32(ctx->gpr[3]+i,0);return;}
  // Target activation and the selected gamma callback remain controlled boundaries.
  assert(ctx->gpr[3]==0x1fec || ctx->ctr==2);callbacks++;
+ if(resource_mode && ctx->ctr==0xbcfd90)func_00BCFD90(ctx);
+ else if(resource_mode && ctx->ctr==0xbc5540)func_00BC5540(ctx);
 }
 '''
     suffix = '''
@@ -102,20 +114,31 @@ extern "C" __declspec(dllexport) uint32_t select_pair(uint32_t bank,uint32_t nam
 extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned gamma,unsigned mode,unsigned poison,uint32_t* out) {
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
  for(unsigned i=0;i<0x600;i+=4)vm_write32(0x1e70000+i,poison);
- const int offsets[]={0x4c10,0x4918,0x491c,0x49e8};
+ const int offsets[]={0x4c10,0x4918,0x491c,0x49e8,0x4920};
  for(int offset : offsets)vm_write32(ctx.gpr[2]-offset,0x1e70000);
  vm_write32(0x1e70008,0x1e71000);vm_write32(0x1e70530,0);
+ vm_write32(ctx.gpr[2]-0x48bc,0x1e81000);vm_write32(0x1e81008,0x1e80000);
+ vm_write16(0x1e28006,0);
  vm_write32(ctx.gpr[2]-0x6724,0x12910dc);
  for(unsigned i=0;i<32;i+=4)vm_write32(0x1e21000+i,64);
  vm_write32(0x1e21000,0x1e23000);vm_write32(0x1e22000,0x1e23000);
  vm_write32(0x1e2301c,0x1e24000);vm_write32(0x1e24000,1);vm_write32(0x1e24004,ctx.gpr[2]);
  vm_write32(0x1e23010,0x1e24010);vm_write32(0x1e24010,2);vm_write32(0x1e24014,ctx.gpr[2]);
+ vm_write32(0x1e23038,0x1e24020);vm_write32(0x1e24020,3);vm_write32(0x1e24024,ctx.gpr[2]);
  ctx.gpr[3]=same ? 0x1e21000 : 0x1e22000;ctx.gpr[4]=0x1e21000;
  ctx.gpr[5]=0x1e25000;ctx.gpr[6]=ctx.gpr[7]=0x1e25000;ctx.gpr[9]=gamma;ctx.gpr[10]=mode;ctx.fpr[1]=1;
  draws=callbacks=vertex=fragment=0;func_0081FDA8(&ctx);assert(draws==1 && callbacks==2);
  out[0]=vertex;out[1]=fragment;
  unsigned end=vm_read32(0x1e70008),n=(end-0x1e71000)/4;assert(n<=64);
  for(unsigned i=0;i<n;i++)out[2+i]=vm_read32(0x1e71000+i*4);return n;
+}
+extern "C" __declspec(dllexport) void colour_resource(unsigned same,unsigned gamma,unsigned mode,unsigned poison,const uint32_t* input,uint32_t* output) {
+ for(unsigned i=0;i<13;i++)vm_write32(0x1e27000+i*4,input[i]);
+ resource_mode=1;uint32_t commands[66];unsigned n=colour_state(same,gamma,mode,poison,commands);resource_mode=0;
+ for(unsigned i=0;i<13;i++)output[i]=vm_read32(0x1e80000+4*i);
+ output[13]=0xffffffff;
+ for(unsigned i=2;i+1<n+2;i+=2)if(commands[i]==0x41fec)output[13]=commands[i+1];
+ assert(output[13]!=0xffffffff);
 }
 '''
     (folder / 'oracle.cpp').write_text(prefix + snippets + suffix)
@@ -132,6 +155,7 @@ extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned ga
     dll.select_pair.restype = ctypes.c_uint32
     dll.colour_state.argtypes = [ctypes.c_uint32] * 4 + [ctypes.POINTER(ctypes.c_uint32)]
     dll.colour_state.restype = ctypes.c_uint32
+    dll.colour_resource.argtypes = [ctypes.c_uint32] * 4 + [ctypes.POINTER(ctypes.c_uint32)] * 2
     dll.vertex_mask.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
     dll.vertex_mask.restype = ctypes.c_uint32
     mask_checks = 0
@@ -201,9 +225,24 @@ extern "C" __declspec(dllexport) unsigned colour_state(unsigned same,unsigned ga
                     assert output[0] == 0x10000 + vt + colour['vertex_index'] * 40
                     assert output[1] == 0x10000 + ft + colour['fragment_index'] * 72
                     state_checks += 1
-    report = dict(elf_sha256=digest, checks=checks, colour_state_checks=state_checks, vertex_mask_checks=mask_checks, banks=reports,
+    rng = random.Random(163)
+    resource_checks = 0
+    for same in (0, 1):
+        for mode in (0, 1, 2, 255, 256, 0xffffffff):
+            for gamma in (0, 1, 2, 0xffffffff):
+                for poison in (0, 0xffffffff, 0xa5a5a5a5):
+                    for _ in range(8):
+                        words = [rng.getrandbits(32) for _ in range(13)]
+                        incoming = (ctypes.c_uint32 * 13)(*words)
+                        outgoing = (ctypes.c_uint32 * 14)()
+                        dll.colour_resource(same, gamma, mode, poison, incoming, outgoing)
+                        assert list(outgoing)[:13] == colour_correct_descriptor(words, same, mode)
+                        assert outgoing[13] == int(bool(gamma))
+                        resource_checks += 1
+    report = dict(elf_sha256=digest, checks=checks, colour_state_checks=state_checks, vertex_mask_checks=mask_checks,
+                  colour_resource_checks=resource_checks, banks=reports,
                   colour_commands=expected,
-                  scope='Real lookup, pair indices and ColorCorrect state emission; controlled resource/target/gamma/upload boundaries. Texture and target facts unresolved.')
+                  scope='Real lookup, pair indices, framebuffer getter copy, ColorCorrect edits/gamma and texture command emission. Source descriptor provider, target activation, sampler metadata and draw/constant upload boundaries controlled.')
     (folder / 'report.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(dict(checks=checks, colour_state_checks=state_checks, report=str(folder / 'report.json'))))
 
