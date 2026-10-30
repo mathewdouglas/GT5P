@@ -155,10 +155,12 @@ def offline_env(game_root, cache):
     return env
 
 
-def run_offline(engine, game_root, env, log):
+def run_offline(engine, game_root, env, log, timeout=180):
+    if b'gt5p.exe' in subprocess.run(['tasklist', '/FI', 'IMAGENAME eq gt5p.exe', '/NH'], capture_output=True).stdout.lower():
+        raise ValueError('Another gt5p.exe is running; offline preparation did not start')
     with log.open('wb') as stream:
         subprocess.run([str(engine)], cwd=game_root, env=env, stdout=stream,
-                       stderr=subprocess.STDOUT, check=True, timeout=180)
+                       stderr=subprocess.STDOUT, check=True, timeout=timeout)
     text = log.read_text(encoding='utf-8', errors='replace')
     if 'guest entry was not executed' not in text or '[GT5P] Executing' in text:
         raise ValueError('offline execution guard was not confirmed')

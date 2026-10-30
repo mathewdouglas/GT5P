@@ -9,6 +9,36 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 157 - Prepare a capture-free conditional material subset (2026-10-30)
+
+`scripts/prepare_material_shaders.py` now enumerates original material pairs,
+derives ordinary-upload profiles and creates fresh native pipeline descriptors
+without reading captures or a provenance audit. Explicit object/target/global
+arguments select conditional candidates. Unknown bindings remain excluded.
+
+Across 601 source containers, 17,861 of 132,158 material candidates reduce to 474
+unique supported candidates. All 474 prepare successfully, producing 467 distinct
+native pipeline keys, persistent driver blobs and ordinary warmup recipes. The
+run uses 208 distinct vertex programs, 319 fragment programs and 47 fragment
+profile groups. A subsequent comparison matches 52 retained HSR keys; 220 source
+cache entries shared with the existing cache are byte-identical, none differ.
+This comparison supplies no construction inputs. Driver blobs occupy 27,879,630
+bytes on this adapter; they are local hardware/driver artifacts.
+
+Twelve new process cases verify preparation gates, damaged code, nonzero expected
+key rejection, whole-manifest validation and persisted driver-cache reuse. Twenty
+existing proof cases still pass. Envelope, profile and CLI tests pass; isolated
+build and runtime patch checks pass. Preparation is explicitly offline and
+default-off, never enters the guest, and writes only ignored isolated output.
+No original checkout, normal player defaults or release behavior changes.
+
+This is a working developer subset preparer, not a complete player precompiler.
+Live pass ownership, unresolved resource/alias contexts, full asset inventory,
+launcher integration and actual first-run stutter measurements remain open.
+Evidence and commands:
+[shader-reconstruction.md](shader-reconstruction.md#capture-free-conditional-material-preparation-phase-157),
+[shader-precompile.md](shader-precompile.md#capture-free-material-subset-developer-only).
+
 ## Phase 156 - Prove a whole independent ordinary-upload profile candidate (2026-10-30)
 
 Developer `--independent-profile-path ordinary-uploads` builds the whole selected

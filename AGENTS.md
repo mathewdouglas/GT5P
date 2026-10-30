@@ -36,13 +36,23 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 156)
+## Start here: state of play (2026-10-30, Phase 157)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 156 is the latest).
+has the evidence, newest phase first (Phase 157 is the latest).
 
 ### What works now
+
+- **Capture-free subset preparation (Phase 157):** developer
+  `scripts/prepare_material_shaders.py` constructs conditional ordinary-upload
+  profiles and fresh native descriptors from original assets, with no capture
+  input. All 474 eligible candidates created 467 distinct persisted native
+  pipelines; 52 match retained HSR keys in a subsequent comparison. Explicit
+  object/target/global choices remain assumptions about context ownership.
+  Unknown bindings are excluded. Cache reuse and malformed-request checks pass.
+  No launcher/player defaults change; complete coverage and measured stutter
+  reduction remain open. See the preparation and reconstruction documentation.
 
 - **Whole conditional profile (Phase 156):** developer
   `--independent-profile-path ordinary-uploads` builds the whole translation

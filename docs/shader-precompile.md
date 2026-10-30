@@ -3,6 +3,49 @@
 For measured asset/raw-program coverage, recipe dependency checks and the
 remaining provenance gap, see [shader coverage audit](shader-coverage.md).
 
+## Capture-free material subset (developer only)
+
+Phase 157 adds a conditional asset-to-native preparation path that needs no live
+capture or learned translation profile. It currently supports ordinary 2D uploads
+with complete sampled facts, prepared material state, compact fragment binding
+and explicitly selected object/target/global context. Actual pass ownership is
+not established. Unknown resource bindings are rejected; absence of resource
+aliases is an explicit context assumption. It does
+not yet integrate with the launcher or change normal player defaults.
+
+With the isolated patched runtime EXE and production vertex decoder already built:
+
+```powershell
+.venv\Scripts\python scripts\prepare_material_shaders.py `
+  --catalog ..\GT5P\shadercache\library-v1\all `
+  --engine scratch\pass-build\gt5p.exe `
+  --decoder scratch\reconstruction-build\decoder.dll `
+  --game-root ..\GT5P --object-pass-path ccw `
+  --native-target-path rgba16-msaa2 --global-sampler-path active `
+  --limit 0 --output scratch\material-preparation
+```
+
+The catalogue supplies original source-container paths, not capture state. Close
+the game first. Use separate ignored output, never the original checkout or its
+cache. Default `--limit 8` is a smoke run; `--limit 0` prepares all eligible
+candidates. `--enumerate-only` writes the inventory and candidate manifest without
+compiling. Repeat the same command with `--resume` to reuse cached fragment
+bytecode and revalidate native driver pipelines; vertex translation still runs.
+Changed engine, decoder or context choices require a new output directory.
+
+`report.json` records assumptions, exclusions, individual results and timings.
+`shadercache/` contains source-key DXBC, local driver blobs and warmup recipes in
+the renderer's ordinary formats. Keep all generated files local. This command
+does not install its output into a player's cache. Driver compatibility is checked
+through native pipeline creation on every run; stale blobs use the existing
+renderer fallback. A partial failure returns nonzero and preserves results.
+
+The measured subset prepared 474 candidates into 467 distinct native pipelines.
+This establishes preparation, not exhaustive coverage or measured stutter
+reduction. See [the reconstruction evidence](shader-reconstruction.md#capture-free-conditional-material-preparation-phase-157).
+
+## Existing raw-program preparation
+
 `scripts/precompile_shaders.py` reads embedded `SHDS` fragment programs from
 the local executable and unpacked game assets, then runs the production
 translator/compiler before guest entry. It writes ordinary DXBC entries to

@@ -1,7 +1,8 @@
 # Asset shader reconstruction proof
 
-Phases 138-152, branch `feature/shader-coverage-audit`. This is a small developer proof,
-not first-run setup or a complete shader catalogue. It follows the
+Phases 138-157, branch `feature/shader-coverage-audit`. The original proof is
+extended by a capture-free conditional subset preparer in Phase 157 below.
+This is not complete player first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
 **Measured result:** seven sampled shader pairs were rebuilt from original
@@ -1291,3 +1292,76 @@ Next expose capture-free candidate enumeration/preparation for this supported
 subset, while recovering the unresolved environment/shadow/alias contexts and
 validating coverage with fresh automated routes. Launcher integration remains
 open and must report partial coverage honestly.
+
+## Capture-free conditional material preparation (Phase 157)
+
+`scripts/prepare_material_shaders.py` now implements that supported subset as an
+actual offline preparer. It takes original source-container paths from the asset
+catalogue, scans material pairs/state/textures and derives the entire ordinary
+translation profile without any capture input. It requires explicit object and
+native target candidates; active/fallback global callback candidates are optional.
+Unknown sampled facts and unsupported shapes/depth/stencil are excluded as
+described in Phase 156. Absence of resource aliases and selected context ownership
+remain explicit assumptions.
+
+The host groups fragment programs by independently derived production profile,
+then invokes the actual offline translator/compiler. Default-off
+`RSX_SHADER_LIBRARY_RESULT` records raw-program hash/profile/source-key results
+so the host can select the exact explicit profile, rather than infer it from
+captured or cached code. Vertex programs use the production decoder/compiler.
+The host creates a bounded V1 request envelope with expected native key zero,
+zero native state and only bytecode lengths populated. Material, pass and target
+sidecars provide the independently constructed fields.
+
+Default-off `RSX_PSO_PREPARE_MATERIAL=1` accepts this request only with successful
+material/pass/fresh-native construction. It creates the native pipeline and saves
+ordinary driver blobs and warmup recipes. It does not accept nonzero expected
+keys in preparation mode or relax the original key-checked proof path.
+`RSX_PSO_PREPARE_BATCH` accepts at most 4,096 64-character lowercase hex job IDs,
+validates the entire bounded manifest before any pipeline work, and operates only
+behind the offline guest-entry guard. Runtime inputs/results stay local.
+
+Measured with explicit CCW object, RGBA16/2x target and active global candidates:
+
+- 601 source containers, 1,106 models and 132,158 material candidates scanned.
+- 17,861 eligible material candidates reduce to 474 unique shader/profile jobs;
+  104,784 candidates retain unknown sampled facts and are rejected. Other bounded
+  parser/missing-definition exclusions are recorded in the inventory report.
+- 208 unique vertex programs, 319 fragment programs and 47 fragment profile
+  groups produce 474 successful requests and 467 distinct native pipeline keys.
+- All native blobs and warmup recipes persist. Driver blobs total 27,879,630
+  bytes on the measured adapter. These are hardware/driver-local artifacts.
+- A subsequent read-only comparison matches 52 retained HSR link/pipeline keys.
+  Of generated source-cache entries, 220 also exist in the original cache and
+  are byte-identical; zero differ and 335 were absent there. Captures and the
+  original cache supplied no construction input.
+
+Twelve native process cases pass, covering all preparation gates, damaged code,
+nonzero expected keys, traversal/long IDs/oversized manifests and invalid trailing
+entries. Invalid manifests do not partially execute. A repeated positive request
+records one native driver call with one cached-blob call. The final three-job
+resume records three cached-blob calls in 47 ms and zero fragment compilations;
+that is the native batch timing, not total preparation time. Twenty legacy native
+proof cases still pass. Unit checks validate the zero-state envelope, checksum,
+source keys, collision preservation and independent profile prerequisites.
+The final isolated build also prepares and resumes three fresh candidates.
+
+Use the [preparation command](shader-precompile.md#capture-free-material-subset-developer-only).
+Outputs are ignored and separate from the original checkout. Resume checks the
+engine/decoder/context identity, reuses fragment bytecode, reconstructs vertex
+code and revalidates local native pipelines; failed jobs return nonzero. Every
+offline launch checks for another `gt5p.exe` and uses `PS3_VERBOSE=0`.
+
+Local evidence:
+
+- `scratch/capture-free-material-full-subset-20261030/report.json`
+- `scratch/material-preparation-posthoc-20261030.json`
+- `scratch/material-prepare-native-rn4a5ddo/report.json`
+- `scratch/capture-free-material-final-20261030/report.json`
+
+The full run preceded the final manifest byte bound and batch metrics; final
+native checks and the three-candidate resume cover those additions. This is a
+usable developer subset preparer, not a complete player-facing system. Actual
+pass ownership, unresolved environment/shadow/alias contexts, exhaustive assets,
+launcher/release integration and measured first-run stutter reduction remain open.
+Normal player defaults and the original checkout remain unchanged.
