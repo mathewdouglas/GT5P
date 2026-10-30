@@ -9,6 +9,21 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 155 - Derive authored compact fragment export precision (2026-10-30)
+
+The bounded direct-pair reader supplies compact descriptor shader control from
+original assets. 1,536 synthetic and 14,307 original-descriptor native checks
+verify unchanged emission to shader control; all inventory descriptors select
+16-bit export. The real emitter's command-space overflow path is excluded.
+
+Developer `--material-fragment-control` rereads the original control word and
+replaces export precision under explicit compact-binding/no-later-override
+assumptions. Three shader/native pipeline proofs pass with fresh descriptors.
+Control-source bounds, bit variation and CLI prerequisite checks pass. Other
+translation/global resource facts and actual pass ownership remain open; no
+runtime/player/release changes. Evidence:
+[shader-reconstruction.md](shader-reconstruction.md#authored-compact-fragment-export-control-phase-155).
+
 ## Phase 154 - Construct fresh conditional native pipeline descriptors (2026-10-30)
 
 Explicit developer `--native-target-path` selects a GPU-fetch, single-colour,

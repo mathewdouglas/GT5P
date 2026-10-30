@@ -21,6 +21,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--generated', type=Path, required=True)
     ap.add_argument('--elf', type=Path, required=True)
+    ap.add_argument('--materials', type=Path, help='Optional original-material model inventory for compact control checks')
     args = ap.parse_args()
     data = args.elf.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
@@ -52,12 +53,12 @@ def main():
         'func_00BCEBB0', 'func_00BCEE18', 'func_00BCF1B0',
         'func_00BCED48', 'func_00BCEED0', 'func_00BCEBC0',
         'func_00BCFD90', 'func_00BC5540', 'func_00BCEA98', 'func_00BCEAD0',
-        'func_00BD2660', 'func_00BD5B88', 'func_00C05D58', 'func_00BD0080'))
+        'func_00BDB790', 'func_00BD2660', 'func_00BD5B88', 'func_00C05D58', 'func_00BD0080'))
     wrappers = (args.generated / 'ppu_recomp_007.cpp').read_text()
     snippets += '\n' + '\n'.join(extract(wrappers, n) for n in (
         'func_00BA6998', 'func_00BA6590', 'func_00BA6BD8', 'func_00BA6CF0',
         'func_00BA6B40', 'func_00BA6C68', 'func_00BA6628', 'func_00BA1080', 'func_00B9F1F8', 'func_00B9F430', 'func_00B9EEF8'))
-    assert 'g_trampoline_fn' not in snippets, 'Isolated routines must not schedule trampolines'
+    assert snippets.count('g_trampoline_fn') == 1, 'Only the bounded compact-fragment emitter may contain overflow trampolines'
     prefix = '''#define PPU_NO_INLINE_LOADS
 #define PPU_NO_INLINE_STORES
 #include "ppu_recomp.h"
@@ -68,6 +69,9 @@ def main():
 #define DRAIN_TRAMPOLINE(ctx) ((void)0)
 static unsigned char memory[0x2000000];
 static uint32_t fallback;
+static void (*g_trampoline_fn)(void*);
+void func_00BDB80C(ppu_context* ctx) {assert(!"Unexpected compact fragment overflow");}
+void func_00BD3BA0(ppu_context* ctx) {assert(!"Unexpected command allocation");}
 static void bounds(uint64_t a, unsigned n) { assert(a<sizeof memory && n<=sizeof memory-a); }
 extern "C" uint8_t vm_read8(uint64_t a) { bounds(a,1);return memory[a]; }
 extern "C" uint16_t vm_read16(uint64_t a) { return (vm_read8(a)<<8)|vm_read8(a+1); }
@@ -155,6 +159,17 @@ extern "C" __declspec(dllexport) void load(uint32_t a,const void* p,uint32_t n) 
  bounds(a,n);memcpy(memory+a,p,n);
 }
 extern "C" __declspec(dllexport) uint32_t word(uint32_t a) { return vm_read32(a); }
+extern "C" __declspec(dllexport) uint32_t fragment_control(uint32_t control,uint32_t address,uint32_t masks) {
+ ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
+ vm_write32(0x1e78004,0x1e79100);vm_write32(0x1e78008,0x1e79000);
+ vm_write32(0x1e77004,masks);vm_write32(0x1e77008,control);vm_write32(0x1e7700c,address);
+ ctx.gpr[3]=0x1e78000;ctx.gpr[4]=0x1e77000;g_trampoline_fn=0;
+ func_00BDB790(&ctx);assert(!g_trampoline_fn);
+ assert(vm_read32(0x1e78008)==0x1e7903c);
+ assert(vm_read32(0x1e79000)==0x408e4 && vm_read32(0x1e79004)==address);
+ assert(vm_read32(0x1e79008)==0x41d60 && vm_read32(0x1e7900c)==control);
+ return vm_read32(0x1e7900c);
+}
 extern "C" __declspec(dllexport) void object_pass(uint32_t flip,uint32_t gate,uint32_t poison) {
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
  for(uint32_t i=0;i<0x600;i+=4)vm_write32(0x1e70000+i,poison);
@@ -318,6 +333,8 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
     lib.lookup.restype = ctypes.c_uint32
     lib.emit.argtypes = [ctypes.c_uint32] * 5
     lib.emit.restype = ctypes.c_uint32
+    lib.fragment_control.argtypes = [ctypes.c_uint32] * 3
+    lib.fragment_control.restype = ctypes.c_uint32
     lib.object_pass.argtypes = [ctypes.c_uint32] * 3
     lib.mirror_pass.argtypes = [ctypes.c_uint32] * 4
     lib.environment_setup.argtypes = [ctypes.c_uint32] * 6
@@ -485,6 +502,34 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                         mirror_examples.append(dict(input_address=address, input_filtering=filtering,
                                                     emitted_address=actual_address, emitted_filtering=actual_filter))
                     mirror_checks += 1
+    fragment_control_checks = 0
+    for control in range(256):
+        for address in (0, 0x12345678, 0xffffffff):
+            for masks in (0, 0xffffffff):
+                assert lib.fragment_control(control | 0x02008400, address, masks) == control | 0x02008400
+                fragment_control_checks += 1
+    material_fragment_checks = 0
+    material_export_counts = {}
+    if args.materials:
+        from shader_materials import model_pairs
+        inventory = {}
+        for pair in json.loads(args.materials.read_text())['pairs']:
+            inventory.setdefault(pair['file'], set()).add(pair['model'])
+        for filename, bases in sorted(inventory.items()):
+            asset = Path(filename).read_bytes()
+            seen = set()
+            for base in sorted(bases):
+                pairs, _ = model_pairs(asset, base)
+                for pair in pairs:
+                    offset = pair['fragment_control_offset']
+                    if offset in seen:
+                        continue
+                    seen.add(offset)
+                    masks, control, address = struct.unpack_from('>III', asset, offset - 4)
+                    assert lib.fragment_control(control, address, masks) == pair['fragment_control']
+                    key = '32bit' if control & 0x40 else '16bit'
+                    material_export_counts[key] = material_export_counts.get(key, 0) + 1
+                    material_fragment_checks += 1
     object_checks = 0
     for flip in range(256):
         for poison in (0, 0xffffffff, 0x12345678):
@@ -493,6 +538,10 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                 object_checks += 1
     report = {'elf_sha256': digest, 'registry_base': f'{base:08x}',
               'scope': 'Isolated callbacks, ShadowLV pass and framebuffer setup; render/scene/allocation helpers mocked; synthetic resources',
+              'fragment_control_checks': fragment_control_checks,
+              'material_fragment_control_checks': material_fragment_checks,
+              'material_export_counts': material_export_counts,
+              'fragment_control_scope': 'Real compact descriptor emitter with sufficient private command space; overflow/allocation excluded',
               'object_pass_checks': object_checks,
               'object_pass_scope': 'Real setup and face/enable emitters; model draw and lighting helpers mocked; state sampled at draw entry',
               'dynamic_descriptor_checks': dynamic_checks,
@@ -515,3 +564,4 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
 
 if __name__ == '__main__':
     main()
+

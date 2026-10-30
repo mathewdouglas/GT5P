@@ -1212,3 +1212,33 @@ Next remove the remaining captured fragment profile dependencies, starting with
 export control and unresolved global texture facts. Full first-run catalogue,
 actual pass ownership, automated route validation and launcher integration remain
 open; these conditional developer proofs must not be presented as complete.
+
+
+## Authored compact fragment export control (Phase 155)
+
+The direct material-pair reader now bounds the compact binding header and records
+its original shader-control word at descriptor +8. The real compact emitter
+`00BDB790`, with sufficient private command space, copies this word unchanged to
+`NV4097_SET_SHADER_CONTROL`. The renderer selects 32-bit export from bit 6.
+1,536 synthetic emitter checks vary control bits, address and attribute masks.
+Another 14,307 distinct original compact descriptors from the local material
+inventory pass the same emission check; all have 16-bit export selected. This
+inventory is not the whole game, and overflow/allocation paths are excluded.
+
+Developer `--material-fragment-control` requires a material inventory, reparses
+the original pair/header and rereads its independently hashed four-byte source.
+It derives `exp32` from the authored control, assuming compact descriptor binding
+and no later shader-control override. Captures validate this explicit candidate;
+precision is not chosen from capture. All other control bits remain uninterpreted.
+The material audit includes source offsets/control values as local evidence.
+
+Three shader/native pipeline proofs derive export precision alongside the earlier
+material/texture/pass/target candidates. Source/bytecode/native keys and fresh
+D3D12 creation match. Remaining global texture facts, shadow/low-coordinate
+translation and actual pass ownership are still open. This is not a complete
+first-run catalogue. No runtime/player/default/release changes in this phase.
+Synthetic source bounds/control-bit/prerequisite checks and earlier material
+checks pass. Original inputs remain read-only. Evidence:
+
+- `scratch/global-registry-31b9cd7535ab4c4d8f0a5e930012c703/report.json`
+- `scratch/material-fragment-control-proof-20261030/report.json`

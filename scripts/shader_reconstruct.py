@@ -174,7 +174,7 @@ def material_state_matches(values, capture):
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
                  prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None,
-                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None):
+                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None, material_fragment_control=False):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
@@ -182,6 +182,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
     shape_origin = None
     pass_origin = None
     target_origin = None
+    fragment_control_origin = None
     if prepared:
         from shader_material_state import prepare_state, decode_state
         raw = read_slice(prepared['source'])
@@ -241,6 +242,17 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         if key is None or key != int(capture['state']['samplers'], 16):
             raise ValueError('reconstructed sampler key differs from captured oracle')
         state['samplers'] = f'{key:016x}'
+    if material_fragment_control:
+        if not material:
+            raise ValueError('Fragment control requires an original material pair')
+        control_source = material['fragment_control_source']
+        control = struct.unpack('>I', read_slice(control_source))[0]
+        exp32 = int(bool(control & 0x40))
+        if exp32 != capture['state']['exp32']:
+            raise ValueError('authored compact fragment export precision differs from captured oracle')
+        state['exp32'] = exp32
+        fragment_control_origin = dict(source=control_source, control=control, exp32=exp32,
+                                       assumption='compact descriptor binding with no later shader-control override')
     asset = read_slice(candidate)
     vertex = word_swap(asset) if candidate['order'] == 'swap32' else asset
     hlsl, vs = compiler.vertex(vertex, 1 if target_origin else capture['vp_gpu'])
@@ -313,10 +325,12 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                 native_result=result,
                 material_state=({**prepared, 'values': values} if prepared else None),
                 sampler_origin=sampler_origin, texture_shape_origin=shape_origin, object_pass_origin=pass_origin, native_target_origin=target_origin,
+                fragment_control_origin=fragment_control_origin,
                 native_descriptor_origin='fresh independent construction' if target_origin else 'captured with reported replacements',
                 replaced_translation_fields=(['sampler_lanes'] if sampler_lanes else ['samplers'] if material_samplers else []) +
                                             (['texture_sampling_bits'] if material_texture_state else ['texture_shape_bits'] if material_texture_shapes else []) + (['output_gamma_bit'] if pass_origin else []) +
-                                            (['target_sample_bits'] if target_origin else []),
+                                            (['target_sample_bits'] if target_origin else []) +
+                                            (['export_precision'] if fragment_control_origin else []),
                 replaced_descriptor_fields=(['blend', 'colour_write_mask', 'depth_compare', 'depth_write_mask'] if prepared else []) +
                                            (['cull_mode', 'front_counter_clockwise'] if pass_origin else []) +
                                            (['all_other_native_descriptor_fields'] if target_origin else []),
@@ -363,7 +377,11 @@ def main():
     from shader_pass_state import TARGET_PATHS
     ap.add_argument('--native-target-path', choices=tuple(TARGET_PATHS),
                     help='Construct fresh GPU-fetch, depth-backed single-target descriptor for explicit candidate')
+    ap.add_argument('--material-fragment-control', action='store_true',
+                    help='Derive export precision from authored compact fragment descriptor; no later override')
     args = ap.parse_args()
+    if args.material_fragment_control and not args.materials:
+        ap.error('Material fragment control requires --materials')
     if args.native_target_path and not args.object_pass_path:
         ap.error('Native target construction requires --object-pass-path')
     if args.object_pass_path and not args.prepared_material_state:
@@ -455,6 +473,8 @@ def main():
                                                               source=source(base + state_table + binding['state'] * 160, 160)))
                             candidates.append(dict(vertex=dict(order='swap32', **source(pair['vertex_offset'], pair['vertex_size'])),
                                                    fragment=source(pair['fragment_offset'], pair['fragment_size']),
+                                                   fragment_control_source=source(pair['fragment_control_offset'], 4),
+                                                   fragment_control=pair['fragment_control'],
                                                    identity=pair['fragment_identity'], code=pair['vertex_code'],
                                                    model=item['model'], material=pair['material'], states=state_options))
                         materials[key] = candidates
@@ -464,6 +484,7 @@ def main():
                                ('Prepared material and explicit conditional fields are reconstructed; native descriptor is fresh only with native_target_path; other translation fields remain captured.'
                                 if args.prepared_material_state else 'Rendering state/native descriptor is captured, not reconstructed from material definitions.'),
                                'This is a bounded sample, not a complete distributable catalogue.'])
+    report['material_fragment_control'] = args.material_fragment_control
     report['native_target_path'] = args.native_target_path
     report['object_pass_path'] = args.object_pass_path
     report['environment_texture_path'] = args.environment_texture_path
@@ -498,6 +519,8 @@ def main():
                                  any(p['code'].startswith(prefix) and c['vp_raw'] in ids
                                      for lookup in targets.values() for prefix, ids in lookup.items()))
                 for option in eligible:
+                    if args.material_fragment_control and int(bool(option['fragment_control'] & 0x40)) != c['state']['exp32']:
+                        continue
                     selected = next((s for s in option['states'] if material_state_matches(s['values'], c) and
                                      (not args.object_pass_path or pass_matches(object_pass_fields(args.object_pass_path, s['values']), c['state'])) and
                                      (not (args.material_texture_shapes or args.material_texture_state) or shape_matches(s['texture_shapes'], c['state'])) and
@@ -520,7 +543,7 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path)
+                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path, args.material_fragment_control)
             result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])

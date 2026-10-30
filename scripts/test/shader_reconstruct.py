@@ -119,3 +119,7 @@ for path in TARGET_PATHS:
 result = subprocess.run(command + ['--native-target-path', 'rgba16-msaa2'], capture_output=True, text=True)
 assert result.returncode != 0 and 'requires --object-pass-path' in result.stderr
 print('Explicit native target selection, masked sample replacement and unsupported path checks passed')
+
+result = subprocess.run(command + ['--material-fragment-control'], capture_output=True, text=True)
+assert result.returncode != 0 and 'requires --materials' in result.stderr
+print('Authored fragment-control proof prerequisites passed')

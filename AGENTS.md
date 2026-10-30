@@ -36,13 +36,20 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 154)
+## Start here: state of play (2026-10-30, Phase 155)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 154 is the latest).
+has the evidence, newest phase first (Phase 155 is the latest).
 
 ### What works now
+
+- **Authored fragment control (Phase 155):** the bounded compact descriptor
+  supplies export precision under explicit binding/no-later-override assumptions.
+  1,536 synthetic and 14,307 original-descriptor native checks pass; the local
+  inventory selects 16-bit export. Three developer `--material-fragment-control`
+  shader/native proofs pass with fresh descriptors. Other translation/global
+  resource facts and actual pass ownership remain open; no player changes.
 
 - **Fresh native descriptor (Phase 154):** developer `--native-target-path`
   plus material/object-pass candidates builds a fresh GPU-fetch, depth-backed

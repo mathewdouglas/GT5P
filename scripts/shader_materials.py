@@ -79,6 +79,7 @@ def model_pairs(data, base):
             if vp not in vtable or fp not in ftable:
                 raise ValueError('shader pointer outside declared table')
             descriptor = r.unpack('I', fp)[0]
+            r.span(descriptor, 16)  # Compact binding header must be wholly inside the model.
             fragments = fragment_map[descriptor]
             if len(fragments) != 1:
                 raise ValueError('ambiguous or absent fragment descriptor')
@@ -97,6 +98,8 @@ def model_pairs(data, base):
                                 vertex_offset=base + vo + code, vertex_size=n * 16,
                                 fragment_offset=base + fo, fragment_size=fl,
                                 fragment_identity=identity,
+                                fragment_control_offset=r.span(descriptor + 8, 4),
+                                fragment_control=r.unpack('I', descriptor + 8)[0],
                                 vertex_code=word_swap(body[code:code + n * 16])))
         except (ValueError, KeyError, struct.error) as error:
             rejected[str(error)] += 1

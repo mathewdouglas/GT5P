@@ -330,3 +330,10 @@ GPU-fetch/depth-backed target candidates. Five pipeline proofs and a zeroed
 captured-descriptor check pass. Remaining shader translation and actual pass
 ownership still depend on investigation; no player or release default changes.
 See [the measured scope](shader-reconstruction.md#fresh-conditional-native-descriptor-construction-phase-154).
+
+
+Phase 155 derives export precision from the authored compact fragment-control
+word for explicit no-later-override binding candidates. Three fresh-descriptor
+pipeline proofs pass; remaining global/coordinate/shadow fields and actual pass
+ownership are unresolved. See
+[the reconstruction scope](shader-reconstruction.md#authored-compact-fragment-export-control-phase-155).

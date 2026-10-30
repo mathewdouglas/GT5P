@@ -48,6 +48,8 @@ for base in (0, 32):
     assert len(pairs) == 1 and not rejected
     assert pairs[0]['vertex_offset'] == base + 928
     assert pairs[0]['fragment_offset'] == base + 1056
+    assert pairs[0]['fragment_control_offset'] == base + 1008
+    assert pairs[0]['fragment_control'] == 0
     assert pairs[0]['vertex_code'] == m.word_swap(bytes(range(32)))
     assert list(m.scan(data))[0][3] is None
 
@@ -111,3 +113,11 @@ with tempfile.TemporaryDirectory(prefix='material-cli-', dir=m.ROOT / 'scratch')
                       if p.is_file() and output not in p.parents}
 
 print('Material pointer linkage, model/table/payload bounds and ambiguous-pair rejection passed')
+
+for control in (0, 0x02008400, 0x02008440, 0xffffffff):
+    data = fixture()
+    struct.pack_into('>I', data, 1008, control)
+    pair = m.model_pairs(data, 0)[0][0]
+    assert pair['fragment_control'] == control
+    assert int(bool(pair['fragment_control'] & 0x40)) == ((control >> 6) & 1)
+print('Bounded original compact fragment-control source checks passed')
