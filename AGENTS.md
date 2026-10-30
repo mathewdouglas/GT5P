@@ -36,13 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 157)
+## Start here: state of play (2026-10-31, Phase 158)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 157 is the latest).
+has the evidence, newest phase first (Phase 158 is the latest).
 
 ### What works now
+
+- **Explicit context union (Phase 158):** preparation supports named `rgba16`
+  and `supported` context sets, deduplicating independent shader/state candidates
+  while retaining each explicit context. Native validation confirms 131/1,497 HSR
+  matches across the eight RGBA16 combinations, versus 52 for the original one.
+  All 3,446 requests create 3,402 distinct persisted pipelines; measured run
+  11.3 minutes, driver blobs 204 MB. RGBA8 adds no predicted snapshot matches.
+  Unknown bindings remain excluded; whole-game coverage/stutter impact is open.
+  No player defaults or original-checkout changes.
 
 - **Capture-free subset preparation (Phase 157):** developer
   `scripts/prepare_material_shaders.py` constructs conditional ordinary-upload

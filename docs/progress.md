@@ -9,6 +9,39 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 158 - Audit and prepare explicit context unions (2026-10-31)
+
+The cheapest supported expansion is to enumerate independent conditional variants
+instead of selecting one context. `--context-set rgba16` covers CCW/CW object
+candidates, single/2x RGBA16 targets and active/fallback global candidates in one
+preparation cache. `supported` additionally enumerates RGBA8/single. Identical
+shader/state candidates merge while retaining all explicit contexts. Per-job
+target sidecars preserve the selected native sample/format candidate.
+
+The reproducible read-only variant audit freezes candidates before loading the
+capture oracle. All 12 supported combinations produce 5,169 unique candidates;
+the eight RGBA16 combinations produce 3,446. Whole-profile/program-prefix matches
+predict 131 of 1,497 retained HSR links, versus 52 for the original context.
+RGBA8 adds no matches. These predictions require native-key validation; they do
+not establish live pass ownership. The comparison supplies no construction state.
+
+Native validation confirms exactly 131 matching keys (8.75%), 79 more than the
+original 52 (3.47%), with no baseline matches lost. All 3,446 requests succeed,
+persisting 3,402 distinct pipelines and 204,354,804 bytes of driver blobs. The
+measured developer run takes 676.9 seconds: 37.9 enumeration, 371.9 fragment
+preparation, 186.0 vertex/request work and 80.4 native preparation. Native batch
+metrics record 3,446 driver calls, 44 using cached blobs. Ordinary warmup then
+loads all 3,402 recipes, rejecting none, in 2.7 seconds without guest entry.
+These costs and coverage are for this machine/snapshot, not a first-run stutter
+measurement or complete game catalogue. Intermediate developer files add storage.
+
+Independent expansion checks cover all 24 context/cull-enable combinations and
+per-job native target emission. Audit tests cover corrupted oracle inputs,
+candidate immutability, link/key denominators and persisted recipe checksums.
+Missing/conflicting CLI choices fail; existing profile/reconstruction tests pass.
+No runtime/player defaults change and the original checkout remains read-only.
+See [shader-reconstruction.md](shader-reconstruction.md#explicit-context-union-phase-158).
+
 ## Phase 157 - Prepare a capture-free conditional material subset (2026-10-30)
 
 `scripts/prepare_material_shaders.py` now enumerates original material pairs,

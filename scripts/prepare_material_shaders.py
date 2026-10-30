@@ -159,7 +159,7 @@ def write_job(job, root, cache, compiler, vertices, compiled, target_path):
     (proof / 'material.state').write_text(
         f"GT5P_MATERIAL_V1 {state['blend']:x} {state['cmask']:x} {state['stencil']:x}\n", encoding='ascii')
     (proof / 'pass.state').write_text(f"GT5P_PASS_V1 {state['cull']:x}\n", encoding='ascii')
-    target = native_target_fields(target_path)
+    target = native_target_fields(job.get('context', {}).get('target_path', target_path))
     (proof / 'target.state').write_text(f"GT5P_TARGET_V1 {target['rtfmt']} {target['sample_count']}\n", encoding='ascii')
     return dict(id=job['id'], vs=f'{fnv64(vs):016x}', ps=f'{fnv64(ps):016x}',
                 vs_source=f'{source_key(hlsl):016x}', ps_source=ps_key)
@@ -181,13 +181,20 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     for name in ('catalog', 'engine', 'decoder', 'game-root', 'output'):
         ap.add_argument('--' + name, type=Path, required=True)
-    ap.add_argument('--object-pass-path', choices=('ccw', 'cw'), required=True)
-    ap.add_argument('--native-target-path', choices=tuple(TARGET_PATHS), required=True)
+    ap.add_argument('--object-pass-path', choices=('ccw', 'cw'))
+    ap.add_argument('--native-target-path', choices=tuple(TARGET_PATHS))
     ap.add_argument('--global-sampler-path', choices=('active', 'fallback'))
+    ap.add_argument('--context-set', choices=('supported', 'rgba16'),
+                    help='Prepare the explicit supported context union instead of a single context')
     ap.add_argument('--limit', type=int, default=8, help='Unique candidates to prepare (0: all eligible; default 8)')
     ap.add_argument('--enumerate-only', action='store_true')
     ap.add_argument('--resume', action='store_true', help='Reuse shader bytecode; always validate driver pipelines again')
     args = ap.parse_args()
+    if args.context_set:
+        if args.object_pass_path or args.native_target_path or args.global_sampler_path:
+            ap.error('--context-set cannot be combined with individual context choices')
+    elif not args.object_pass_path or not args.native_target_path:
+        ap.error('Choose --context-set or explicit --object-pass-path and --native-target-path')
     output = args.output.resolve()
     if len(str(output)) > 105:
         ap.error('Choose an output path of at most 105 characters for bounded Windows runtime paths')
@@ -204,11 +211,17 @@ def main():
     identity = dict(schema=1, engine=hashlib.sha256(args.engine.read_bytes()).hexdigest(),
                     decoder=hashlib.sha256(args.decoder.read_bytes()).hexdigest(), object_path=args.object_pass_path,
                     target_path=args.native_target_path, global_path=args.global_sampler_path)
+    if args.context_set:
+        identity.update(schema=2, context_set=args.context_set)
     if output.exists() and json.loads((output / 'identity.json').read_text()) != identity:
         ap.error('Preparation engine/decoder/context changed; choose a new output directory')
     started = time.perf_counter()
-    jobs, inventory = enumerate_jobs(args.catalog, args.object_pass_path, args.native_target_path,
-                                     args.global_sampler_path, args.limit)
+    if args.context_set:
+        from shader_material_variants import enumerate_variants
+        jobs, inventory = enumerate_variants(args.catalog, args.context_set, args.limit)
+    else:
+        jobs, inventory = enumerate_jobs(args.catalog, args.object_pass_path, args.native_target_path,
+                                         args.global_sampler_path, args.limit)
     enumeration_seconds = time.perf_counter() - started
     output.mkdir(parents=True, exist_ok=True)
     (output / 'identity.json').write_text(json.dumps(identity, indent=2) + '\n')

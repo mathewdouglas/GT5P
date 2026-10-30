@@ -44,6 +44,60 @@ The measured subset prepared 474 candidates into 467 distinct native pipelines.
 This establishes preparation, not exhaustive coverage or measured stutter
 reduction. See [the reconstruction evidence](shader-reconstruction.md#capture-free-conditional-material-preparation-phase-157).
 
+### Explicit context unions
+
+Use `--context-set rgba16` instead of the individual object/target/global options
+to prepare both supported winding choices, both RGBA16 sample configurations and
+both active/fallback global candidates in one cache:
+
+```powershell
+.venv\Scripts\python scripts\prepare_material_shaders.py `
+  --catalog ..\GT5P\shadercache\library-v1\all `
+  --engine scratch\pass-build\gt5p.exe `
+  --decoder scratch\reconstruction-build\decoder.dll `
+  --game-root ..\GT5P --context-set rgba16 --limit 0 `
+  --output scratch\material-context-union
+```
+
+`--context-set supported` additionally includes RGBA8/single. The independent
+candidate audit found no extra retained HSR matches from those RGBA8 choices, so
+the measured preparation uses `rgba16`. These named sets explicitly enumerate
+conditional variants; they do not infer which pass a material uses from capture
+settings. Identical shader/state jobs are deduplicated, their supported contexts
+remain in `manifest.json`, and each native request uses its own target sidecar.
+`--resume` works with the same named set and executable/decoder identity.
+
+The measured RGBA16 union prepares all 3,446 candidates into 3,402 native pipelines.
+It confirms 131/1,497 retained HSR native-key matches (8.75%), up from 52 (3.47%),
+with no baseline matches lost. This developer run takes 11.3 minutes and saves
+204 MB of driver blobs, plus bytecode and intermediate files. That is preparation
+cost on the measured machine; actual stutter reduction remains unmeasured.
+
+To repeat the read-only candidate comparison before compiling:
+
+```powershell
+.venv\Scripts\python scripts\audit_material_variants.py `
+  --catalog ..\GT5P\shadercache\library-v1\all `
+  --audit scratch\provenance-snapshot-hsr-20261030\audit-final.json `
+  --trace scratch\provenance-snapshot-hsr-20261030 `
+  --output scratch\material-context-audit
+```
+
+This freezes asset-derived candidates before reading the oracle. Program/profile
+matches are predictions. Confirm them against persisted native pipeline keys:
+
+```powershell
+.venv\Scripts\python scripts\audit_prepared_materials.py `
+  --prepared scratch\material-context-union `
+  --baseline scratch\capture-free-material-full-subset-20261030 `
+  --audit scratch\provenance-snapshot-hsr-20261030\audit-final.json `
+  --output scratch\material-context-native-audit.json
+```
+
+The native audit checks preparation results and persisted recipe checksums/blob
+presence. Its denominator is the retained snapshot, not every draw or all game
+content. No measured stutter reduction follows from a key-match percentage alone.
+
 ## Existing raw-program preparation
 
 `scripts/precompile_shaders.py` reads embedded `SHDS` fragment programs from

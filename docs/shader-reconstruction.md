@@ -1365,3 +1365,64 @@ usable developer subset preparer, not a complete player-facing system. Actual
 pass ownership, unresolved environment/shadow/alias contexts, exhaustive assets,
 launcher/release integration and measured first-run stutter reduction remain open.
 Normal player defaults and the original checkout remain unchanged.
+
+## Explicit context union (Phase 158)
+
+`scripts/shader_material_variants.py` expands the independently constructed CCW,
+RGBA16/2x seeds into explicit supported object/target/global contexts. Prepared
+material cull enable is preserved; only winding, target format and sample bits
+change. Active/fallback seeds are separately reconstructed from original assets.
+Unknown bindings remain rejected. No capture values enter candidate construction.
+Named `--context-set rgba16` and `--context-set supported` are mutually exclusive
+with the individual context arguments. They introduce no normal-player defaults.
+
+The eight RGBA16 combinations deduplicate to 3,446 shader/state candidates. Adding
+RGBA8/single gives 12 contexts and 5,169 candidates. The deduplication key retains
+program hashes and the complete independent profile; merged contexts remain in
+the manifest. Native requests obtain target state from their own context, not a
+single global CLI target. Fragment compilation groups and the vertex compiler
+cache are shared within the run.
+
+`audit_material_variants.py` writes its independent candidate manifest before
+opening the live oracle. Matching requires verified input hashes, the same
+bounded fragment instruction identity, a matching vertex prefix, GPU-fetch mode,
+default compiler flags and the entire selected independent translation profile.
+It predicts 131/1,497 retained HSR matches (8.75%), versus 52/1,497 (3.47%) for the
+original CCW/RGBA16-2x/active context. The RGBA8 candidates add none. These are
+program/profile predictions until native compilation confirms them. Of remaining
+links, 1,365 have no eligible supported program pair and one differs in `cube`;
+that group includes unsupported vertex paths and unknown material/resource facts.
+It does not mean all missing pairs need new shader translators.
+
+`audit_prepared_materials.py` independently compares actual prepared native keys
+with the retained oracle. It checks capture-free result markers, persisted recipe
+envelopes/checksums and driver-blob presence, and reports both link and distinct
+pipeline denominators. It supplies no construction input or runtime changes.
+
+Native preparation confirms the prediction: all 3,446 requests succeed and persist
+3,402 distinct native keys; exactly 131 match the retained HSR oracle. This adds
+79 matches and loses none of the original 52. Driver blobs total 204,354,804 bytes
+on this adapter. The measured developer run takes 676.9 seconds (37.9 enumeration,
+371.9 fragment preparation, 186.0 vertex/request work, 80.4 native preparation).
+The native batch itself records 3,446 driver calls, 44 cached-blob calls and
+74,000 ms. Subsequent ordinary warmup loads all 3,402 recipes with zero rejects
+in 2,672 ms before guest entry. Intermediate shader-work files add storage beyond
+the final driver blobs. No timing is a measured gameplay stutter reduction.
+
+Tests compare all 24 context/cull-enable expansions against direct independent
+profile construction, verify cull-disabled deduplication and per-job native
+target emission, and reject a seed from the wrong context. Audit checks verify
+oracle integrity, candidate immutability, duplicate-link denominators and corrupt
+persisted recipes. Existing envelope/profile/reconstruction tests pass.
+
+Local evidence:
+
+- `scratch/material-variant-union-audit-20261030/report.json`
+- `scratch/material-variant-baseline-audit-20261030.json`
+- `scratch/material-variant-union-prepare-20261030/report.json`
+- `scratch/material-variant-union-native-audit-20261031.json`
+
+Commands are in [shader-precompile.md](shader-precompile.md#explicit-context-unions).
+These percentages describe this retained HSR snapshot. Whole-game coverage,
+actual context ownership, launcher integration and first-run stutter reduction
+remain unmeasured. No original-checkout, player-default or release changes.
