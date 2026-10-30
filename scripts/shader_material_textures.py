@@ -120,7 +120,8 @@ def replace_known_samplers(captured, bindings, used):
     for binding in bindings:
         unit = binding['unit']
         if used & (1 << unit):
-            result = (result & ~(15 << (4 * unit))) | (binding['sampler'] << (4 * unit))
+            mask = binding.get('sampler_mask', 15)
+            result = (result & ~(mask << (4 * unit))) | ((binding['sampler'] & mask) << (4 * unit))
             replaced.append(unit)
     return result, replaced
 
@@ -128,28 +129,28 @@ def replace_known_samplers(captured, bindings, used):
 def complete_sampler_key(definition):
     if any(definition['used'] & (1 << requirement['unit']) for requirement in definition.get('globals', ())):
         return None
-    key, units = replace_known_samplers(0, definition['bindings'], definition['used'])
-    if not definition['used'] or sum(1 << unit for unit in units) != definition['used']:
-        return None
-    return key
+    key, mask = known_sampler_key(definition)
+    expected_mask = sum(15 << (4 * unit) for unit in range(16) if definition['used'] & (1 << unit))
+    return key if expected_mask and mask == expected_mask else None
 
 
 def known_sampler_key(definition):
-    """A value/mask pair, explicitly leaving global and unresolved lanes unknown."""
+    """A value/bit-mask pair; partial global lanes keep unproven bits unknown."""
     globals_ = {g['unit'] for g in definition.get('globals', ())}
     bindings = [b for b in definition['bindings'] if b['unit'] not in globals_]
-    key, units = replace_known_samplers(0, bindings, definition['used'])
-    mask = sum(15 << (4 * unit) for unit in units)
+    key, _ = replace_known_samplers(0, bindings, definition['used'])
+    mask = sum(b.get('sampler_mask', 15) << (4 * b['unit']) for b in bindings
+               if definition['used'] & (1 << b['unit']))
     return key, mask
 
 
-def with_global_sampler_path(definition, path=None, shadow_path=None, environment_path=None):
+def with_global_sampler_path(definition, path=None, shadow_path=None, environment_path=None, mirror_path=None):
     """Add measured global sampler candidates for explicitly chosen pass paths.
 
     Captures never choose the path here. Unknown signatures, duplicate global
     units and local/global overlaps stay unresolved. Only sampler state is added.
     """
-    if path is None and shadow_path is None and environment_path is None:
+    if path is None and shadow_path is None and environment_path is None and mirror_path is None:
         return definition
     if path not in (None, 'active', 'fallback'):
         raise ValueError('unsupported global sampler path')
@@ -157,6 +158,8 @@ def with_global_sampler_path(definition, path=None, shadow_path=None, environmen
         raise ValueError('unsupported shadow sampler path')
     if environment_path not in (None, 'framebuffer-single', 'framebuffer-mipped'):
         raise ValueError('unsupported environment sampler path')
+    if mirror_path not in (None, 'scene-copy'):
+        raise ValueError('unsupported mirror sampler path')
     signatures = {('ditherMap', 0x601, 94), ('ditherMap', 0x801, 103),
                   ('shadowPCFMap', 0x801, 104)}
     globals_ = definition.get('globals', ())
@@ -169,10 +172,14 @@ def with_global_sampler_path(definition, path=None, shadow_path=None, environmen
         shadow = shadow_path == 'shadow-lv' and signature in {
             ('realTimeShadowMap', 0x601, 87), ('realTimeShadowMapColor', 0x601, 96)}
         environment = environment_path is not None and signature == ('envMapSampler', 0x901, 71)
-        if not (dither or shadow or environment) or counts[g['unit']] != 1 or g['unit'] in local_units:
+        mirror = mirror_path == 'scene-copy' and signature == ('mirrorMapSampler', 0x601, 115)
+        if not (dither or shadow or environment or mirror) or counts[g['unit']] != 1 or g['unit'] in local_units:
             unresolved.append(g)
             continue
-        if environment:
+        if mirror:
+            # Linear filtering fixes bank bits 2..3. Wrap bits 0..1 remain unknown.
+            address, filtering, selected_path = 0, 0x02020000, mirror_path
+        elif environment:
             address = 0x303
             filtering = 0x02060000 if environment_path == 'framebuffer-mipped' else 0x02020000
             selected_path = environment_path
@@ -184,9 +191,9 @@ def with_global_sampler_path(definition, path=None, shadow_path=None, environmen
             selected_path = path
         bindings.append(dict(g, address=address, filtering=filtering,
                              sampler=sampler_register(address, filtering),
-                             global_path=selected_path,
-                             address_mask=0xf0f if shadow or environment else 0xffffffff,
-                             filtering_mask=0x07070000 if shadow or environment else 0xffffffff))
+                             global_path=selected_path, sampler_mask=12 if mirror else 15,
+                             address_mask=0 if mirror else 0xf0f if shadow or environment else 0xffffffff,
+                             filtering_mask=0x07070000 if shadow or environment or mirror else 0xffffffff))
     return dict(definition, bindings=bindings, globals=unresolved)
 
 
@@ -210,6 +217,8 @@ def main():
                     help='Conditional shadow pass; derive sampler-relevant bits only')
     ap.add_argument('--environment-sampler-path', choices=('framebuffer-single', 'framebuffer-mipped'),
                     help='Conditional successful framebuffer setup; no later sampler overrides')
+    ap.add_argument('--mirror-sampler-path', choices=('scene-copy',),
+                    help='Partial mirror filter bits; wrap stays unresolved')
     args = ap.parse_args()
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
@@ -250,10 +259,10 @@ def main():
                         global_signatures.update((g['name'], g['kind'], g['unit'], g['identifier']) for g in definition['globals'])
                         sampled_globals.update(g['name'] for g in definition['globals'] if definition['used'] & (1 << g['unit']))
                         original_binding_count = len(definition['bindings'])
-                        definition = with_global_sampler_path(definition, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path)
+                        definition = with_global_sampler_path(definition, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path)
                         derived_globals += len(definition['bindings']) - original_binding_count
                         global_units = {g['unit'] for g in definition['globals']}
-                        known = tuple(sorted((b['unit'], b['sampler']) for b in definition['bindings']
+                        known = tuple(sorted((b['unit'], b['sampler'], b.get('sampler_mask', 15)) for b in definition['bindings']
                                              if definition['used'] & (1 << b['unit']) and b['unit'] not in global_units))
                         if not known:
                             continue
@@ -270,14 +279,15 @@ def main():
             continue
         actual = int(c['state']['samplers'], 16)
         matching = [(used, known) for used, known in profiles
-                    if all((actual >> (4 * unit)) & 15 == sampler for unit, sampler in known)]
-        complete = any(used == sum(1 << unit for unit, _ in known) for used, known in matching)
+                    if all((actual >> (4 * unit)) & mask == sampler & mask for unit, sampler, mask in known)]
+        complete = any(used == sum(1 << unit for unit, _, mask in known if mask == 15) for used, known in matching)
         counts['known_lanes_match' if matching else 'known_lanes_mismatch'] += 1
         counts['all_sampled_units_resolved_and_match' if complete else 'partial_or_mismatch'] += 1
         comparisons.append(dict(line=row['line'], pipeline=c['pipeline'],
                                 known_match=bool(matching), complete_match=complete,
-                                profiles=[dict(used=used, lanes=dict(known)) for used, known in sorted(profiles)]))
-    result = dict(schema=1, global_sampler_path=args.global_sampler_path,
+                                profiles=[dict(used=used, lanes={unit: sampler for unit, sampler, _ in known},
+                                                   lane_masks={unit: mask for unit, _, mask in known}) for used, known in sorted(profiles)]))
+    result = dict(schema=2, mirror_sampler_path=args.mirror_sampler_path, global_sampler_path=args.global_sampler_path,
                   shadow_sampler_path=args.shadow_sampler_path, environment_sampler_path=args.environment_sampler_path,
                   resolved_bindings=total, unresolved_bindings=unresolved,
                   conditional_global_bindings=derived_globals,
@@ -288,7 +298,7 @@ def main():
                   rejected=dict(rejected), counts=dict(counts), comparisons=comparisons,
                   limitations=['Candidates share shader pairs; exact draw/material ownership is unproven.',
                                'Unknown global textures stay unresolved; global candidates require explicit pass paths.',
-                               'Only sampler-bank lanes are compared, not cube/gamma/unnormalized or pass state.'])
+                               'Only masked sampler-bank bits are compared, not cube/gamma/unnormalized or pass state.'])
     output.mkdir(parents=True)
     (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({key: value for key, value in result.items() if key not in ('comparisons', 'limitations', 'global_signatures')}, indent=2))

@@ -214,3 +214,9 @@ These options require explicit pass assumptions and leave remaining translation/
 pass/target state captured. They do not change this player preparation command,
 launcher behavior or release contents. Capture-free catalogue generation and
 first-run native pipeline preparation remain unfinished.
+
+
+The developer mirror scene-copy option derives filter bits only, leaving input
+wrap unresolved. Schema 2 texture audits carry per-lane masks; these partial
+constraints are not complete pipeline recipes. See the
+[mirror investigation](shader-reconstruction.md#partial-mirror-scene-copy-sampler-phase-149).

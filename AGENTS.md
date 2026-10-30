@@ -36,14 +36,21 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 148)
+## Start here: state of play (2026-10-30, Phase 149)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 148 is the latest).
+has the evidence, newest phase first (Phase 149 is the latest).
 
 ### What works now
 
+- **Partial mirror sampler (Phase 149):** 4,096 native scene-copy checks show
+  linear min/mag overrides with inherited S/T wrap. Explicit developer
+  `--mirror-sampler-path scene-copy` derives filter bits only; audit schema 2
+  includes per-lane masks and complete proofs reject unknown sampled bits.
+  No matching authored mirror pair is linked in HSR, so complete coverage stays
+  861 links. Environment pipeline regression passes; no player/runtime changes.
+  Next recover actual mirror source wrapping and remaining translation/pass state.
 - **Conditional environment sampler (Phase 148):** 1,024 native successful
   framebuffer setup/getter/assignment/emission checks and 1,024 allocation-failure
   checks recover single-mip linear/clamp and multi-mip trilinear/clamp settings.

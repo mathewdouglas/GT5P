@@ -77,8 +77,10 @@ for stencil in (0x30000001, 0x34000000):
 command = [sys.executable, str(Path(m.__file__))]
 for flag in ('report', 'trace', 'catalog', 'cache', 'decoder', 'engine', 'game-root', 'output'):
     command += ['--' + flag, 'unused-test-input']
-for path in ('framebuffer-single', 'framebuffer-mipped'):
-    result = subprocess.run(command + ['--environment-sampler-path', path], capture_output=True, text=True)
+for flag, path in (('--environment-sampler-path', 'framebuffer-single'),
+                   ('--environment-sampler-path', 'framebuffer-mipped'),
+                   ('--mirror-sampler-path', 'scene-copy')):
+    result = subprocess.run(command + [flag, path], capture_output=True, text=True)
     assert result.returncode != 0 and 'require a material sampler proof' in result.stderr
 
 print('SHDS bounds, source integrity and prepared material-state eligibility checks passed')

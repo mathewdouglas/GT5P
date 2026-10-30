@@ -110,6 +110,30 @@ try:
 except ValueError:
     pass
 
+g = dict(name='mirrorMapSampler', kind=0x601, identifier=115, unit=3)
+definition = dict(d, used=4 | (1 << 3), globals=[g])
+resolved = m.with_global_sampler_path(definition, mirror_path='scene-copy')
+assert resolved['globals'] == [] and definition['globals'] == [g]
+assert m.known_sampler_key(resolved) == ((13 << 8) | (8 << 12), (15 << 8) | (12 << 12))
+assert m.complete_sampler_key(resolved) is None  # Wrap bits remain unresolved.
+for wrap in range(4):
+    captured = (13 << 8) | ((8 | wrap) << 12)
+    assert m.replace_known_samplers(captured, resolved['bindings'], resolved['used'])[0] == captured
+    bad = (13 << 8) | ((4 | wrap) << 12)
+    assert m.replace_known_samplers(bad, resolved['bindings'], resolved['used'])[0] == captured
+assert m.known_sampler_key(m.with_global_sampler_path(definition)) == (13 << 8, 15 << 8)
+for field, value in (('name', 'unknown'), ('kind', 0x901), ('identifier', 71)):
+    bad = dict(definition, globals=[dict(g, **{field: value})])
+    assert m.known_sampler_key(m.with_global_sampler_path(bad, mirror_path='scene-copy')) == (13 << 8, 15 << 8)
+for globals_ in ([g, g], [dict(g, unit=2)]):
+    bad = dict(definition, globals=globals_)
+    assert m.complete_sampler_key(m.with_global_sampler_path(bad, mirror_path='scene-copy')) is None
+try:
+    m.with_global_sampler_path(definition, mirror_path='guessed')
+    raise AssertionError('unknown mirror path accepted')
+except ValueError:
+    pass
+
 for offset, fmt, value, reason in [(1444, 'I', 42, 'texture index outside table'),
                                   (1284, 'h', 0x602, 'unsupported sampler record'),
                                   (1286, 'h', 16, 'unsupported sampler record'),
@@ -183,5 +207,37 @@ with tempfile.TemporaryDirectory(prefix='material-textures-cli-', dir=ROOT / 'sc
     command[-1] = str(root / 'bad-input-output')
     assert subprocess.run(command, capture_output=True).returncode != 0
     assert not Path(command[-1]).exists()
+
+# CLI must compare only the measured mirror filter bits, never count wrap as known.
+with tempfile.TemporaryDirectory(prefix='mirror-bits-cli-', dir=ROOT / 'scratch') as folder:
+    root = Path(folder)
+    data = fixture(); data[714] = 1
+    struct.pack_into('>I', data, 760, 1800)
+    struct.pack_into('>I4hI', data, 1800, 1856, 0x601, 3, 0, 0, 115)
+    data[1856:1873] = b'mirrorMapSampler\0'
+    instruction = 0x17000001 | (3 << 17)
+    struct.pack_into('>I', data, 1056, ((instruction << 16) | (instruction >> 16)) & 0xffffffff)
+    asset = root / 'asset'; asset.write_bytes(data)
+    inventory = root / 'states.json'; inventory.write_text(json.dumps(dict(models=[dict(file=str(asset), model=0)])))
+    definition = m.model_textures(data, 0)[0][0]
+    code = definition['vertex_code']; raw = f'{fnv64(code):016x}'
+    trace = root / 'trace'; trace.mkdir(); (trace / f'vp_{raw}.bin').write_bytes(code)
+    rows = []
+    for index, sampler in enumerate((9, 11, 5)):
+        rows.append(dict(status='recipe_link_verified', vertex_input_available=True,
+                         capture=dict(vp_raw=raw, vp_bytes=len(code), vp_identity_bytes=len(code),
+                                      pipeline='synthetic', state=dict(samplers=f'{sampler << 12:016x}')),
+                         identity=definition['fragment_identity'], line=index + 1))
+    report = root / 'audit.json'; report.write_text(json.dumps(dict(records=rows)))
+    command = [sys.executable, str(ROOT / 'scripts/shader_material_textures.py'), '--states', str(inventory),
+               '--report', str(report), '--trace', str(trace), '--output', str(root / 'output'),
+               '--mirror-sampler-path', 'scene-copy']
+    subprocess.run(command, check=True, capture_output=True)
+    result = json.loads((root / 'output/report.json').read_text())
+    assert result['schema'] == 2 and result['counts']['known_lanes_match'] == 2
+    assert result['counts']['known_lanes_mismatch'] == 1
+    assert not result['counts'].get('all_sampled_units_resolved_and_match')
+    assert all(not row['complete_match'] and row['profiles'][0]['lane_masks'] == {'3': 12}
+               for row in result['comparisons'])
 
 print('Sampler slots, texture-index identity, partial coverage and malformed binding checks passed')

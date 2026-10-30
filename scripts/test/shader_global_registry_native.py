@@ -42,7 +42,7 @@ def main():
     snippets += '\n' + extract(source, 'func_0082C748')
     snippets += '\n' + extract(source, 'func_008103F0')
     snippets += '\n' + '\n'.join(extract(source, n) for n in (
-        'func_008293A8', 'func_0082E240'))
+        'func_008293A8', 'func_0082E240', 'func_00705FC0', 'func_0082DF70', 'func_00827DD0'))
     snippets += '\n' + extract(source, 'func_0082E330')
     snippets += '\n' + extract(source, 'func_0081F0F0')
     snippets += '\n' + '\n'.join(extract(libc, n) for n in (
@@ -85,11 +85,22 @@ void func_00BA08B8(ppu_context* ctx) {
 void func_00B9EE50(ppu_context* ctx) { ctx->gpr[3]=6; }
 void func_00BD0080(ppu_context* ctx) { ctx->gpr[3]=0x1000; }
 void func_00BCB520(ppu_context* ctx) { ctx->gpr[3]=0x2000; }
+static uint32_t mirror_mode;
+void func_00705020(ppu_context* ctx) { ctx->gpr[3]=0x1e62000; }
+void func_00712F30(ppu_context* ctx) {}
+void func_0080EC50(ppu_context* ctx) {}
+void func_00811B70(ppu_context* ctx) { ctx->gpr[3]=0; }
+void func_00815870(ppu_context* ctx) {}
+void func_0082D068(ppu_context* ctx) {} // Plane normalization, no descriptor access.
+void func_00C064F8(ppu_context* ctx) {
+ uint32_t d=ctx->gpr[3],s=ctx->gpr[4],n=ctx->gpr[5];bounds(d,n);bounds(s,n);
+ memmove(memory+d,memory+s,n);
+}
 static uint32_t provider;
 void func_008311A0(ppu_context* ctx) { provider=103;ctx->gpr[3]=0x1e00000; }
 void func_00830FC0(ppu_context* ctx) { provider=104;ctx->gpr[3]=0x1e00000; }
 void func_00811BD0(ppu_context* ctx) { ctx->gpr[3]=0x1e39000; }
-void func_00811D58(ppu_context* ctx) { ctx->gpr[3]=0; }
+void func_00811D58(ppu_context* ctx) { ctx->gpr[3]=mirror_mode ? 0x1e61000 : 0; }
 void func_00811D48(ppu_context* ctx) { ctx->gpr[3]=0; }
 void func_00811D28(ppu_context* ctx) {}
 void func_00811D38(ppu_context* ctx) {}
@@ -106,6 +117,12 @@ void func_00BCE538(ppu_context* ctx) {}
 void func_00BCFEF8(ppu_context* ctx) {}
 void func_00BCFFA0(ppu_context* ctx) {}
 void ps3_indirect_call(ppu_context* ctx) {
+ if(mirror_mode) {
+  if(ctx->ctr==3 || ctx->ctr==4) return; // Viewport setup / scene rendering.
+  if(ctx->ctr==5) {func_00827DD0(ctx);return;}
+  if(ctx->ctr==6) {func_008293A8(ctx);return;}
+  assert(!"Unsupported mirror virtual call");
+ }
  assert(ctx->ctr==1 || ctx->ctr==2);
  ctx->gpr[3]=(ctx->ctr==2) ? 0x1e32000 : 0x1e02000;
 }
@@ -137,6 +154,39 @@ extern "C" __declspec(dllexport) void environment_setup(uint32_t mips,uint32_t s
  uint32_t copy_state=vm_read32(ctx.gpr[2]-0x48bc);vm_write32(copy_state+8,0x1e10000);
  vm_write16(0x1e01006,unit);vm_write8(0x1e0100d,slot);ctx.gpr[4]=0x1e01000;
  func_00D6CAA0(&ctx);assert(vm_read32(copy_state+8)==0x1e10034);
+}
+extern "C" __declspec(dllexport) void mirror_pass(uint32_t address,uint32_t filtering,uint32_t unit,uint32_t divisor) {
+ assert(unit<16 && divisor>0);
+ ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
+ const uint32_t source=0x1e50000,descriptor=source+0x54;
+ for(uint32_t j=0;j<13;j++) vm_write32(descriptor+j*4,0x12340000+j);
+ vm_write32(descriptor,0x201a00);vm_write32(descriptor+0xc,address);
+ vm_write32(descriptor+0x18,filtering);vm_write32(source+4,1920);vm_write32(source+8,1080);
+ // Synthetic resource vtables dispatch to real descriptor getters.
+ vm_write32(source,0x1e66000);vm_write32(0x1e6601c,0x1e67000);
+ vm_write32(0x1e66038,0x1e67010);vm_write32(0x1e67000,5);vm_write32(0x1e67004,0x133bc58);
+ vm_write32(0x1e67010,6);vm_write32(0x1e67014,0x133bc58);
+ vm_write32(0x1e61000,0x1e66000);vm_write32(0x1e60000,0x1e66000);
+ vm_write32(0x1e6602c,0x1e67020);vm_write32(0x1e67020,3);vm_write32(0x1e67024,0x133bc58);
+ vm_write32(0x1e61004,1920);vm_write32(0x1e61008,1080);
+ vm_write32(0x1e39008,0x1e60000);vm_write32(0x1e3901c,source);
+ vm_write32(0x1e63000,0);vm_write32(0x1e6306c,divisor);vm_write32(0x1e63018,0x1e64000);
+ vm_write32(0x1e64000,0x1e68000);vm_write32(0x1e68000,0x1e67030);
+ vm_write32(0x1e67030,4);vm_write32(0x1e67034,0x133bc58);
+ uint32_t globals=vm_read32(ctx.gpr[2]-0x7780);
+ uint32_t registry=vm_read32(vm_read32(ctx.gpr[2]-0x66f8)-0x8000);
+ vm_write32(globals-0x7fa0,0x1e65000);vm_write32(globals-0x7f9c,registry);
+ vm_write32(vm_read32(ctx.gpr[2]-0x66fc)-0x8000,0x1e51000);vm_write32(0x1e51000,100);
+ vm_write32(0x1e62034,0x3f800000);
+ ctx.gpr[3]=0x1e63000;mirror_mode=1;func_00705FC0(&ctx);mirror_mode=0;
+ assert(vm_read32(descriptor+0xc)==address && vm_read32(descriptor+0x18)==filtering);
+ assert(vm_read32(registry+0x1c48)==0x1e65000 && vm_read32(registry+0x1c98)==101);
+ assert(vm_read32(0x1e61004)==1920 && vm_read32(0x1e61008)==1080);
+ assert(vm_read32(0x1e60004)==1920 && vm_read32(0x1e60008)==1080);
+ assert(vm_read32(0x1e62034)==0x3f800000);
+ uint32_t copy_state=vm_read32(ctx.gpr[2]-0x48bc);vm_write32(copy_state+8,0x1e10000);
+ vm_write16(0x1e01006,unit);ctx.gpr[4]=0x1e01000;func_00D6D9C0(&ctx);
+ assert(vm_read32(copy_state+8)==0x1e10034);
 }
 extern "C" __declspec(dllexport) void shadow_pass(uint32_t address,uint32_t filtering,uint32_t enabled) {
  ppu_context ctx={0};ctx.gpr[1]=0x1ff0000;ctx.gpr[2]=0x133bc58;
@@ -223,6 +273,7 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
     lib.lookup.restype = ctypes.c_uint32
     lib.emit.argtypes = [ctypes.c_uint32] * 5
     lib.emit.restype = ctypes.c_uint32
+    lib.mirror_pass.argtypes = [ctypes.c_uint32] * 4
     lib.environment_setup.argtypes = [ctypes.c_uint32] * 5
     lib.dynamic_emit.argtypes = [ctypes.c_uint32] * 5
     lib.shadow_pass.argtypes = [ctypes.c_uint32] * 3
@@ -343,9 +394,32 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                     assert sampler_register(address, filtering) == b['sampler']
                     environment_checks += 1
                     environment_states[path] = dict(address=address, filtering=filtering, sampler=b['sampler'])
+    mirror_definition = dict(bindings=[], used=1, globals=[dict(name='mirrorMapSampler', kind=0x601, identifier=115, unit=0)])
+    mirror_binding = with_global_sampler_path(mirror_definition, mirror_path='scene-copy')['bindings'][0]
+    assert mirror_binding['sampler_mask'] == 12 and mirror_binding['address_mask'] == 0
+    mirror_checks = 0
+    mirror_examples = []
+    for address in (0x101, 0x303, 0x103, 0x301):
+        for minimum in range(8):
+            for magnify in range(8):
+                filtering = minimum << 16 | magnify << 24 | 0x2000
+                for unit in range(16):
+                    lib.mirror_pass(address, filtering, unit, 2)
+                    actual_address, actual_filter = lib.word(0x1e1000c), lib.word(0x1e10018)
+                    assert actual_address & 0xf0f == address & 0xf0f
+                    assert actual_filter & mirror_binding['filtering_mask'] == mirror_binding['filtering']
+                    assert sampler_register(actual_address, actual_filter) & mirror_binding['sampler_mask'] == mirror_binding['sampler']
+                    assert sampler_register(actual_address, actual_filter) == sampler_register(address, 0x02020000)
+                    if minimum==0 and magnify==0 and unit==0:
+                        mirror_examples.append(dict(input_address=address, input_filtering=filtering,
+                                                    emitted_address=actual_address, emitted_filtering=actual_filter))
+                    mirror_checks += 1
     report = {'elf_sha256': digest, 'registry_base': f'{base:08x}',
               'scope': 'Isolated callbacks, ShadowLV pass and framebuffer setup; render/scene/allocation helpers mocked; synthetic resources',
               'dynamic_descriptor_checks': dynamic_checks,
+              'mirror_scene_copy_checks': mirror_checks,
+              'mirror_examples': mirror_examples,
+              'mirror_scope': 'Real consumer/copy getter/framebuffer getter/setter/emitter; scene render and plane normalization mocked',
               'environment_framebuffer_checks': environment_checks,
               'environment_allocation_failure_checks': environment_failures,
               'environment_examples': environment_states,

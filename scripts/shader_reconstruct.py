@@ -174,7 +174,7 @@ def material_state_matches(values, capture):
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
                  prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None,
-                 shadow_sampler_path=None, environment_sampler_path=None):
+                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
@@ -199,7 +199,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                 if definition is None:
                     raise ValueError('selected material texture definition is no longer available')
                 original_globals = definition['globals']
-                definition = with_global_sampler_path(definition, global_sampler_path, shadow_sampler_path, environment_sampler_path)
+                definition = with_global_sampler_path(definition, global_sampler_path, shadow_sampler_path, environment_sampler_path, mirror_sampler_path)
                 known, mask = known_sampler_key(definition)
                 captured_key = int(capture['state']['samplers'], 16)
                 if sampler_lanes and not mask:
@@ -208,8 +208,10 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                 sampler_origin = dict(definition=definition['definition'], used=definition['used'],
                                       bindings=definition['bindings'], globals=original_globals,
                                       unresolved_globals=definition['globals'], global_sampler_path=global_sampler_path,
-                                      shadow_sampler_path=shadow_sampler_path, environment_sampler_path=environment_sampler_path,
+                                      shadow_sampler_path=shadow_sampler_path, environment_sampler_path=environment_sampler_path, mirror_sampler_path=mirror_sampler_path,
                                       partial=bool(sampler_lanes), derived_lane_mask=mask,
+                                      unresolved_sampled_mask=sum(15 << (4 * unit) for unit in range(16)
+                                                                  if definition['used'] & (1 << unit)) & ~mask,
                                       captured_lane_mask=(0xFFFFFFFFFFFFFFFF ^ mask) if sampler_lanes else 0)
         if key is None or key != int(capture['state']['samplers'], 16):
             raise ValueError('reconstructed sampler key differs from captured oracle')
@@ -305,6 +307,8 @@ def main():
                     help='Conditional LV shadow-pass sampler settings; not assumed for every draw')
     ap.add_argument('--environment-sampler-path', choices=('framebuffer-single', 'framebuffer-mipped'),
                     help='Conditional successful framebuffer setup; no later sampler overrides')
+    ap.add_argument('--mirror-sampler-path', choices=('scene-copy',),
+                    help='Partial mirror filter bits; wrap stays unresolved')
     args = ap.parse_args()
     if args.prepared_material_state and not args.materials:
         ap.error('--prepared-material-state requires --materials')
@@ -312,8 +316,8 @@ def main():
         ap.error('Material sampler proofs require --prepared-material-state')
     if args.material_samplers and args.material_sampler_lanes:
         ap.error('Choose complete samplers or partial sampler lanes, not both')
-    if (args.global_sampler_path or args.shadow_sampler_path or args.environment_sampler_path) and not (args.material_samplers or args.material_sampler_lanes):
-        ap.error('Global/shadow/environment sampler paths require a material sampler proof')
+    if (args.global_sampler_path or args.shadow_sampler_path or args.environment_sampler_path or args.mirror_sampler_path) and not (args.material_samplers or args.material_sampler_lanes):
+        ap.error('Global/shadow/environment/mirror sampler paths require a material sampler proof')
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
         ap.error('Choose a new output directory in gitignored storage')
@@ -366,7 +370,7 @@ def main():
                         texture_lanes = {}
                         if args.material_samplers or args.material_sampler_lanes:
                             textures, _ = model_textures(data, item['model'])
-                            textures = [with_global_sampler_path(d, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path) for d in textures]
+                            textures = [with_global_sampler_path(d, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path) for d in textures]
                             texture_keys = {d['definition']: complete_sampler_key(d) for d in textures}
                             texture_lanes = {d['definition']: known_sampler_key(d) for d in textures}
                         candidates = []
@@ -398,6 +402,7 @@ def main():
     report['global_sampler_path'] = args.global_sampler_path
     report['shadow_sampler_path'] = args.shadow_sampler_path
     report['environment_sampler_path'] = args.environment_sampler_path
+    report['mirror_sampler_path'] = args.mirror_sampler_path
     compiler = NativeCompiler(args.decoder)
     pairs = set()
     for row in rows:
@@ -438,7 +443,7 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path)
+                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path)
             result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])

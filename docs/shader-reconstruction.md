@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138-148, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138-149, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -842,3 +842,70 @@ including later overrides and the mirror resource's construction/assignment.
 The min-filter write near `00808210` in `008079EC` remains a structural lead,
 not a verified universal environment rule. Recover the remaining texture-dependent
 translation and pass/target fields before generating capture-free native recipes.
+
+
+## Partial mirror scene-copy sampler (Phase 149)
+
+The mirror descriptor has a separate producer: `00705FC0` obtains a scene
+buffer's descriptor by its virtual copy getter, changes the copy, and assigns
+it through `0082DF70`. The real setter writes registry +0x1C48 and its generation
+at +0x1C98. Emitter `00D6D9C0` uses that supplied descriptor. A native oracle now
+executes the full consumer, the real copy getter `00827DD0`, framebuffer getter
+`008293A8`, setter and emitter. Controlled scene/camera/render providers,
+viewport setters, memory copy and plane normalization are stubbed. This proves
+controlled descriptor processing, not actual mirror rendering or the identity
+of the live resource supplying that virtual getter.
+
+**4,096 checks** vary four S/T wrap combinations, all 64 min/mag filter pairs
+and sixteen texture units. The consumer forces linear min/mag but preserves
+incoming S/T wrapping. The original source descriptor's sampler is unchanged;
+viewport dimensions and the camera field modified during the call are restored.
+The checked generation/pointer updates precede emission. This rules out claiming
+an identifier-wide clamp rule from the consumer alone.
+
+New explicit developer input `--mirror-sampler-path scene-copy` applies only to
+`mirrorMapSampler` / kind `0x601` / identifier 115. It derives **two bits** of the
+sampler-bank nibble: value 8 under mask 12. Wrap bits under mask 3 remain unknown.
+The option never obtains wrap from a capture or selects a path from capture.
+Unknown signatures, duplicate global units and local/global overlaps retain the
+previous unresolved behavior.
+
+The audit and reconstruction helpers now carry a per-binding `sampler_mask`.
+Existing complete bindings default to mask 15. `known_sampler_key()` returns an
+exact value/bit-mask pair. Partial proofs replace only those measured bits;
+complete proofs reject any sampled bit left unknown. This lets the consumer's
+filter rule contribute without pretending that its input wrap has been recovered.
+Texture audit schema **2** adds `lane_masks` alongside each profile's `lanes`;
+consumers must honor those masks. A mirror-only profile with mask 12 is never a
+complete sampler profile, even if its representative value equals a capture.
+
+Synthetic tests exercise all four retained wrap combinations, filter-bit
+replacement, full-key rejection, unsupported signatures/paths, overlap/duplicates,
+and CLI comparisons where different wraps match the same measured filter bits.
+The production native oracle compares its emissions against the independent
+partial binding. Prior registry/dither/shadow/environment checks still pass.
+An environment shader/native pipeline reconstruction regression also passes
+with the new mask handling; it is not a mirror shader proof.
+
+The asset inventory contains 63 mirror requirements, but the retained HSR
+snapshot has **no same-pair authored mirror candidate**. Its complete matching
+sampler coverage therefore stays at 861/1,497, with 183 known-lane mismatches and
+453 links without known sampled bindings. No new captured mirror shader/native
+pipeline proof or coverage increase is claimed. The new conditional path can be
+used when a matching mirror pair is independently linked later.
+
+Local evidence:
+
+- `scratch/global-registry-ab8b1d3d66fa46c4a5fe1542eaf2bfb2/report.json`
+- `scratch/mirror-scene-sampler-audit-20261030/report.json`
+- `scratch/mirror-mask-environment-regression-20261030/report.json`
+
+Repeat the oracle/audit commands above with `--mirror-sampler-path scene-copy`
+on the audit. For a partial reconstruction, combine it with
+`--prepared-material-state --material-sampler-lanes --materials <report>`.
+Full sampler mode remains available for candidates with all bits derived.
+No runtime or player defaults changed; generated sources and all game-derived
+oracle outputs remain ignored. The original checkout/shared runtime were read
+only. Next trace the actual mirror source's creation and wrapping, obtain an
+independent mirror pair link, and recover remaining texture-dependent translation
+and target/pass state.

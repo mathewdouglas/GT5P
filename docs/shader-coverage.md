@@ -287,3 +287,10 @@ completes sampled sampler lanes for 861 retained links; four environment-using
 native pipeline proofs pass. Live path ownership, mirror setup and other
 translation/pass/target fields remain unresolved. See the
 [conditional environment proof](shader-reconstruction.md#conditional-framebuffer-environment-samplers-phase-148).
+
+
+Phase 149 measures a mirror scene-copy filter override and adds partial masks
+within sampler-bank lanes. Audit schema 2 includes per-profile `lane_masks`;
+wrap bits remain unknown. No authored mirror pair links to the retained HSR
+capture, so its coverage totals are unchanged. See the
+[partial mirror proof](shader-reconstruction.md#partial-mirror-scene-copy-sampler-phase-149).

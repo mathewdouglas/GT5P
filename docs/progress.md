@@ -9,6 +9,30 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 149 - Recover mirror filter overrides without guessing wrap (2026-10-30)
+
+The isolated oracle executes the mirror scene-copy consumer `00705FC0`, real
+copy/framebuffer getters, registry setter and emitter under controlled scene/
+render helpers. 4,096 varied sampler/unit checks force linear min/mag filtering
+while preserving incoming S/T wrap. Source sampler bytes remain unchanged;
+viewport/camera changes are restored and descriptor generation updates match.
+This is controlled descriptor processing, not actual scene rendering.
+
+Developer `--mirror-sampler-path scene-copy` derives only filter-class bits
+(value 8, mask 12) for the exact mirror signature. The audit/proof tools now
+support partial masks within sampler lanes; wrap stays unresolved and complete
+proofs reject any unknown sampled bits. Audit schema 2 reports `lane_masks`.
+Synthetic CLI tests accept different wraps under the measured filter mask and
+reject wrong filtering/full-key completion. Existing native checks and an
+environment pipeline proof regress successfully.
+
+The 63 asset mirror requirements have no same-pair candidate in the retained
+HSR links, so complete sampler coverage remains 861/1,497. No mirror shader/native
+pipeline proof or coverage gain is claimed. Runtime/player/release behavior is
+unchanged, and original checkout/shared runtime remain untouched. Next recover
+the live source's wrapping/ownership and remaining translation/pass/target state.
+Evidence: [shader-reconstruction.md](shader-reconstruction.md#partial-mirror-scene-copy-sampler-phase-149).
+
 ## Phase 148 - Recover conditional framebuffer environment sampler setup (2026-10-30)
 
 The isolated native oracle runs the real post-allocation texture setup,
