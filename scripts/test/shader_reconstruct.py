@@ -83,7 +83,8 @@ for flag, path in (('--environment-sampler-path', 'framebuffer-single'),
     result = subprocess.run(command + [flag, path], capture_output=True, text=True)
     assert result.returncode != 0 and 'require a material sampler proof' in result.stderr
 
-result = subprocess.run(command + ['--material-texture-shapes'], capture_output=True, text=True)
-assert result.returncode != 0 and 'requires a material sampler proof' in result.stderr
+for flag in ('--material-texture-shapes', '--material-texture-state'):
+    result = subprocess.run(command + [flag], capture_output=True, text=True)
+    assert result.returncode != 0 and 'requires a material sampler proof' in result.stderr
 
 print('SHDS bounds, source integrity and prepared material-state eligibility checks passed')

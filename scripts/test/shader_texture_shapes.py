@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from shader_texture_shapes import texture_shape, shape_fields, shape_matches, replace_shape_fields
+from shader_texture_shapes import texture_shape, texture_fields, shape_fields, shape_matches, replace_shape_fields
 from shader_material_textures import model_textures
 from shader_coverage import ROOT, fnv64
 
@@ -35,7 +35,7 @@ for unit in range(16):
         assert not shape_matches(f, dict(replaced, cube=replaced['cube'] ^ cube_bit))
         assert not shape_matches(f, dict(replaced, ghi=replaced['ghi'] ^ volume_bit))
         assert not f['unresolved_units']
-    for fmt in (0, 0x18819, 0x1883d):
+    for fmt in (0, 0x18819, 0x1883d, 0x18029, 0x19029):
         f = shape_fields(dict(bindings=[binding(unit, fmt)], globals=[], used=1 << unit))
         assert f['known_units'] == 0 and f['unresolved_units'] == 1 << unit and f['rejected']
     d = dict(bindings=[binding(unit, 0x18829)], globals=[dict(unit=unit)], used=1 << unit)
@@ -43,6 +43,19 @@ for unit in range(16):
 assert shape_fields(dict(bindings=[dict(unit=0, global_path='active')], globals=[], used=1))['known_units'] == 0
 assert shape_fields(dict(bindings=[binding(0, 0x18829)], globals=[], used=2))['known_units'] == 0
 
+
+for unit in range(16):
+    for gamma in (0, 1, 7):
+        for unnormalized in (0, 1):
+            b = dict(binding(unit, 0x18829 | (unnormalized << 14)), address=gamma << 20)
+            f = texture_fields(dict(bindings=[b], globals=[], used=1 << unit), sampling=True)
+            gfield = 'cube' if unit < 4 else 'ghi'
+            gbit = 1 << (unit + 8 if unit < 4 else unit)
+            assert bool(f['values'][gfield] & gbit) == bool(gamma)
+            assert bool(f['values']['unhi'] & (1 << unit)) == bool(unit >= 4 and unnormalized)
+            assert f['masks']['unhi'] == (1 << unit if unit >= 4 else 0)
+            assert not f['masks']['cube'] & 0x000f1000  # Output gamma/sample count stay unknown.
+            assert not f['masks']['ghi'] & 15  # Low units' gamma lives in cube, not ghi.
 
 def fixture():
     data = bytearray(4096)

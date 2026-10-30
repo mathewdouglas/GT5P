@@ -9,6 +9,29 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 151 - Derive read-gamma/coordinate bits and conditional dither texture facts (2026-10-30)
+
+Texture constraints now include read-gamma bits and upper-unit unnormalized
+coordinate flags, preserving output gamma, sample count and low-unit target/
+coordinate mapping. A tighter supported-format gate excludes unsupported and
+depth formats that can depend on prior binding or depth-renderer context; it
+leaves the measured 160,461 local 2D bindings unchanged.
+
+The production bind/gamma/key harness matches 2,304 synthetic cases. Another
+288 real emitter checks verify dither/PCF shape, gamma and coordinate facts for
+explicit active/fallback paths. Primary active dither/PCF are texel-addressed;
+alternate dither and fallbacks are normalized. Other globals stay unresolved.
+
+Under explicit active selection, known texture-bit candidates match 1,028 links,
+with 16 mismatches; 122 have all sampled units covered for these selected fields.
+Fallback matches 30 (26 complete). These counts do not include output gamma,
+low-unit mapping or other pass state and do not establish path ownership. Three
+partial shader/native pipeline proofs derive the new bits, match source/bytecode/
+keys and create D3D12 pipelines. `--material-texture-state` is developer-only.
+Synthetic and existing sampler/material checks pass; no runtime/player/release
+changes. Work continues on global environment/shadow texture facts and remaining
+pipeline state. Evidence: [shader-reconstruction.md](shader-reconstruction.md#texture-sampling-state-bits-phase-151).
+
 ## Phase 150 - Derive local texture shape translation bits (2026-10-30)
 
 The new read-only shape audit derives supported local FORMAT dimension/cube

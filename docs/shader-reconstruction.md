@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138-150, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138-151, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -991,3 +991,66 @@ packaging are unchanged. Next trace global descriptor shapes and their setup/
 overrides, real cube/volume material paths, gamma/unnormalized/shadow translation
 state, and remaining target/culling/pass context. First-run catalogue generation
 and launcher integration are still unfinished.
+
+
+## Texture sampling-state bits (Phase 151)
+
+`--material-texture-state` extends the earlier shape proof to read-gamma and
+upper-unit unnormalized-coordinate bits under default gamma/coordinate/cube/
+volume switches. It has the same material/sampler proof prerequisites. Shapes
+and read gamma share `cube`/`ghi` fields; upper coordinate flags use `unhi`.
+Masks preserve output gamma, target sample count, unresolved global units and
+all low-unit coordinate/target alias mapping. No existing runtime behavior or
+player preparation default changes.
+
+The decoder now also requires a supported non-depth base format: B8, A8R8G8B8,
+G8B8, the supported compressed formats, or half-float RGBA. Unsupported formats
+can leave the renderer's old binding in place, and depth formats depend on
+separate renderer/pass context, so neither gets descriptor-derived texture
+facts. This tightens Phase 150's eligibility without changing its measured local
+binding inventory. Resource upload success and absence of later overrides remain
+explicit assumptions, not proven from assets alone.
+
+Local read gamma follows address bits 20..22. The upper coordinate flag requires
+a texel-addressed FORMAT, nonempty extents, and neither cube nor volume. Low-unit
+coordinate mapping also depends on render-target aliasing/copies and remains
+unreconstructed. The native harness now extracts the real gamma block as well
+as production bind assignments and cube/volume/upper-coordinate key helpers;
+**2,304 varied cases match** with no GPU/game startup.
+
+The conditional dither/PCF paths now carry independently measured texture facts,
+checked against all **288 real native emitter command lists**. They are 2D and
+read gamma off. Active primary dither and PCF use texel coordinates; alternate
+active dither and all fallback descriptors use normalized coordinates. Only exact
+verified signatures receive these facts. Other global sampler candidates have
+no shape/gamma facts, even when their sampler filtering is known.
+
+The shape audit accepts `--sampling-state` and optional explicit
+`--global-sampler-path active|fallback`. Its schema 2 retains masked comparisons
+in `cube`, `ghi` and `unhi`. With active selected, known bits match 1,028 retained
+links, 16 disagree and 453 lack known bindings; 122 have every sampled unit
+covered for these selected fields. Fallback matches 30 links (26 complete), with
+1,014 disagreements. Path selection remains an input, never guessed from
+capture. The legacy count names `known_shape_match` / `all_sampled_shapes_match`
+refer to all selected fields when `sampling_state` is true; neither means all
+translation/pass fields are reconstructed.
+
+Three partial material pipeline samples derive shape/read-gamma/upper-coordinate
+bits, rebuild source/bytecode/native keys and create D3D12 pipelines. Samplers
+and prepared blend/write-mask/depth are also derived; environment/shadow shapes,
+output gamma, low-unit mapping and remaining pass/target/native state stay
+captured. This is not a capture-free first-run catalogue.
+
+Local evidence:
+
+- `scratch/texture-shapes-native-092f0482c027476cbdefcac4fbe4f8fd/report.json`
+- `scratch/global-registry-a2d86de9b42347778842b60404ae22e4/report.json`
+- `scratch/texture-sampling-state-audit-20261030/report.json`
+- `scratch/texture-sampling-fallback-audit-20261030/report.json`
+- `scratch/texture-sampling-state-proof-20261030/report.json`
+
+Existing shape/sampler/material tests and new gamma/coordinate/unsupported-format
+checks pass. Original checkout, shared runtime and normal game build are
+unchanged. Next recover global environment/shadow descriptor facts and remaining
+target/culling/pass state, then generate independently complete preparation
+recipes and validate them against fresh automated content routes.

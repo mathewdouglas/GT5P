@@ -36,14 +36,20 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 150)
+## Start here: state of play (2026-10-30, Phase 151)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 150 is the latest).
+has the evidence, newest phase first (Phase 151 is the latest).
 
 ### What works now
 
+- **Texture sampling bits (Phase 151):** read gamma and upper-coordinate masks
+  match 2,304 native cases; 288 emitter checks add conditional dither/PCF texture
+  facts. Explicit active candidates match known bits on 1,028 links (122 complete
+  for selected texture fields). Three developer `--material-texture-state`
+  pipeline proofs pass. Other globals/output gamma/low-unit mapping/pass state
+  remain unknown; no runtime/player changes. Work continues on complete recipes.
 - **Local texture shape bits (Phase 150):** independent cube/volume masks from
   supported local descriptors match 768 native production-key cases. Inventory
   bindings are all 2D; known shape candidates match 843 links, 16 complete.

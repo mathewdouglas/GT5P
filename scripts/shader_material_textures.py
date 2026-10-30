@@ -189,7 +189,9 @@ def with_global_sampler_path(definition, path=None, shadow_path=None, environmen
             address, filtering = ((0x00030101, 0x01012000) if path == 'active' else
                                   (0x60010101, 0x02022000))
             selected_path = path
-        bindings.append(dict(g, address=address, filtering=filtering,
+        facts = (dict(shape='2d', gamma=False, unnormalized=path == 'active' and g['identifier'] != 94)
+                 if dither else None)
+        bindings.append(dict(g, address=address, filtering=filtering, texture_facts=facts,
                              sampler=sampler_register(address, filtering),
                              global_path=selected_path, sampler_mask=12 if mirror else 15,
                              address_mask=0 if mirror else 0xf0f if shadow or environment else 0xffffffff,

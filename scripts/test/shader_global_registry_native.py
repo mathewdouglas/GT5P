@@ -334,6 +334,11 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
                     binding = with_global_sampler_path(definition, 'active' if active else 'fallback')['bindings'][0]
                     assert (commands[3], commands[6]) == (binding['address'], binding['filtering'])
                     assert sampler_register(commands[3], commands[6]) == binding['sampler']
+                    facts = binding['texture_facts']
+                    assert (commands[2] >> 4) & 15 == 2 and not commands[2] & 4
+                    assert facts['shape'] == '2d'
+                    assert facts['gamma'] == bool((commands[3] >> 20) & 7)
+                    assert facts['unnormalized'] == bool(commands[2] & 0x4000)
                     emitted.append({'identifier': identifier, 'unit': unit, 'width': width,
                                     'active': bool(active), 'resource_address': address, 'words': commands})
     dynamic_checks = 0

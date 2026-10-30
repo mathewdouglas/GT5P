@@ -227,3 +227,9 @@ translation bits during reconstruction proofs. Measured real asset bindings in
 this subset are all 2D; global shapes and remaining translation/pass fields still
 use capture state. This does not enable a new player preparation path; see the
 [shape proof](shader-reconstruction.md#asset-local-texture-shape-bits-phase-150).
+
+
+Developer `--material-texture-state` additionally derives supported read-gamma
+and upper-coordinate bits, including conditional dither/PCF facts. It preserves
+unknown global/pass fields and does not enable a player preparation path; see
+[sampling-state reconstruction](shader-reconstruction.md#texture-sampling-state-bits-phase-151).

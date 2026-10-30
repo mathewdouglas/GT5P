@@ -303,3 +303,9 @@ Four pipeline proofs derive local shape bits, with two explicitly retaining a
 global environment cube. These counts are separate from sampler coverage and
 do not establish capture-free pipelines. See
 [local shape reconstruction](shader-reconstruction.md#asset-local-texture-shape-bits-phase-150).
+
+
+Phase 151 extends masked texture comparisons to read gamma, upper-coordinate
+flags and explicit dither/PCF texture facts. Active-path known bits match 1,028
+links; 122 cover every sampled unit for the selected fields. Other translation/
+pass state remains captured. See [sampling-state proof](shader-reconstruction.md#texture-sampling-state-bits-phase-151).
