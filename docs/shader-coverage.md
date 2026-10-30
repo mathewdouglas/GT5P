@@ -250,6 +250,8 @@ now accounts for the common LESS-to-LEQUAL difference. The current next step is
 establishing exact draw ownership and the remaining pass/target/texture state;
 six native pipeline proofs now replace blend/write-mask/depth fields from
 prepared assets rather than retaining those fields from captures. This remains
-a partial reconstruction; unmatched programs also need analysis. Extending
+a partial reconstruction. Phase 143 also derives complete effective sampler
+keys for two car-material proofs; most links still need alias/global bindings
+or pass context. Unmatched programs also need analysis. Extending
 catalogue size or cross-multiplying pooled profiles alone cannot establish
 complete pipeline reconstruction.

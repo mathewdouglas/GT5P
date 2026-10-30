@@ -15,7 +15,7 @@ import shader_material_state as m
 
 def function(source, name):
     import re
-    match = re.search(r'^static (?:u8|u32|int) ' + name + r'\([^\n]*\)\s*\{', source, re.M)
+    match = re.search(r'^static (?:u8|u32|u64|int) ' + name + r'\([^\n]*\)\s*\{', source, re.M)
     if not match:
         raise ValueError('Production function signature changed: ' + name)
     # The extracted functions contain no braces in strings or character literals
@@ -47,7 +47,7 @@ def main():
     ap.add_argument('--state-report', type=Path, help='Also compare every decoded real block in an audit report')
     args = ap.parse_args()
     source = (args.runtime / 'libs/video/rsx_d3d12_backend.c').read_text()
-    names = ('gl_blend_factor_d3d', 'gl_blend_op_d3d', 'rsx_blend_key', 'depth_state_on', 'rsx_depth_bits', 'rsx_cull_key')
+    names = ('gl_blend_factor_d3d', 'gl_blend_op_d3d', 'rsx_blend_key', 'depth_state_on', 'rsx_depth_bits', 'rsx_cull_key', 'rsx_samp_key')
     snippets = '\n'.join(function(source, name) for name in names)
     prefix = '''#include <stdlib.h>
 #include <stdio.h>
@@ -56,10 +56,12 @@ def main():
 #include <d3d12.h>
 typedef uint32_t u32;
 typedef uint8_t u8;
+typedef uint64_t u64;
 typedef struct {
  u32 blend_sfactor,blend_dfactor,blend_equation;
  u32 depth_test_enable,depth_func,depth_mask;
  u32 cull_face_enable,cull_face,front_face,shader_program;
+ struct { u32 address,filter; } textures[16];
 } rsx_state;
 '''
     suffix = '''
@@ -72,6 +74,10 @@ __declspec(dllexport) void keys(const u32* w,u32* out) {
  out[1]=((w[9]&0x10000)?1:0)|((w[9]&0x100)?2:0)|((w[9]&1)?4:0)|((w[9]&0x1000000)?8:0);
  out[2]=rsx_depth_bits(&s);out[3]=rsx_cull_key(&s)&1;
 }
+__declspec(dllexport) u32 sampler(u32 address,u32 filter) {
+ rsx_state s={0};s.textures[0].address=address;s.textures[0].filter=filter;
+ return (u32)(rsx_samp_key(&s)&15);
+}
 '''
     folder = m.ROOT / 'scratch' / ('material-state-native-' + uuid.uuid4().hex)
     folder.mkdir(parents=True)
@@ -83,10 +89,13 @@ __declspec(dllexport) void keys(const u32* w,u32* out) {
     (folder / 'build.cmd').write_text(command)
     subprocess.run(['cmd', '/c', str(folder / 'build.cmd')], check=True, cwd=folder)
     # The library must initialize with production diagnostic overrides unset.
-    for key in ('BLENDDBG', 'RSX_DEPTH_STATE', 'RSX_DEPTH_ALWAYS', 'CULL_OFF_FP'):
+    for key in ('BLENDDBG', 'RSX_DEPTH_STATE', 'RSX_DEPTH_ALWAYS', 'CULL_OFF_FP',
+                'RSX_SAMP_FIXED', 'RSX_SAMPDBG', 'RSX_SAMP_HI'):
         os.environ.pop(key, None)
     library = ctypes.CDLL(str(folder / 'keys.dll'))
     library.keys.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+    library.sampler.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    library.sampler.restype = ctypes.c_uint32
     rng = random.Random(139)
     cases = []
     factors = [0, 1, *range(0x300, 0x309), *range(0x8001, 0x8005)]
@@ -118,7 +127,13 @@ __declspec(dllexport) void keys(const u32* w,u32* out) {
         result = (ctypes.c_uint32 * 4)()
         library.keys((ctypes.c_uint32 * 40)(*w), result)
         assert list(result) == [expected[f] for f in m.FIELDS], (w, list(result), expected)
+    from shader_material_textures import sampler_register
+    for _ in range(2048):
+        address = rng.randrange(16) | rng.randrange(16) << 8
+        filtering = rng.randrange(1, 8) << 16 | rng.randrange(1, 8) << 24
+        assert library.sampler(address, filtering) == sampler_register(address, filtering)
     print(f'{len(cases)} state blocks matched production blend/depth/cull key functions; no game/GPU started')
+    print('2048 sampler selections matched the production sampler-bank function')
 
 
 if __name__ == '__main__':

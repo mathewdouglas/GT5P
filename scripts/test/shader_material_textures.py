@@ -1,0 +1,108 @@
+"""Bounded sampler-name/unit/texture-index joins; unknown lanes stay unknown."""
+from pathlib import Path
+import json
+import struct
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+import shader_material_textures as m
+from shader_coverage import ROOT, fnv64
+
+
+def fixture():
+    data = bytearray(4096)
+    def put(offset, fmt, *values):
+        struct.pack_into('>' + fmt, data, offset, *values)
+    data[:4] = b'MDL3'; put(4, 'I', len(data)); put(12, 'H', 1)
+    put(0x44, 'I', 256); put(0x4C, 'I', 384)
+    put(256, 'HHBBHIIII', 1, 1, 0, 0, 2, 1152, 512, 0, 1536)
+    data[384:388] = b'SHDS'; put(384 + 0x18, 'HH', 1, 1)
+    for offset, value in ((0x20, 640), (0x2C, 704), (0x40, 800)):
+        put(384 + offset, 'I', value)
+    put(384 + 0x34, 'H', 1)
+    put(548, 'I', 576); put(588, 'II', 640, 704)
+    put(640, 'II', 896, 64); put(704, 'II', 1000, 32)
+    put(800, 'III', 1000, 1056, 16)
+    put(896, 'H', 2); put(912, 'I', 32); data[928:960] = bytes(range(32))
+    instruction = 0x17000001 | (2 << 17)
+    put(1056, 'IIII', ((instruction << 16) | (instruction >> 16)) & 0xFFFFFFFF, 0, 0, 0)
+    data[715] = 1; put(724, 'I', 1280)
+    put(1280, 'I4hI', 1400, 0x601, 2, 0, 0, 0)
+    data[1400:1418] = b'diffuseMapSampler\0'
+    put(1156, 'hhHHI', 0, 0, 1, 1, 1440)
+    put(1440, 'II', 1400, 1)
+    for index in range(2):
+        words = [0] * 17
+        words[0], words[2], words[3], words[6], words[7], words[14] = (
+            0x00201A00, 0x00018829, 0x303, 0x02060000, 0x00400040, 1 if index == 0 else 42)
+        put(1536 + index * 68, '17I', *words)
+    return data
+
+
+data = fixture(); definitions, rejected = m.model_textures(data, 0)
+assert not rejected and len(definitions) == 1
+d = definitions[0]; b = d['bindings'][0]
+assert b['unit'] == 2 and b['texture_index'] == 1 and b['image_id'] == 42
+assert b['sampler'] == 13 and d['used'] == 4
+assert m.complete_sampler_key(d) == 13 << 8
+assert m.replace_known_samplers(0x1234, d['bindings'], 4) == (0x1D34, [2])
+assert m.replace_known_samplers(0x1234, d['bindings'], 1) == (0x1234, [])
+assert m.complete_sampler_key(dict(d, used=5)) is None
+assert m.complete_sampler_key(dict(d, used=0)) is None
+
+for offset, fmt, value, reason in [(1444, 'I', 42, 'texture index outside table'),
+                                  (1284, 'h', 0x602, 'unsupported sampler record'),
+                                  (1286, 'h', 16, 'unsupported sampler record'),
+                                  (1604, 'I', 0, 'unsupported texture record header')]:
+    data = fixture(); struct.pack_into('>' + fmt, data, offset, value)
+    definitions, rejected = m.model_textures(data, 0)
+    assert rejected[reason] == 1 and not definitions, rejected
+data = fixture(); struct.pack_into('>H', data, 1162, 0)
+d = m.model_textures(data, 0)[0][0]
+assert not d['bindings'] and len(d['unresolved']) == 1 and m.complete_sampler_key(d) is None
+data = fixture(); data[715] = 2; data[1296:1312] = data[1280:1296]
+assert m.model_textures(data, 0)[1]['ambiguous sampler name/unit'] == 1
+data = fixture(); struct.pack_into('>I', data, 276, 4090)
+try:
+    m.model_textures(data, 0)
+except ValueError:
+    pass
+else:
+    raise AssertionError('out-of-model texture table accepted')
+
+with tempfile.TemporaryDirectory(prefix='material-textures-cli-', dir=ROOT / 'scratch') as folder:
+    root = Path(folder)
+    asset = root / 'asset'; asset.write_bytes(fixture())
+    inventory = root / 'states.json'; inventory.write_text(json.dumps(dict(models=[dict(file=str(asset), model=0)])))
+    d = m.model_textures(fixture(), 0)[0][0]
+    trace = root / 'trace'; trace.mkdir()
+    code = d['vertex_code']; raw = f'{fnv64(code):016x}'
+    (trace / f'vp_{raw}.bin').write_bytes(code)
+    c = dict(vp_raw=raw, vp_bytes=len(code), vp_identity_bytes=len(code), pipeline='synthetic',
+             state=dict(samplers='0000000000000d00'))
+    row = dict(status='recipe_link_verified', vertex_input_available=True,
+               capture=c, identity=d['fragment_identity'], line=1)
+    changed = json.loads(json.dumps(row)); changed['line'] = 2
+    changed['capture']['state']['samplers'] = '0000000000000c00'
+    report = root / 'audit.json'; report.write_text(json.dumps(dict(records=[row, changed])))
+    output = root / 'output'
+    command = [sys.executable, str(ROOT / 'scripts/shader_material_textures.py'), '--states', str(inventory),
+               '--report', str(report), '--trace', str(trace), '--output', str(output)]
+    before = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    subprocess.run(command, check=True, capture_output=True)
+    result = json.loads((output / 'report.json').read_text())
+    assert result['counts']['known_lanes_match'] == result['counts']['known_lanes_mismatch'] == 1
+    assert result['counts']['all_sampled_units_resolved_and_match'] == 1
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    command[-1] = str(trace / 'bad-output')
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    assert not (trace / 'bad-output').exists()
+    assert before == {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file() and output not in p.parents}
+    (trace / f'vp_{raw}.bin').write_bytes(bytes(len(code)))
+    command[-1] = str(root / 'bad-input-output')
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    assert not Path(command[-1]).exists()
+
+print('Sampler slots, texture-index identity, partial coverage and malformed binding checks passed')

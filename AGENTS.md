@@ -36,14 +36,20 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 142)
+## Start here: state of play (2026-10-30, Phase 143)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 142 is the latest).
+has the evidence, newest phase first (Phase 143 is the latest).
 
 ### What works now
 
+- **Asset sampler proof (Phase 143):** a bounded sampler/texture-index reader
+  supplies every sampled sampler lane for two car-material proofs; shader
+  source/bytecode, native keys and D3D12 creation match. Use developer flag
+  `--material-samplers` with prepared material state. Most captures still need
+  unresolved/global/aliased bindings, and culling orientation remains captured.
+  No runtime or normal-play change; see the reconstruction documentation.
 - **Prepared-state pipeline proof (Phase 142):** six samples rebuilt shaders
   and replaced native blend/write-mask/depth fields from prepared asset blocks,
   matching pipeline keys and creating successfully in D3D12. Culling direction,

@@ -9,6 +9,38 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 143 - Derive effective sampler keys from material texture bindings (2026-10-30)
+
+`shader_material_textures.py` reads a bounded SHDS named-sampler layout and
+joins material definition keys to texture-info table indices, distinct from
+image IDs. It derives sampler-bank lanes from authored filter/wrap registers.
+Unsupported record fields, aliases and invalid indices are rejected; unresolved
+sampled units do not receive defaults. A native differential check matched the
+production sampler selector in 2,048 varied cases without game/GPU startup.
+
+The 599-container / 1,098-model inventory supplied 72,645 accepted definition
+texture bindings; 5,505 shader-data groups had ambiguous names/units and 468
+had unsupported records. Of 1,497 captured links, 349 had known-lane candidates
+and all matched those lanes. Only 16 were complete for all sampled units, with
+333 partial and 1,148 lacking known sampled bindings. This does not establish
+exact draw/image ownership or global texture-state coverage.
+
+`shader_reconstruct.py --prepared-material-state --material-samplers` requires
+complete sampled bindings from the same definition as the state proof, reparses
+the original model during proof and derives the sampler key from zero. Captured
+values are an equality oracle only. A trilinear-repeat car-menu material and a
+trilinear-clamp car-LOD material matched rebuilt shader source/bytecode, native
+keys and actual D3D12 creation, also replacing prepared blend/mask/depth fields.
+Remaining cube/gamma/unnormalized/shadow and pass/target/culling fields stay
+captured; no complete first-run precompiler is implied.
+
+Synthetic reader/CLI checks passed for index identity, incomplete bindings,
+malformed/ambiguous records, bounds, mismatches, input integrity and ignored
+output containment/no-overwrite. No runtime changes were needed; both proofs
+used the existing isolated diagnostic EXE and never executed guest gameplay.
+Full results/commands and next alias/global-binding work:
+[shader-reconstruction.md](shader-reconstruction.md).
+
 ## Phase 142 - Replace native descriptor fields from prepared material data (2026-10-30)
 
 `shader_reconstruct.py --materials <audit> --prepared-material-state` reparses

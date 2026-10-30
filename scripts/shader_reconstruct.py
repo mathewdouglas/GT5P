@@ -173,10 +173,11 @@ def material_state_matches(values, capture):
 
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
-                 prepared=None):
+                 prepared=None, material_samplers=False):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
+    sampler_origin = None
     if prepared:
         from shader_material_state import prepare_state, decode_state
         raw = read_slice(prepared['source'])
@@ -185,6 +186,23 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
             raise ValueError('reparsed prepared material state differs from captured oracle')
         state.update(blend=values['blend'], cmask=values['cmask'],
                      stencil=(state['stencil'] & 0x0FFFFFFF) | values['depth_bits'])
+    if material_samplers:
+        from shader_material_textures import model_textures, complete_sampler_key
+        # Reparse the original definition and bindings. A saved audit/captured
+        # sampler value is never used to construct the replacement key.
+        with Path(candidate['file']).open('rb') as stream:
+            with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                definitions, _ = model_textures(data, material['model'])
+                definition = next((d for d in definitions if d['definition'] == prepared['definition'] and
+                                   d['material'] == material['material']), None)
+                if definition is None:
+                    raise ValueError('selected material texture definition is no longer available')
+                key = complete_sampler_key(definition)
+                sampler_origin = dict(definition=definition['definition'], used=definition['used'],
+                                      bindings=definition['bindings'])
+        if key is None or key != int(capture['state']['samplers'], 16):
+            raise ValueError('asset-derived complete sampler key differs from captured oracle')
+        state['samplers'] = f'{key:016x}'
     asset = read_slice(candidate)
     vertex = word_swap(asset) if candidate['order'] == 'swap32' else asset
     hlsl, vs = compiler.vertex(vertex, capture['vp_gpu'])
@@ -243,6 +261,8 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                 vs=capture['vs'], ps=capture['ps'], vertex_hlsl_matches=True, fragment_source_key_matches=True,
                 native_result=result,
                 material_state=({**prepared, 'values': values} if prepared else None),
+                sampler_origin=sampler_origin,
+                replaced_translation_fields=(['samplers'] if material_samplers else []),
                 replaced_descriptor_fields=(['blend', 'colour_write_mask', 'depth_compare', 'depth_write_mask'] if prepared else []),
                 state_origin=('prepared asset blend/mask/depth; remaining translation/pass/descriptor state captured'
                               if prepared else 'captured translation profile and native recipe'),
@@ -264,9 +284,13 @@ def main():
     ap.add_argument('--materials', type=Path, help='Require an authored pair from shader_materials.py report')
     ap.add_argument('--prepared-material-state', action='store_true',
                     help='Require material state and replace native blend/write-mask/depth fields')
+    ap.add_argument('--material-samplers', action='store_true',
+                    help='Require every sampled unit resolved by the same material and derive its sampler key')
     args = ap.parse_args()
     if args.prepared_material_state and not args.materials:
         ap.error('--prepared-material-state requires --materials')
+    if args.material_samplers and not args.prepared_material_state:
+        ap.error('--material-samplers requires --prepared-material-state')
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
         ap.error('Choose a new output directory in gitignored storage')
@@ -301,6 +325,7 @@ def main():
         # trusting offsets or match claims in a saved diagnostic report.
         from shader_materials import model_pairs
         from shader_material_state import model_states
+        from shader_material_textures import model_textures, complete_sampler_key
         for item in json.loads(args.materials.read_text())['pairs']:
             if not item['captured_pair_matches']:
                 continue
@@ -314,6 +339,10 @@ def main():
                             base = item['model']
                             table = struct.unpack_from('>I', data, base + 0x44)[0]
                             state_table = struct.unpack_from('>I', data, base + table + 16)[0]
+                        texture_keys = {}
+                        if args.material_samplers:
+                            textures, _ = model_textures(data, item['model'])
+                            texture_keys = {d['definition']: complete_sampler_key(d) for d in textures}
                         candidates = []
                         for pair in parsed:
                             def source(offset, size):
@@ -324,6 +353,7 @@ def main():
                             if args.prepared_material_state:
                                 for binding in bindings.get(pair['material'], ()):
                                     state_options.append(dict(**binding, values=states[binding['state']],
+                                                              sampler_key=texture_keys.get(binding['definition']),
                                                               source=source(base + state_table + binding['state'] * 160, 160)))
                             candidates.append(dict(vertex=dict(order='swap32', **source(pair['vertex_offset'], pair['vertex_size'])),
                                                    fragment=source(pair['fragment_offset'], pair['fragment_size']),
@@ -336,6 +366,7 @@ def main():
                                ('Only blend/write-mask/depth descriptor fields are replaced from prepared material state; other state remains captured.'
                                 if args.prepared_material_state else 'Rendering state/native descriptor is captured, not reconstructed from material definitions.'),
                                'This is a bounded sample, not a complete distributable catalogue.'])
+    report['material_samplers'] = args.material_samplers
     compiler = NativeCompiler(args.decoder)
     pairs = set()
     for row in rows:
@@ -356,7 +387,8 @@ def main():
                                  any(p['code'].startswith(prefix) and c['vp_raw'] in ids
                                      for lookup in targets.values() for prefix, ids in lookup.items()))
                 for option in eligible:
-                    selected = next((s for s in option['states'] if material_state_matches(s['values'], c)), None)
+                    selected = next((s for s in option['states'] if material_state_matches(s['values'], c) and
+                                     (not args.material_samplers or s['sampler_key'] == int(c['state']['samplers'], 16))), None)
                     if args.prepared_material_state and selected is None:
                         continue
                     material, prepared = option, selected
@@ -372,7 +404,7 @@ def main():
         try:
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
-                                  output / f'sample-{number + 1}', material, prepared)
+                                  output / f'sample-{number + 1}', material, prepared, args.material_samplers)
             result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])

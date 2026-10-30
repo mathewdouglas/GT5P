@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138–142, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138–143, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -426,7 +426,81 @@ objects; no full clean build or race performance measurement was required.
 The overlay reapplied against its pinned base; shared runtime/normal EXE remain
 unchanged. These tools are not included in player release preparation yet.
 
-Next: derive culling orientation and texture-dependent translation state for a
-small material family, then replace more descriptor fields. Remaining
-colour-mask/blend exceptions, pass/target state, complete catalogue generation
-and player first-run integration still need work.
+## Asset-derived sampler selection (Phase 143)
+
+`scripts/shader_material_textures.py` adds a bounded reader for one measured
+binding layout. SHDS fragment records' 0x14 table supplies named sampler records
+of kind `0x601`, with a supported unit field and zero remaining unknown fields.
+Material definitions bind those names to indices into the model's 0x44-byte
+texture-info table. Those indices are distinct from each texture's image ID.
+The reader follows name/index references, bounds strings/tables to the model,
+and rejects duplicate names/unit aliases, unsupported records and invalid indices.
+It does not guess relocation/alias behavior for the rejected layouts.
+
+Texture-info records supply authored filter and wrap registers. Sampler-bank
+selection uses the current backend's default mapping. **2,048 varied cases
+matched the production `rsx_samp_key` function** in an isolated DLL, without
+starting the game or GPU. The existing native blend/depth/cull checks also
+passed in that harness.
+
+In the existing 599-container / 1,098-model inventory, the supported subset
+contains **72,645 definition texture bindings**. There were 5,505 rejected
+shader-data groups with ambiguous sampler names/units and 468 with unsupported
+sampler records. The accepted groups had no missing definition names, but this
+does not cover globally bound or otherwise undeclared units sampled by a shader.
+
+Of 1,497 captured links, 349 had supported known sampled-lane candidates; all
+349 matched those known lanes. Only **16 links** had every sampled unit resolved
+and matching. The other 333 were partial. Another 1,148 had no known sampled
+binding from this reader. These are same-pair candidates, not exact ownership
+or complete texture/pipeline coverage. Matching filters do not prove the sampled
+image contents or the other texture-dependent translation fields.
+
+Add `--material-samplers` to the prepared-material reconstruction command to
+require the complete supported subset. It selects the same material definition
+as the state proof, reparses its bindings from the original model during proof,
+and constructs the effective sampler key from zero using only resolved sampled
+units. The captured sampler key is an equality oracle, not construction input;
+there is no captured/default fallback for missing sampled units. The new key is
+used for production FP translation and compilation before native creation.
+
+Two selected car samples passed rebuilt source/bytecode identifiers, native
+pipeline keys and D3D12 creation:
+
+| Asset family | Sampled units | Derived sampler |
+| --- | --- | --- |
+| Car menu material | Unit 0 | Trilinear repeat, bank register 12 |
+| Car LOD material | Unit 0 | Trilinear clamp, bank register 13 |
+
+Both also used prepared material blend/write-mask/depth replacement. Other
+texture-dependent fields (cube/gamma/unnormalized/shadow), targets/pass state,
+and culling orientation remain captured. The state block writes only cull
+enable; PGL setup has separate face-control commands whose control flow and
+incoming winding context have not been reconstructed. Do not assume the most
+common captured cull key is a universal asset default.
+
+```powershell
+.venv/Scripts/python scripts/shader_material_textures.py --states <state audit.json> --report <flat provenance audit.json> --trace <matching trace folder> --output scratch/material-texture-audit
+.venv/Scripts/python scripts/test/shader_material_textures.py
+.venv/Scripts/python scripts/test/shader_material_state_native.py --runtime <isolated runtime>
+```
+
+Tests cover unit/index identity (including a distinct image ID), unsupported
+records/aliases, missing bindings, partial versus complete coverage, intact
+unrelated sampler lanes, bad table bounds, deliberate capture mismatches,
+input integrity, output containment/no-overwrite and unchanged inputs.
+
+Local reports:
+
+- `scratch/material-textures-20261030/report.json`
+- `scratch/material-sampler-proof-20261030/report.json`
+- `scratch/material-sampler-clamp-proof-20261030/report.json`
+
+No runtime sources/builds changed for this stage. The two proofs used the existing
+isolated diagnostic EXE in offline mode, never guest gameplay. Shared runtime,
+normal binary and player defaults remain untouched.
+
+Next: resolve sampler aliases/global bindings and derive more texture-dependent
+translation fields for a bounded family; culling/pass/target context remains
+separate work. Complete catalogue generation and player first-run integration
+are still not implemented.
