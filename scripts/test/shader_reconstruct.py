@@ -123,3 +123,7 @@ print('Explicit native target selection, masked sample replacement and unsupport
 result = subprocess.run(command + ['--material-fragment-control'], capture_output=True, text=True)
 assert result.returncode != 0 and 'requires --materials' in result.stderr
 print('Authored fragment-control proof prerequisites passed')
+
+result = subprocess.run(command + ['--independent-profile-path', 'ordinary-uploads'], capture_output=True, text=True)
+assert result.returncode != 0 and 'Independent profile requires' in result.stderr
+print('Whole independent profile prerequisites passed')

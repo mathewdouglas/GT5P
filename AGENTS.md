@@ -36,13 +36,22 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 155)
+## Start here: state of play (2026-10-30, Phase 156)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 155 is the latest).
+has the evidence, newest phase first (Phase 156 is the latest).
 
 ### What works now
+
+- **Whole conditional profile (Phase 156):** developer
+  `--independent-profile-path ordinary-uploads` builds the whole translation
+  profile from original assets and explicit contexts, rejecting unknown sampled
+  facts. Three shader/fresh-native pipeline proofs pass; 768 ordinary low-unit
+  coordinate checks pass. Successful 2D uploads/no alias redirects/no later
+  overrides are explicit assumptions; actual ownership and full catalogue remain
+  open. Next capture-free subset enumeration/preparation plus unresolved global
+  contexts. No player/release changes.
 
 - **Authored fragment control (Phase 155):** the bounded compact descriptor
   supplies export precision under explicit binding/no-later-override assumptions.

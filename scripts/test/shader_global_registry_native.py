@@ -564,4 +564,3 @@ extern "C" __declspec(dllexport) void init(uint32_t gate,uint32_t arg,uint32_t v
 
 if __name__ == '__main__':
     main()
-

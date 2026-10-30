@@ -9,6 +9,24 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 156 - Prove a whole independent ordinary-upload profile candidate (2026-10-30)
+
+Developer `--independent-profile-path ordinary-uploads` builds the whole selected
+translation profile from original material/control/texture facts and explicit
+object/target/global candidates. It receives no captured state. Unknown sampled
+facts, unsupported cube/volume/depth/stencil cases fail closed. Successful 2D
+uploads, no target/depth-copy/mip aliases and no later overrides are explicit
+context assumptions, not established live ownership.
+
+Three shader/native pipeline proofs match source/bytecode/keys and create D3D12
+pipelines with the independent profile and fresh native descriptor. Captures only
+validate constructed state and code/key results. Another 768 native ordinary 2D
+low-coordinate checks pass within the 2,304-case texture harness. Whole-profile,
+unknown-context and prerequisite tests pass. No runtime/player/release changes.
+This proves a supported conditional subset; complete catalogue, first-run
+performance, actual pass ownership and launcher integration remain open.
+Evidence: [shader-reconstruction.md](shader-reconstruction.md#whole-independent-ordinary-upload-profile-candidate-phase-156).
+
 ## Phase 155 - Derive authored compact fragment export precision (2026-10-30)
 
 The bounded direct-pair reader supplies compact descriptor shader control from

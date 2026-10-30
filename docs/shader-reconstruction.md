@@ -1242,3 +1242,52 @@ checks pass. Original inputs remain read-only. Evidence:
 
 - `scratch/global-registry-31b9cd7535ab4c4d8f0a5e930012c703/report.json`
 - `scratch/material-fragment-control-proof-20261030/report.json`
+
+
+## Whole independent ordinary-upload profile candidate (Phase 156)
+
+`--independent-profile-path ordinary-uploads` constructs the whole selected
+fragment translation profile without a captured-state argument. It requires
+complete material samplers, texture sampling-state reconstruction, original
+fragment control, an object-pass choice and a native target choice. Unknown
+sampled bindings, incomplete gamma/coordinate facts, cube/volume, depth formats
+and stencil contexts fail closed. Unknown environment/shadow facts are not filled
+from capture. Unsupported definitions are excluded rather than guessed.
+
+This candidate explicitly assumes supported successfully uploaded 2D resources,
+no render-target/depth-copy/mip alias redirects, the selected global callbacks,
+prepared material/compact-fragment/object/target context, default renderer
+switches and no later overrides. These assumptions do not establish actual draw
+ownership or general eligibility for every material in every pass.
+
+The independent function supplies export precision, cube/read-gamma/output-gamma/
+sample flags, upper gamma/coordinate flags, sampler key, low coordinate key,
+shadow state, prepared blend/mask/depth/cull and target fields. Non-depth 2D
+resources under the no-alias assumption have no shadow/depth-copy transform.
+Unused sampler/texture lanes are zero, as in the production used-unit mask.
+Low texel-coordinate bits follow FORMAT, with the production nonzero-key tag;
+all target/depth-copy/mip alias flags remain excluded by the explicit context.
+A production-helper differential test adds 768 ordinary 2D low-coordinate checks
+to the existing 2,304 shape/gamma/coordinate cases.
+
+The host reparses all selected original inputs, builds this profile, validates it
+against capture and then replaces its entire state dictionary with the independent
+result before shader translation. No captured profile field survives construction.
+The earlier fresh native descriptor path likewise uses capture as a code/key
+oracle. Three MSAA shader/native pipeline proofs match source, bytecode and keys
+and create D3D12 pipelines with these independent conditional inputs.
+
+Synthetic checks cover the whole profile, both export choices, normalized/texel
+coordinates, active dither, complete sampler requirements, unknown bindings and
+unsupported format/shape/stencil contexts. CLI prerequisites and existing
+material/reconstruction checks pass. This is the first whole-profile conditional
+proof here; it is not proof of a full catalogue, first-run stutter performance or
+live ownership. No runtime/player/release changes in this phase. Evidence:
+
+- `scratch/independent-ordinary-profile-fixed-proof-20261030/report.json`
+- `scratch/texture-shapes-native-4f9d087106594be78730359dd5957e49/report.json`
+
+Next expose capture-free candidate enumeration/preparation for this supported
+subset, while recovering the unresolved environment/shadow/alias contexts and
+validating coverage with fresh automated routes. Launcher integration remains
+open and must report partial coverage honestly.

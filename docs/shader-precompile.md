@@ -260,3 +260,11 @@ word for explicit no-later-override binding candidates. Three fresh-descriptor
 pipeline proofs pass; remaining global/coordinate/shadow fields and actual pass
 ownership are unresolved. See
 [the reconstruction scope](shader-reconstruction.md#authored-compact-fragment-export-control-phase-155).
+
+
+Phase 156 proves a whole conditional ordinary-upload translation profile and
+fresh native descriptor in three samples. The profile takes no captured state;
+unknown sampled facts fail closed. No-alias/no-later-override context assumptions
+and actual ownership still limit coverage. See
+[the independent subset scope](shader-reconstruction.md#whole-independent-ordinary-upload-profile-candidate-phase-156).
+Player first-run preparation and launcher integration remain unfinished.

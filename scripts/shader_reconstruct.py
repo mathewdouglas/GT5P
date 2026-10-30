@@ -174,7 +174,7 @@ def material_state_matches(values, capture):
 
 def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, output, material=None,
                  prepared=None, material_samplers=False, sampler_lanes=False, global_sampler_path=None,
-                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None, material_fragment_control=False):
+                 shadow_sampler_path=None, environment_sampler_path=None, mirror_sampler_path=None, material_texture_shapes=False, material_texture_state=False, environment_texture_path=None, object_pass_path=None, native_target_path=None, material_fragment_control=False, independent_profile_path=None):
     output.mkdir()
     capture = row['capture']
     state = dict(capture['state'])
@@ -183,6 +183,7 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
     pass_origin = None
     target_origin = None
     fragment_control_origin = None
+    independent_origin = None
     if prepared:
         from shader_material_state import prepare_state, decode_state
         raw = read_slice(prepared['source'])
@@ -253,6 +254,13 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
         state['exp32'] = exp32
         fragment_control_origin = dict(source=control_source, control=control, exp32=exp32,
                                        assumption='compact descriptor binding with no later shader-control override')
+    if independent_profile_path:
+        from shader_material_profile import ordinary_profile, profile_matches, ASSUMPTIONS
+        independent = ordinary_profile(definition, values, control, object_pass_path, native_target_path)
+        if not profile_matches(independent, capture['state']):
+            raise ValueError('independent conditional translation profile differs from captured oracle')
+        state = independent  # No captured state survives in the constructed profile.
+        independent_origin = dict(path=independent_profile_path, state=independent, assumptions=ASSUMPTIONS)
     asset = read_slice(candidate)
     vertex = word_swap(asset) if candidate['order'] == 'swap32' else asset
     hlsl, vs = compiler.vertex(vertex, 1 if target_origin else capture['vp_gpu'])
@@ -271,9 +279,9 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
     (library / 'asset.fp').write_bytes(fragment)
     fresh = output / 'shadercache'; fresh.mkdir()
     profiles = fresh / 'fp-profiles-v2'; profiles.mkdir()
-    fields = [state['exp32'], state['cube'], state['stencil'] & (1 << 26), 0,
+    fields = [state['exp32'], state['cube'], state['stencil'] & (1 << 26), state['unnorm'] & ~0x100,
               int(state['samplers'], 16), state['ghi'], state['shd'], state['unhi'], fp_identity(fragment)['textures']]
-    (profiles / 'captured-state.txt').write_text(' '.join(f'{x:x}' for x in fields) + '\n', encoding='ascii')
+    (profiles / ('independent-state.txt' if independent_origin else 'captured-state.txt')).write_text(' '.join(f'{x:x}' for x in fields) + '\n', encoding='ascii')
     env = offline_env(game_root, fresh)
     env.update(RSX_SHADER_LIBRARY=str(library), RSX_SHADER_LIBRARY_PROFILE_LIMIT='1')
     # The legacy offline FP entry point uses one R8 target. Reproduce the
@@ -325,16 +333,18 @@ def prove_sample(row, candidate, sources, compiler, engine, game_root, cache, ou
                 native_result=result,
                 material_state=({**prepared, 'values': values} if prepared else None),
                 sampler_origin=sampler_origin, texture_shape_origin=shape_origin, object_pass_origin=pass_origin, native_target_origin=target_origin,
-                fragment_control_origin=fragment_control_origin,
+                fragment_control_origin=fragment_control_origin, independent_profile_origin=independent_origin,
                 native_descriptor_origin='fresh independent construction' if target_origin else 'captured with reported replacements',
                 replaced_translation_fields=(['sampler_lanes'] if sampler_lanes else ['samplers'] if material_samplers else []) +
                                             (['texture_sampling_bits'] if material_texture_state else ['texture_shape_bits'] if material_texture_shapes else []) + (['output_gamma_bit'] if pass_origin else []) +
                                             (['target_sample_bits'] if target_origin else []) +
-                                            (['export_precision'] if fragment_control_origin else []),
+                                            (['export_precision'] if fragment_control_origin else []) +
+                                            (['whole_translation_profile'] if independent_origin else []),
                 replaced_descriptor_fields=(['blend', 'colour_write_mask', 'depth_compare', 'depth_write_mask'] if prepared else []) +
                                            (['cull_mode', 'front_counter_clockwise'] if pass_origin else []) +
                                            (['all_other_native_descriptor_fields'] if target_origin else []),
-                state_origin=('prepared material and reported conditional fields; native descriptor fresh when requested; remaining translation state captured'
+                state_origin=('independent conditional translation profile and fresh native descriptor' if independent_origin else
+                              'prepared material and reported conditional fields; native descriptor fresh when requested; remaining translation state captured'
                               if prepared else 'captured translation profile and native recipe'),
                 shader_input_origin='original asset slices; no captured raw inputs or cached DXBC used for compilation')
 
@@ -379,7 +389,12 @@ def main():
                     help='Construct fresh GPU-fetch, depth-backed single-target descriptor for explicit candidate')
     ap.add_argument('--material-fragment-control', action='store_true',
                     help='Derive export precision from authored compact fragment descriptor; no later override')
+    ap.add_argument('--independent-profile-path', choices=('ordinary-uploads',),
+                    help='Build whole conditional translation profile from assets and explicit context; reject unknowns')
     args = ap.parse_args()
+    if args.independent_profile_path and not (args.native_target_path and args.material_fragment_control and
+                                              args.material_texture_state and args.material_samplers):
+        ap.error('Independent profile requires native target, fragment control, texture state and complete samplers')
     if args.material_fragment_control and not args.materials:
         ap.error('Material fragment control requires --materials')
     if args.native_target_path and not args.object_pass_path:
@@ -449,12 +464,14 @@ def main():
                         texture_shapes = {}
                         texture_keys = {}
                         texture_lanes = {}
+                        texture_definitions = {}
                         if args.material_samplers or args.material_sampler_lanes:
                             textures, _ = model_textures(data, item['model'])
                             textures = [with_global_sampler_path(d, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.environment_texture_path) for d in textures]
                             from shader_texture_shapes import texture_fields, shape_matches
                             if args.material_texture_shapes or args.material_texture_state:
                                 texture_shapes = {d['definition']: texture_fields(d, args.material_texture_state) for d in textures}
+                            texture_definitions = {d['definition']: d for d in textures}
                             texture_keys = {d['definition']: complete_sampler_key(d) for d in textures}
                             texture_lanes = {d['definition']: known_sampler_key(d) for d in textures}
                         candidates = []
@@ -466,7 +483,15 @@ def main():
                             state_options = []
                             if args.prepared_material_state:
                                 for binding in bindings.get(pair['material'], ()):
-                                    state_options.append(dict(**binding, values=states[binding['state']],
+                                    independent = None
+                                    if args.independent_profile_path and binding['definition'] in texture_definitions:
+                                        from shader_material_profile import ordinary_profile
+                                        try:
+                                            independent = ordinary_profile(texture_definitions[binding['definition']], states[binding['state']],
+                                                                           pair['fragment_control'], args.object_pass_path, args.native_target_path)
+                                        except ValueError:
+                                            pass  # Unknown facts exclude this candidate; never borrow captured fields.
+                                    state_options.append(dict(**binding, independent_profile=independent, values=states[binding['state']],
                                                               texture_shapes=texture_shapes.get(binding['definition']),
                                                               sampler_key=texture_keys.get(binding['definition']),
                                                               sampler_lanes=texture_lanes.get(binding['definition'], (0, 0)),
@@ -481,9 +506,11 @@ def main():
     output.mkdir(parents=True)
     report = dict(vertex_records=count, matched_vertex_inputs=len(matches), candidates=matches, samples=[],
                   limitations=['Source container set comes from the existing FP catalogue, not an exhaustive asset inventory.',
-                               ('Prepared material and explicit conditional fields are reconstructed; native descriptor is fresh only with native_target_path; other translation fields remain captured.'
+                               ('Whole selected translation profile and native descriptor are constructed independently under explicit ordinary-upload/pass assumptions.' if args.independent_profile_path else
+                                'Prepared material and explicit conditional fields are reconstructed; native descriptor is fresh only with native_target_path; other translation fields remain captured.'
                                 if args.prepared_material_state else 'Rendering state/native descriptor is captured, not reconstructed from material definitions.'),
                                'This is a bounded sample, not a complete distributable catalogue.'])
+    report['independent_profile_path'] = args.independent_profile_path
     report['material_fragment_control'] = args.material_fragment_control
     report['native_target_path'] = args.native_target_path
     report['object_pass_path'] = args.object_pass_path
@@ -497,6 +524,7 @@ def main():
     report['environment_sampler_path'] = args.environment_sampler_path
     report['mirror_sampler_path'] = args.mirror_sampler_path
     from shader_pass_state import object_pass_fields, pass_matches, native_target_fields, target_matches
+    from shader_material_profile import profile_matches
     compiler = NativeCompiler(args.decoder)
     pairs = set()
     for row in rows:
@@ -522,6 +550,7 @@ def main():
                     if args.material_fragment_control and int(bool(option['fragment_control'] & 0x40)) != c['state']['exp32']:
                         continue
                     selected = next((s for s in option['states'] if material_state_matches(s['values'], c) and
+                                     (not args.independent_profile_path or (s['independent_profile'] is not None and profile_matches(s['independent_profile'], c['state']))) and
                                      (not args.object_pass_path or pass_matches(object_pass_fields(args.object_pass_path, s['values']), c['state'])) and
                                      (not (args.material_texture_shapes or args.material_texture_state) or shape_matches(s['texture_shapes'], c['state'])) and
                                      (not args.material_samplers or s['sampler_key'] == int(c['state']['samplers'], 16)) and
@@ -543,7 +572,7 @@ def main():
             result = prove_sample(row, candidate, sources, compiler,
                                   args.engine.resolve(), args.game_root.resolve(), args.cache.resolve(),
                                   output / f'sample-{number + 1}', material, prepared, args.material_samplers,
-                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path, args.material_fragment_control)
+                                  args.material_sampler_lanes, args.global_sampler_path, args.shadow_sampler_path, args.environment_sampler_path, args.mirror_sampler_path, args.material_texture_shapes, args.material_texture_state, args.environment_texture_path, args.object_pass_path, args.native_target_path, args.material_fragment_control, args.independent_profile_path)
             result['pairing_origin'] = ('reparsed direct material pointers' if material else 'captured shader pair')
             if material:
                 result['material'] = dict(model=material['model'], index=material['material'])
