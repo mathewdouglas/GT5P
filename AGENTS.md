@@ -36,20 +36,28 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-30, Phase 140)
+## Start here: state of play (2026-10-30, Phase 141)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 140 is the latest).
+has the evidence, newest phase first (Phase 141 is the latest).
 
 ### What works now
 
+- **Material preparation recovered (Phase 141):** an independently expressed
+  offline transform matches the local lifted preparation routine on 5,692
+  blocks. Prepared candidates match depth for all 1,164 linked draws with
+  material candidates, and blend/mask/depth/cull-enable together for 1,146.
+  A bounded FIFO trace corroborates prepared bytes (467/512 full blocks).
+  `GCM_DEPTH_PROVENANCE` is diagnostic/default-off. Exact draw ownership and
+  remaining pass/texture/target state are unresolved; this is not a complete
+  precompile catalogue. See [docs/shader-reconstruction.md](docs/shader-reconstruction.md).
 - **Material state audit (Phase 140):** authored state blocks decode as short
   RSX command lists; 5,692 differential checks matched this renderer's key
   functions. Blend/mask/cull-enable candidates usually match live draws, but
   depth usually differs (commonly LESS in assets, LEQUAL live). Do not use
-  authored state unchanged to generate complete pipelines. Next: establish
-  draw ownership and where depth/pass state changes. See the state audit in
+  authored state unchanged to generate complete pipelines. Phase 141 recovers
+  a preparation step; draw ownership/pass changes still need work. See the audit in
   [docs/shader-reconstruction.md](docs/shader-reconstruction.md).
 - **Material shader pairing (Phase 139):** a read-only MDL3 audit recovers
   direct authored pairs matching 452/562 distinct shader pairs in the HSR

@@ -1,6 +1,6 @@
 # Asset shader reconstruction proof
 
-Phases 138–140, branch `feature/shader-coverage-audit`. This is a small developer proof,
+Phases 138–141, branch `feature/shader-coverage-audit`. This is a small developer proof,
 not first-run setup or a complete shader catalogue. It follows the
 [coverage/provenance work](shader-coverage.md).
 
@@ -273,6 +273,95 @@ captured-input integrity, output containment/no-overwrite and unchanged inputs.
 Local evidence: `scratch/material-state-20261030/final/report.json`. No shared
 runtime or game build was modified; this adds developer audit tools only.
 
-Next: identify the live draw's exact material and the source of depth-state
-changes, then derive the remaining pass/target/texture state. Complete catalogue
-generation and player first-run integration remain separate work.
+The Phase 141 preparation proof below supersedes the unresolved common depth
+difference. Exact draw ownership and additional pass overrides remain open.
+
+## Material preparation and consumed commands (Phase 141)
+
+The isolated runtime adds `GCM_DEPTH_PROVENANCE=<new JSONL file>`. It samples
+only three-word depth packets on subchannel zero and, when the surrounding
+layout matches, snapshots the entire 40-word material block before processing.
+Each row includes the frame, FIFO/guest address, CALL return offset and depth
+arguments. Every snapshot word must have an IO mapping. No guest state is written.
+
+- Unset or `0`: disabled, with no trace reads/writes.
+- `GCM_DEPTH_PROVENANCE_AFTER=<milestone>,<ms>`: optional delayed start.
+- `GCM_DEPTH_PROVENANCE_LIMIT=<n>`: 512 by default, bounded to 1..4096.
+- Parent directory must exist; an existing output file is refused. Each row is
+  flushed; the recorder stops reading/writing once its cap is reached.
+
+A 1080p/2x-MSAA HSR run used the separate diagnostic EXE and gated recording at
+`QuickArcadeRoot,30000`. The final window capture confirmed the racing HUD.
+512 records covered parts of three frames and 63 packet addresses; all were
+material-shaped packets inside CALLs and all supplied LEQUAL. Against original
+asset blocks, 17 matched all 40 words exactly, 242 differed only in the three
+depth words and 253 were unmatched. The latter were six distinct live patterns;
+nearest-block inspection found differences involving the trailing flag word or
+alpha reference as well as depth. Similarity alone was not accepted as a match.
+
+The local lifted function at `0x00834968` was then identified as a candidate
+material-preparation routine. `prepare_state()` independently expresses its
+bounded transformation for these blocks:
+
+- Convert LESS to LEQUAL; preserve other comparison modes.
+- Recompute bit zero of the final metadata word from alpha-test/blend enable,
+  the measured metadata mask and depth-write enable. Other metadata stays opaque.
+
+This is a tested material-preparation step, **not a global depth override**.
+The optional native test extracts the original lifted function and its rotate/
+shift helpers into an ignored scratch DLL, executes it on private block copies,
+and compares every output word. It patches no generated source and starts no
+game process. All **3,644 real blocks + 2,048 varied synthetic blocks matched**.
+The test also checks input preservation. Game-derived oracle source/binaries
+remain local and are not part of tracked files or release packages.
+
+With preparation enabled, the preceding snapshot comparison changes as follows:
+
+| Field | Raw candidates / 1,164 | Prepared candidates / 1,164 |
+| --- | ---: | ---: |
+| Blend | 1,163 | 1,163 |
+| Colour mask | 1,146 | 1,146 |
+| Depth bits | 13 | 1,164 |
+| Cull enable | 1,164 | 1,164 |
+| All four together | 9 | 1,146 |
+
+The prepared 40-word blocks also matched **467/512** consumed FIFO snapshots
+exactly, versus 17 without preparation; 45 remain unmatched. These are
+byte-pattern candidates across assets, not unique material ownership or proof
+that this particular guest function was the writer on every live call. The
+independent oracle and FIFO evidence corroborate the transformation's relevance
+without claiming a complete pipeline recipe.
+
+```powershell
+.venv/Scripts/python scripts/shader_material_state.py --materials <material audit.json> --report <flat provenance audit.json> --trace <matching trace folder> --prepare-materials --output scratch/prepared-state-audit
+.venv/Scripts/python scripts/shader_depth_commands.py --states <state audit.json> --commands <depth JSONL> --output scratch/depth-command-audit
+.venv/Scripts/python scripts/test/shader_material_prepare_native.py --generated <local generated/ppu_recomp_005.cpp> --states <state audit.json>
+scripts/test/depth_provenance.ps1 -Runtime <isolated runtime>
+.venv/Scripts/python scripts/test/shader_depth_commands.py
+```
+
+The command audit rereads original assets from the state report's model
+inventory, compares exact/depth-only/prepared patterns, retains ambiguous
+candidates and reports malformed/contradictory records separately. It does not
+normalize unrelated differences away. Its transition histogram can count
+several original depth variants for one captured block; do not sum it as unique
+events. Synthetic checks cover these distinctions and damaged input. Recorder
+tests cover disabled paths, milestone timing, packet filtering, mapped bounds,
+the record cap, JSON and refusal to overwrite existing output.
+
+Local evidence in this worktree:
+
+- `scratch/depth-live-hsr-20261030/{commands.jsonl,prepared-audit/report.json}`
+- `scratch/material-state-20261030/prepared/report.json`
+- `scratch/depth-build/`: isolated backend/FIFO compilation and relink logs.
+
+Window shots/logs are in the original checkout's
+`scratch/pv/depth-live-hsr-20261030.*`. The isolated backend and FIFO unit were
+compiled and linked with existing application/runtime objects, not rebuilt from
+scratch. This diagnostic run is not a performance benchmark. The normal EXE
+and shared runtime were untouched. The updated overlay was checked/reapplied
+against its pinned base.
+
+Next: integrate prepared material state into the reconstruction proof, then
+resolve the remaining colour-mask/blend cases and pass/target/texture state.
+Complete catalogue generation and player first-run integration remain separate.

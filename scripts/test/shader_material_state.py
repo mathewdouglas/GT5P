@@ -40,6 +40,12 @@ def fixture():
 baseline = m.decode_state(words())
 assert baseline['blend'] == baseline['cull_enable'] == 0
 assert baseline['cmask'] == 15 and baseline['depth_bits'] == 0x10000000
+w = words(); before = list(w)
+p = m.prepare_state(w)
+assert p[32] == 0x203 and p[39] == 1 and w == before
+assert m.prepare_state(p) == p
+w[1] = 1
+assert not (m.prepare_state(w)[39] & 1)
 w = words(); w[34] = 0
 assert m.decode_state(w)['depth_bits'] == 0xF0000000
 w = words(); w[33] = 0

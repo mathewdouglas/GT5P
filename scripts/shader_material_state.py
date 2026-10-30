@@ -73,7 +73,24 @@ def decode_state(words):
                 registers={f'{method:04x}': value for method, value in registers.items()})
 
 
-def model_states(data, base):
+def prepare_state(words):
+    """Observed disc-build material preparation, independently expressed.
+
+    This bounded offline transform is different from arbitrary pass overrides.
+    Differential tests execute the local lifted preparation routine as oracle.
+    Original input is retained unchanged; the remaining metadata stays opaque.
+    """
+    decode_state(words)
+    prepared = list(words)
+    prepared[39] &= ~1
+    if not words[1] and not words[4] and not (words[38] & 0xF0) and words[33]:
+        prepared[39] |= 1
+    if prepared[32] == 0x201:
+        prepared[32] = 0x203
+    return prepared
+
+
+def model_states(data, base, prepare=False):
     """Keep material definitions separate from shader-bearing material data."""
     import struct
     r = Reader(data, base, struct.unpack_from('>I', data, base + 4)[0])
@@ -85,7 +102,8 @@ def model_states(data, base):
     states, rejected = {}, Counter()
     for index, offset in enumerate(r.table(r.unpack('I', table + 16)[0], count, 160)):
         try:
-            states[index] = decode_state(r.unpack('40I', offset))
+            words = r.unpack('40I', offset)
+            states[index] = decode_state(prepare_state(words) if prepare else words)
         except ValueError as error:
             rejected[str(error)] += 1
     bindings = defaultdict(list)
@@ -114,6 +132,8 @@ def main():
     ap.add_argument('--report', type=Path, required=True, help='Flat provenance audit')
     ap.add_argument('--trace', type=Path, required=True)
     ap.add_argument('--output', type=Path, required=True)
+    ap.add_argument('--prepare-materials', action='store_true',
+                    help='Apply the independently tested disc-build preparation transform before comparing')
     args = ap.parse_args()
     output = args.output.resolve()
     if output.exists() or subprocess.run(['git', 'check-ignore', '-q', str(output / 'report.json')], cwd=ROOT).returncode:
@@ -144,7 +164,7 @@ def main():
             with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
                 for base in sorted(bases):
                     pairs, _ = model_pairs(data, base)
-                    states, bindings, rejected = model_states(data, base)
+                    states, bindings, rejected = model_states(data, base, args.prepare_materials)
                     errors.update(rejected)
                     model = dict(file=filename, model=base, states=states, bindings=bindings)
                     models.append(model)
@@ -176,7 +196,8 @@ def main():
             counts[field + ('_match' if any(profiles[i][field] == actual[field] for i in possible) else '_mismatch')] += 1
         compared.append(dict(pipeline=capture['pipeline'], capture_line=row['line'], actual=actual,
                              candidate_profiles=sorted(possible), joint_matches=matches))
-    result = dict(schema=1, state_origin='authored command prefix; pass overrides unknown',
+    result = dict(schema=1, state_origin=('prepared asset command prefix' if args.prepare_materials else 'authored command prefix') + '; pass overrides unknown',
+                  material_preparation=args.prepare_materials,
                   fields=list(FIELDS), counts=dict(counts), rejected=dict(errors),
                   profiles=profiles, models=models, comparisons=compared,
                   limitations=['Same shader pair can be shared by several materials; a candidate match is not exact draw ownership.',

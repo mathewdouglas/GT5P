@@ -9,6 +9,41 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 141 - Reproduce material preparation and corroborate consumed bytes (2026-10-30)
+
+The isolated runtime gains bounded/default-off `GCM_DEPTH_PROVENANCE`, with
+milestone delay and record cap. It snapshots mapped depth packets and surrounding
+material blocks before method processing, without guest writes. Native tests
+cover disabled paths/no reads, gate timing, packet filtering, unmapped memory,
+cap, JSON and refusal to overwrite an existing capture.
+
+A 1080p/2x-MSAA HSR sample recorded 512 packets across parts of three frames,
+63 addresses, all inside CALLs and all with LEQUAL in the submitted bytes. The
+final window image had the racing HUD. Of the full blocks, 17 matched original
+assets exactly, 242 differed only in depth words, and 253 did not match. This
+places the common disagreement before renderer key generation.
+
+Local lifted function `0x00834968` suggested material preparation. The new
+independently expressed offline `prepare_state()` converts LESS to LEQUAL and
+recomputes a metadata flag, preserving other modes/fields. An isolated oracle
+compiled from the local lifted routine matched every word for 3,644 real and
+2,048 varied synthetic blocks (5,692 checks); original generated source was
+unchanged and oracle outputs stay ignored. With `--prepare-materials`, same-pair
+depth candidates match all 1,164 captured links that have candidates, versus
+13 before; all four checked state fields match together for 1,146 versus 9.
+
+Prepared blocks also match 467/512 consumed full-block snapshots exactly,
+versus 17 raw; 45 remain unmatched. This corroborates preparation but does not
+identify a unique asset/draw owner or directly trace the live guest writer.
+`shader_depth_commands.py` preserves exact/depth-only/prepared/unmatched and
+invalid distinctions; synthetic parser/CLI tests passed. Remaining pass state
+must not be guessed or globally overridden.
+
+The separate backend/FIFO compile and relink succeeded; no full clean build or
+performance claim is made. Shared runtime/development EXE remained untouched;
+the overlay reapplied against the pinned base. Evidence, commands and next
+reconstruction integration: [shader-reconstruction.md](shader-reconstruction.md).
+
 ## Phase 140 - Decode authored material state and falsify direct reuse (2026-10-30)
 
 The isolated branch adds `scripts/shader_material_state.py`, a read-only audit

@@ -245,8 +245,9 @@ Local evidence:
 
 The provenance recorder and sampled asset reconstruction are now implemented;
 see [shader-reconstruction.md](shader-reconstruction.md) for material pairings
-and the subsequent state audit. The current next step is establishing draw
-ownership and the source of the authored/live depth-state disagreement, followed
-by remaining pass/target/texture state and unmatched-program analysis. Extending
+and the subsequent state audit/preparation proof. A measured preparation rule
+now accounts for the common LESS-to-LEQUAL difference. The current next step is
+establishing exact draw ownership and the remaining pass/target/texture state,
+followed by unmatched-program analysis. Extending
 catalogue size or cross-multiplying pooled profiles alone cannot establish
 complete pipeline reconstruction.
