@@ -31,6 +31,8 @@ param([ValidateSet("HighSpeedRing", "Daytona")][string]$Track = "HighSpeedRing",
       [ValidateRange(0,3600)][int]$RaceShots = 0, [switch]$FrameTest,
       [ValidateRange(0,3600)][int]$SampleDelay = 25,
       [string]$Engine = "", [string]$GameRoot = "", [string]$OutputDirectory = "",
+      [switch]$PlayerLauncher,
+      [switch]$NoPrepared,
       [string]$ExtraHold = "",
       [Parameter(ValueFromRemainingArguments = $true)] $Vars)
 . "$PSScriptRoot/milestone.ps1"
@@ -56,7 +58,7 @@ public class RaceWindowShot {
   IntPtr result=IntPtr.Zero;
   EnumWindows((h,data)=>{uint owner;GetWindowThreadProcessId(h,out owner);
    var text=new System.Text.StringBuilder(512);GetWindowText(h,text,512);
-   if(owner==pid && text.ToString().Contains("Gran Turismo")){result=h;return false;}return true;},IntPtr.Zero);
+   if(owner==pid && (text.ToString().Contains("Gran Turismo") || text.ToString().Contains("Project Tourline Prologue"))){result=h;return false;}return true;},IntPtr.Zero);
   return result;
  }
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
@@ -116,12 +118,35 @@ $set['GT5P_ROOT'] = $GameRoot
 if ($FrameTest) { $set["GT5P_FRAME_LOG"] = (Join-Path $dir "$Tag.frames.csv") }
 foreach ($v in $Vars) { if ($v) { $k, $val = "$v" -split "=", 2; $set[$k] = $val } }
 $p = $null
+$launcherOwner = $null
+$gameOut = "$dir/$Tag.out"
+$gameErr = "$dir/$Tag.err"
 try {
     if (@(Get-Process gt5p -ErrorAction SilentlyContinue).Count) { throw "Another gt5p.exe is running; no process was stopped" }
     foreach ($k in $set.Keys) { Set-Item "Env:$k" $set[$k] }
     $launchMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $p = Start-Process -FilePath $Engine -WorkingDirectory $GameRoot -PassThru -WindowStyle Hidden `
-        -RedirectStandardOutput "$dir/$Tag.out" -RedirectStandardError "$dir/$Tag.err"
+    $launch = @{FilePath=$Engine;WorkingDirectory=$GameRoot;PassThru=$true;WindowStyle='Hidden';
+                RedirectStandardOutput="$dir/$Tag.out";RedirectStandardError="$dir/$Tag.err"}
+    if ($NoPrepared) {
+        if (-not $PlayerLauncher) { throw '-NoPrepared requires -PlayerLauncher' }
+        $launch.ArgumentList = '--no-prepared'
+    }
+    $p = Start-Process @launch
+    if ($PlayerLauncher) {
+        $launcherOwner = $p
+        $p = $null
+        $expectedGame = [IO.Path]::GetFullPath((Join-Path (Split-Path $Engine -Parent) 'runtime/gt5p.exe'))
+        $childWait = [Diagnostics.Stopwatch]::StartNew()
+        while (-not $p -and $childWait.Elapsed.TotalSeconds -lt 30) {
+            $owned = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($launcherOwner.Id)" |
+                Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $expectedGame })
+            if ($owned.Count -eq 1) { $p = Get-Process -Id $owned[0].ProcessId }
+            else { Start-Sleep -Milliseconds 100 }
+        }
+        if (-not $p) { throw 'Player launcher did not create its expected owned game child' }
+        $gameOut = Join-Path $GameRoot 'logs/play.out'
+        $gameErr = Join-Path $GameRoot 'logs/play.err'
+    }
     # Keep the console hidden, but show the owned game window for representative
     # presentation timing and visual validation. Never touch another process.
     $windowWait = [Diagnostics.Stopwatch]::StartNew()
@@ -134,7 +159,12 @@ try {
     [RaceWindowShot]::ShowWindow($gameWindow,5) | Out-Null
     [RaceWindowShot]::SetForegroundWindow($gameWindow) | Out-Null
     foreach ($k in $set.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
-    $tail = New-LogTail "$dir/$Tag.out"
+    $tail = New-LogTail $gameOut
+    if ($PlayerLauncher) {
+        if ((Wait-Milestone $p $tail 'TopMenuTemplate' 180) -lt 0) { throw 'Player menu not reached' }
+        Start-Sleep -Seconds 2
+        Save-RaceWindowShot $p (Join-Path $dir "$Tag.menu.png")
+    }
     if ($PitIdleSeconds -gt 0) {
         if ((Wait-Milestone $p $tail "PitSceneRoot" 180) -lt 0) { throw "Pit page not reached" }
         Watch-RaceIdle $p "pit" ($PitIdleSeconds + 19)
@@ -162,7 +192,7 @@ try {
         if ($SampleDelay -gt 25) { Start-Sleep -Seconds ($SampleDelay - 25) }
     } else { Start-Sleep -Seconds $SampleDelay }
     # Ignore navigation/idle presents: only progress during sampling counts.
-    $profTail = New-LogTail "$dir/$Tag.err"
+    $profTail = New-LogTail $gameErr
     Read-LogTail $profTail | Out-Null
     $sampleLog = ""
     $tS0 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -189,7 +219,7 @@ try {
         $cpuB = @{}; foreach ($t in (Get-Process -Id $p.Id).Threads) { $cpuB[$t.Id] = $t.TotalProcessorTime.TotalSeconds }
         $cpuTotal = (Get-Process -Id $p.Id).TotalProcessorTime.TotalSeconds - $cpuP
         $hostNames = @{}; $guestNames = @{}
-        foreach ($f in "$dir/$Tag.out", "$dir/$Tag.err") {
+        foreach ($f in $gameOut, $gameErr) {
             foreach ($l in (Select-String -Path $f -Pattern 'hosttid=(\d+)|sys_ppu_thread_create tid=')) {
                 if ($l.Line -match '\[THREAD (\d+)\].*hosttid=(\d+)') { $hostNames[[int]$Matches[2]] = "g" + $Matches[1] }
                 elseif ($l.Line -match '\[(?:hostthread\]|pso-worker\]) ?(\S*) ?hosttid=(\d+)') { $hostNames[[int]$Matches[2]] = $(if ($Matches[1]) { $Matches[1] } else { "pso-worker" }) }
@@ -243,6 +273,14 @@ try {
     if ($ordered.Count) { "$Track`: median $($ordered[[int]($ordered.Count/2)]) fps over $Seconds s" }
     "Cache warming finished for the materials seen in this run; logs and shot: $dir/$Tag.*"
 } finally {
+    if ($launcherOwner) {
+        $launcherOwner.Refresh()
+        if (-not $launcherOwner.HasExited) { $launcherOwner.Kill(); $launcherOwner.WaitForExit(10000) | Out-Null }
+    }
     if ($p) { $p.Refresh(); if (-not $p.HasExited) { $p.Kill(); $p.WaitForExit(10000) | Out-Null } }
+    if ($PlayerLauncher) {
+        if (Test-Path $gameOut) { Copy-Item -LiteralPath $gameOut -Destination "$dir/$Tag.out" }
+        if (Test-Path $gameErr) { Copy-Item -LiteralPath $gameErr -Destination "$dir/$Tag.err" }
+    }
     foreach ($k in $set.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
 }

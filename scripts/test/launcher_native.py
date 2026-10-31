@@ -36,7 +36,7 @@ def main():
         disc = root/'Disc dump'/'PS3_GAME'
         for p in (install/'runtime', install/'assets', data/'input', disc/'USRDIR'):
             p.mkdir(parents=True)
-        launcher = install/'GT5P.exe'
+        launcher = install/'tourline-prologue.exe'
         shutil.copyfile(args.launcher, launcher)
         shutil.copyfile(args.probe, install/'runtime/gt5p.exe')
         (install/'assets/probe.txt').write_text('distributable fixture')
@@ -112,6 +112,7 @@ def main():
                               'GT5P_SETTINGS':data/'gt5p_settings.toml'}.items():
             assert Path(probe[key]) == expected, (key, probe[key])
         assert Path(probe['GT5P_GAME_DIR']) == disc and probe['PS3_VERBOSE'] == '0'
+        assert probe['PS3_TITLE']=='Project Tourline Prologue'
         assert 'probe stdout' in (data/'logs/play.out').read_text()
         assert 'probe stderr' in (data/'logs/play.err').read_text()
         assert (data/'assets/probe.txt').read_text() == 'distributable fixture'
@@ -123,6 +124,45 @@ def main():
         p = subprocess.run([launcher], env=env, timeout=15, capture_output=True)
         assert p.returncode == 0 and settings.read_text() == '# existing personal settings\n'
         print('second launch and settings preservation: passed')
+        prepared=data/'preparation/version/shadercache';prepared.mkdir(parents=True)
+        (prepared/'keep.txt').write_text('cache preserved')
+        (data/'prepared-cache.txt').write_text('preparation/version/shadercache')
+        p=subprocess.run([launcher],env=env,timeout=15,capture_output=True)
+        assert p.returncode==0
+        probe=dict(line.split('=',1) for line in (data/'probe.txt').read_text(encoding='utf-8-sig').splitlines())
+        assert Path(probe['RSX_SHADER_CACHE'])==prepared
+        p=subprocess.run([launcher,'--no-prepared'],env=env,timeout=15,capture_output=True)
+        assert p.returncode==0
+        probe=dict(line.split('=',1) for line in (data/'probe.txt').read_text(encoding='utf-8-sig').splitlines())
+        assert Path(probe['RSX_SHADER_CACHE'])==data/'shadercache'
+        assert (prepared/'keep.txt').read_text()=='cache preserved'
+        print('prepared cache selection and ordinary-cache rollback preserve caches: passed')
+        helper=install/'preparation/GT5P-Prepare.exe';helper.parent.mkdir()
+        shutil.copyfile(args.probe,helper)
+        with (install/'release.ini').open('a') as f:
+            f.write('prepare_sha256='+hashlib.sha256(helper.read_bytes()).hexdigest()+'\n')
+        owner=subprocess.Popen([launcher,'--prepare-assets',str(disc)],env=dict(env,GT5P_PROBE_DELAY_MS='30000'))
+        ui=ctypes.WinDLL('user32');callback=ctypes.WINFUNCTYPE(ctypes.c_bool,ctypes.c_void_p,ctypes.c_void_p)
+        ui.GetWindowThreadProcessId.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)]
+        ui.SendMessageW.argtypes=[ctypes.c_void_p,ctypes.c_uint,ctypes.c_size_t,ctypes.c_ssize_t]
+        ui.EnumWindows.argtypes=[callback,ctypes.c_void_p]
+        clicked=[]
+        @callback
+        def cancel_dialog(hwnd,unused):
+            pid=ctypes.c_ulong();ui.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+            if pid.value==owner.pid:
+                ui.SendMessageW(hwnd,0x400+102,2,0);clicked.append(True)
+            return True
+        try:
+            deadline=time.monotonic()+10
+            while owner.poll() is None and time.monotonic()<deadline:
+                ui.EnumWindows(cancel_dialog,None)
+                time.sleep(.05)
+            assert owner.wait(timeout=5)==0 and clicked
+            assert (data/'prepare.cancel').exists() and (prepared/'keep.txt').read_text()=='cache preserved'
+        finally:
+            if owner.poll() is None:owner.terminate();owner.wait(timeout=10)
+        print('native preparation progress/cancel dialog retires its owned helper: passed')
         (data/'probe.txt').unlink()
         child_env = dict(env, GT5P_PROBE_DELAY_MS='30000')
         owner = subprocess.Popen([launcher], env=child_env)
@@ -234,6 +274,12 @@ def main():
         p = subprocess.run([launcher, '--check'], env=storage_env, timeout=10)
         assert p.returncode == 0
         print('unavailable drive preserves selection; subsequent storage relocation: passed')
+        p=subprocess.run([launcher],env=storage_env,timeout=15,capture_output=True)
+        assert p.returncode==0
+        probe=dict(line.split('=',1) for line in (second/'probe.txt').read_text(encoding='utf-8-sig').splitlines())
+        assert Path(probe['RSX_SHADER_CACHE'])==second/'preparation/version/shadercache'
+        assert (second/'preparation/version/shadercache/keep.txt').read_text()=='cache preserved'
+        print('relative prepared-cache selection survives storage relocation: passed')
 
 
 if __name__ == '__main__':

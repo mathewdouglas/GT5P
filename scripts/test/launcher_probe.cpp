@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
 #include <initializer_list>
 
 int wmain(int argc, wchar_t** argv) {
@@ -13,7 +14,7 @@ int wmain(int argc, wchar_t** argv) {
     fwprintf(f, L"cwd=%ls\nargc=%d\npid=%lu\n", cwd, argc, GetCurrentProcessId());
     for (int i = 0; i < argc; ++i) fwprintf(f, L"arg%d=%ls\n", i, argv[i]);
     for (const wchar_t* key : {L"GT5P_ROOT", L"PS3_VFS_ROOT", L"PS3_GAMEDATA_ROOT",
-                              L"GT5P_SETTINGS", L"GT5P_GAME_DIR", L"PS3_VERBOSE"}) {
+                              L"GT5P_SETTINGS", L"GT5P_GAME_DIR", L"PS3_VERBOSE",L"RSX_SHADER_CACHE",L"PS3_TITLE"}) {
         wchar_t value[32768]{};
         GetEnvironmentVariableW(key, value, 32768);
         fwprintf(f, L"%ls=%ls\n", key, value);
@@ -22,6 +23,12 @@ int wmain(int argc, wchar_t** argv) {
     puts("probe stdout"); fflush(stdout);
     fputs("probe stderr\n", stderr); fflush(stderr);
     wchar_t delay[32]{};
-    if (GetEnvironmentVariableW(L"GT5P_PROBE_DELAY_MS", delay, 32)) Sleep(_wtoi(delay));
+    if (GetEnvironmentVariableW(L"GT5P_PROBE_DELAY_MS", delay, 32)) {
+        bool preparation=argc>1 && !wcscmp(argv[1],L"--install");
+        for (int elapsed=0;elapsed<_wtoi(delay);elapsed+=20) {
+            if (preparation && GetFileAttributesW(L"prepare.cancel")!=INVALID_FILE_ATTRIBUTES) return 2;
+            Sleep(20);
+        }
+    }
     return 0;
 }

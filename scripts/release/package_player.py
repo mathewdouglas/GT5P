@@ -5,11 +5,59 @@ Run only after the game build has completed. See docs/player-setup.md.
 """
 import argparse
 import hashlib
+import json
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
+import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'scripts'))
+
+
+def template_files():
+    from pipeline_template import read,renderer_contract
+    from pipeline_asset_map import read as read_map
+    folder=ROOT/'assets/pipeline-templates/gt5p-disc-v2'
+    document=read(folder)
+    if document['compatibility']['renderer_sha256']!=renderer_contract():
+        raise ValueError('Template renderer contract differs from this release')
+    wanted={(s,r[s]['sha256'],r[s]['size']) for r in document['records'] for s in ('vp','fp')}
+    locations=read_map(folder/'player-map.json')
+    if {(r['stage'],r['id'],r['size']) for r in locations['records']}!=wanted:
+        raise ValueError('Player location map must cover exactly the bundled programs')
+    read_map(folder/'asset-map.json')
+    index=json.loads((folder/'index.json').read_text())
+    names={'README.md','index.json','asset-map.json','player-map.json'}|{p['file'] for p in index['parts']}
+    if {p.name for p in folder.iterdir()}!=names:raise ValueError('Unreviewed template file')
+    return {'assets/pipeline-templates/gt5p-disc-v2/'+n:regular(folder/n) for n in names}
+
+
+def preparation_files(folder):
+    manifest=json.loads(regular(folder/'files.json').read_text())
+    if (set(manifest)!={'schema','files'} or manifest['schema']!=1 or
+            not isinstance(manifest['files'],dict) or not 1<=len(manifest['files'])<=512):
+        raise ValueError('Invalid standalone preparer manifest')
+    files={};total=0
+    required={'GT5P-Prepare.exe','decoder.dll','licenses/Python-LICENSE.txt','licenses/PyInstaller-COPYING.txt'}
+    if not required<=manifest['files'].keys():raise ValueError('Incomplete standalone preparer')
+    for name,digest in manifest['files'].items():
+        if (not isinstance(name,str) or '\\' in name or ':' in name or
+                any(p in ('','..','.') for p in name.split('/')) or PurePosixPath(name).is_absolute()):
+            raise ValueError('Unsafe preparer filename')
+        path=regular(folder/name)
+        for parent in path.parents:
+            if parent==folder.parent:break
+            if parent.is_symlink() or parent.is_junction():raise ValueError('Redirected preparer input')
+        if path.suffix.lower() not in ('.exe','.dll','.pyd','.zip','.json','.patch','.txt'):
+            raise ValueError('Unreviewed preparer content')
+        if not re.fullmatch('[0-9a-f]{64}',digest) or sha(path)!=digest:raise ValueError('Preparer manifest mismatch')
+        total+=path.stat().st_size
+        if total>128*1024**2:raise ValueError('Standalone preparer exceeds size budget')
+        if path.suffix.lower() in ('.exe','.dll','.pyd'):windows_binary(path)
+        files['preparation/'+name]=path
+    return files
 
 
 def port_version():
@@ -63,7 +111,9 @@ def windows_binary(path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', required=True, type=Path)
+    ap.add_argument('--engine-exe',type=Path,help='Isolated incrementally relinked engine; defaults to build-dir/gt5p.exe')
     ap.add_argument('--launcher-exe', required=True, type=Path)
+    ap.add_argument('--preparer-dir', required=True, type=Path)
     ap.add_argument('--elf', required=True, type=Path,
                     help='Matching local EMAIN.ELF; only its SHA-256 enters the ZIP')
     ap.add_argument('--vc-runtime-dir', required=True, type=Path)
@@ -84,11 +134,14 @@ def main():
         header = f.read(20)
     if len(header) != 20 or header[:6] != b'\x7fELF\x02\x02' or header[18:20] != b'\x00\x15':
         raise ValueError('Expected the matching decrypted big-endian PowerPC64 ELF')
-    files = {'GT5P.exe': windows_binary(args.launcher_exe),
-             'runtime/gt5p.exe': windows_binary(args.build_dir / 'gt5p.exe'),
+    files = {'tourline-prologue.exe': windows_binary(args.launcher_exe),
+             'runtime/gt5p.exe': windows_binary(args.engine_exe or args.build_dir / 'gt5p.exe'),
              'LICENSE.txt': regular(ROOT / 'LICENSE'),
              'START-HERE.txt': regular(ROOT / 'launcher/START-HERE.txt'),
-             'Change storage.cmd': regular(ROOT / 'launcher/Change storage.cmd')}
+             'Change storage.cmd': regular(ROOT / 'launcher/Change storage.cmd'),
+             'Prepare shaders.cmd': regular(ROOT / 'launcher/Prepare shaders.cmd')}
+    files.update(preparation_files(args.preparer_dir))
+    files.update(template_files())
     for name in RUNTIME:
         files['runtime/' + name] = windows_binary(args.build_dir / name)
     for name in VC_REQUIRED:
@@ -112,6 +165,10 @@ def main():
         if p.is_symlink() or (hasattr(p, 'is_junction') and p.is_junction()):
             raise ValueError(f'Asset links are not distributable: {p}')
         if p.is_file():
+            if p.relative_to(assets).parts[0]=='pipeline-templates':
+                if 'assets/'+p.relative_to(assets).as_posix() not in files:
+                    raise ValueError(f'Unreviewed template asset: {p}')
+                continue
             if p.suffix.lower() not in ('.png', '.txt'):
                 raise ValueError(f'Unreviewed asset extension: {p}')
             with p.open('rb') as f:
@@ -126,7 +183,8 @@ def main():
     # Bind both local inputs to this release; never include either user's ELF.
     release = ('[release]\nschema=1\ntarget=BCUS98158\nversion=03.00\n'
                f'port_version={version}\n'
-               f'elf_sha256={sha(elf)}\ngame_sha256={sha(files["runtime/gt5p.exe"])}\n')
+               f'elf_sha256={sha(elf)}\ngame_sha256={sha(files["runtime/gt5p.exe"])}\n'
+               f'prepare_sha256={sha(files["preparation/GT5P-Prepare.exe"])}\n')
     # Snapshot files before writing, so a build updating the EXE mid-package is
     # detected rather than producing a manifest for a different binary.
     before = {name: (p.stat().st_size, p.stat().st_mtime_ns) for name, p in files.items()}

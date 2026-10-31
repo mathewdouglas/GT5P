@@ -30,6 +30,10 @@ locally before compilation; captured programs are not needed by users.
 
 See [the preparation workflow](../../../docs/shader-precompile.md). Pass this
 directory to `scripts/pipeline_template.py prepare --template`. Nothing loads it
-by default. Templates do not establish menu/race preload ownership; preparation
+by default. The optional v0.2 player helper uses `player-map.json`, a complete
+hash/offset map for all 976 unique programs in this starter, and requires only
+the user's original unpacked assets and verified ELF, without a developer
+catalogue. The smaller `asset-map.json` remains the supplemental developer map.
+Templates do not establish menu/race preload ownership; preparation
 does not fabricate those membership indices. No launcher/release default or
 zero-stutter claim is made.

@@ -1,2 +1,2 @@
 @echo off
-start "" "%~dp0GT5P.exe" --choose-storage
+start "" "%~dp0tourline-prologue.exe" --choose-storage

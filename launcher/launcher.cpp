@@ -162,7 +162,42 @@ static std::wstring quote(const fs::path& p) {
     out.append(slashes * 2, L'\\');
     return out + L'"';
 }
-static DWORD run(const fs::path& exe, const std::wstring& args, const fs::path& cwd, const wchar_t* tag) {
+static std::wstring utf8_file(const fs::path& path) {
+    if (!fs::is_regular_file(path) || fs::file_size(path)>32768) return {};
+    std::ifstream f(path,std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(f)),{});
+    int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,bytes.data(),(int)bytes.size(),nullptr,0);
+    if (!n) return {};
+    std::wstring text(n,L'\0');
+    MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,bytes.data(),(int)bytes.size(),text.data(),n);
+    return text;
+}
+struct PrepareDialog { HANDLE process; bool cancelled=false; };
+static HRESULT CALLBACK prepare_dialog(HWND window,UINT notification,WPARAM button,LPARAM,LONG_PTR context) {
+    auto& state=*reinterpret_cast<PrepareDialog*>(context);
+    if (notification==TDN_CREATED) {
+        SendMessageW(window,TDM_ENABLE_BUTTON,IDOK,FALSE);
+        SendMessageW(window,TDM_SET_PROGRESS_BAR_MARQUEE,TRUE,50);
+    }
+    if (notification==TDN_TIMER) {
+        if (WaitForSingleObject(state.process,0)==WAIT_OBJECT_0) {
+            SendMessageW(window,TDM_ENABLE_BUTTON,IDOK,TRUE);
+            SendMessageW(window,TDM_CLICK_BUTTON,IDOK,0);
+        } else if (!state.cancelled) {
+            auto text=utf8_file(data/L"prepare-status.txt");
+            if (!text.empty()) SendMessageW(window,TDM_SET_ELEMENT_TEXT,TDE_CONTENT,(LPARAM)text.c_str());
+        }
+    }
+    if (notification==TDN_BUTTON_CLICKED && button==IDOK && WaitForSingleObject(state.process,0)!=WAIT_OBJECT_0) return S_FALSE;
+    if (notification==TDN_BUTTON_CLICKED && button==IDCANCEL) {
+        state.cancelled=true;
+        std::ofstream(data/L"prepare.cancel") << "cancel\n";
+        SendMessageW(window,TDM_SET_ELEMENT_TEXT,TDE_CONTENT,(LPARAM)L"Cancelling preparation. Completed files will be kept for resume...");
+        return S_FALSE;
+    }
+    return S_OK;
+}
+static DWORD run(const fs::path& exe, const std::wstring& args, const fs::path& cwd, const wchar_t* tag, bool preparation=false) {
     fs::create_directories(data / L"logs");
     SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
     Handle out(CreateFileW((data/L"logs"/(std::wstring(tag)+L".out")).c_str(), GENERIC_WRITE,
@@ -189,6 +224,17 @@ static DWORD run(const fs::path& exe, const std::wstring& args, const fs::path& 
         fail(L"Could not attach the launched application to its process group.");
     }
     if (ResumeThread(thread.h) == (DWORD)-1) fail(L"Could not resume the launched application.");
+    if (preparation) {
+        PrepareDialog state{process.h};
+        TASKDIALOGCONFIG td{};td.cbSize=sizeof td;
+        td.dwFlags=(TASKDIALOG_FLAGS)(TDF_CALLBACK_TIMER|TDF_SHOW_MARQUEE_PROGRESS_BAR|TDF_ALLOW_DIALOG_CANCELLATION);
+        td.pszWindowTitle=L"Project Tourline Prologue - experimental shader preparation";
+        td.pszMainInstruction=L"Preparing known shaders and pipelines";
+        td.pszContent=L"Verifying your game and preparation inputs...";
+        td.dwCommonButtons=TDCBF_CANCEL_BUTTON|TDCBF_OK_BUTTON;
+        td.pfCallback=prepare_dialog;td.lpCallbackData=(LONG_PTR)&state;
+        if (FAILED(TaskDialogIndirect(&td,nullptr,nullptr,nullptr))) fail(L"Could not open preparation progress.");
+    }
     // Keep this thread's dialogs responsive while either child is running.
     for (;;) {
         DWORD w = MsgWaitForMultipleObjects(1, &process.h, FALSE, INFINITE, QS_ALLINPUT);
@@ -205,7 +251,7 @@ static fs::path executable_for(const fs::path& disc, const std::wstring& expecte
     TASKDIALOG_BUTTON buttons[] = {{100,L"Select my decrypted EMAIN.ELF"}, {101,L"Create it using my installed RPCS3"}};
     TASKDIALOGCONFIG td{}; td.cbSize = sizeof td;
     td.dwFlags = (TASKDIALOG_FLAGS)(TDF_USE_COMMAND_LINKS | TDF_ALLOW_DIALOG_CANCELLATION);
-    td.pszWindowTitle = L"GT5P - executable setup"; td.pszMainInstruction = L"One game file needs to be decrypted";
+    td.pszWindowTitle = L"Project Tourline Prologue - executable setup"; td.pszMainInstruction = L"One game file needs to be decrypted";
     td.pszContent = L"The download contains no game data or decryption keys. If your dump already has a decrypted EMAIN.ELF, select it. Otherwise select your installed RPCS3; it will decrypt a temporary copy of EMAIN.SELF. Your original dump is left unchanged.";
     td.cButtons = 2; td.pButtons = buttons; td.dwCommonButtons = TDCBF_CANCEL_BUTTON;
     int choice = IDCANCEL;
@@ -312,8 +358,8 @@ static fs::path storage_picker() {
     TASKDIALOG_BUTTON buttons[] = {{100,L"Keep the current storage folder"}, {101,L"Choose a folder (including an external SSD)"}};
     TASKDIALOGCONFIG td{}; td.cbSize = sizeof td;
     td.dwFlags = (TASKDIALOG_FLAGS)(TDF_USE_COMMAND_LINKS | TDF_ALLOW_DIALOG_CANCELLATION);
-    td.pszWindowTitle = L"GT5P - storage location";
-    td.pszMainInstruction = L"Where should GT5P store its files?";
+    td.pszWindowTitle = L"Project Tourline Prologue - storage location";
+    td.pszMainInstruction = L"Where should Project Tourline Prologue store its files?";
     std::wstring content = L"Saves, settings, shader cache and the verified executable will be stored here:\n\n" + data.wstring() +
         L"\n\nYour game dump stays where it is. The launcher stays where you extracted it; you can put that entire folder on your SSD too. Changing storage copies existing data and keeps the original as a backup.";
     td.pszContent = content.c_str(); td.cButtons = 2; td.pButtons = buttons;
@@ -322,27 +368,30 @@ static fs::path storage_picker() {
     if (FAILED(TaskDialogIndirect(&td, &choice, nullptr, nullptr))) fail(L"Could not open storage setup.");
     if (choice == IDCANCEL) return {};
     if (choice == 100) return data;
-    return pick(true, L"Choose an empty folder for GT5P saves, settings and cache");
+    return pick(true, L"Choose an empty folder for Project Tourline Prologue saves, settings and cache");
 }
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (!argv) fail(L"Could not read launcher options.");
-        bool force = false, open = false, unknown = false, choose_storage = false;
-        fs::path storage;
+        bool force = false, open = false, unknown = false, choose_storage = false, prepare = false, no_prepared = false;
+        fs::path storage, prepare_assets;
         for (int i = 1; i < argc; ++i) {
             if (!wcscmp(argv[i], L"--setup")) force = true;
             else if (!wcscmp(argv[i], L"--check")) quiet = true;
             else if (!wcscmp(argv[i], L"--open-data")) open = true;
             else if (!wcscmp(argv[i], L"--choose-storage")) choose_storage = true;
+            else if (!wcscmp(argv[i], L"--prepare")) prepare = true;
+            else if (!wcscmp(argv[i], L"--no-prepared")) no_prepared = true;
+            else if (!wcscmp(argv[i], L"--prepare-assets") && i+1<argc) { prepare=true;prepare_assets=argv[++i]; }
             else if (!wcscmp(argv[i], L"--set-storage") && i+1 < argc) storage = argv[++i];
             else unknown = true;
         }
         LocalFree(argv);
-        silent_errors = !storage.empty();
-        if (unknown || (quiet && (choose_storage || !storage.empty() || open)))
-            fail(L"Supported options: --setup, --check, --open-data, --choose-storage, --set-storage <empty folder>. Storage changes cannot be combined with --check.");
+        silent_errors = !storage.empty() || !prepare_assets.empty();
+        if (unknown || (quiet && (choose_storage || !storage.empty() || open || prepare)) || (prepare && (choose_storage || !storage.empty() || open)))
+            fail(L"Supported options: --setup, --check, --prepare, --prepare-assets <folder>, --no-prepared, --open-data, --choose-storage, --set-storage <empty folder>. Preparation/storage changes cannot be combined with --check.");
         if (FAILED(com)) fail(L"Windows COM initialization failed.");
         std::array<wchar_t, 32768> module{};
         DWORD n = GetModuleFileNameW(nullptr, module.data(), (DWORD)module.size());
@@ -362,7 +411,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 data = saved;
                 if (!fs::is_directory(data)) {
                     data = home;
-                    fail(L"Your selected GT5P storage is unavailable:\n\n" + saved + L"\n\nReconnect the drive and try again. Your saved selection has been kept.");
+                    fail(L"Your selected Project Tourline Prologue storage is unavailable:\n\n" + saved + L"\n\nReconnect the drive and try again. Your saved selection has been kept.");
                 }
             }
         }
@@ -376,9 +425,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         // Serialize locator changes and launches even while data lives elsewhere.
         if (!override_data) fs::create_directories(home);
         Handle home_lock(override_data ? INVALID_HANDLE_VALUE : CreateFileW((home/L"storage.lock").c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr));
-        if (!override_data && home_lock.h == INVALID_HANDLE_VALUE) fail(L"GT5P is already running or storage setup is in use.");
+        if (!override_data && home_lock.h == INVALID_HANDLE_VALUE) fail(L"Project Tourline Prologue is already running or storage setup is in use.");
         Handle lock(CreateFileW((data/L"launcher.lock").c_str(), GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr));
-        if (lock.h == INVALID_HANDLE_VALUE) fail(L"GT5P is already running or this user-data folder is not writable.");
+        if (lock.h == INVALID_HANDLE_VALUE) fail(L"Project Tourline Prologue is already running or this user-data folder is not writable.");
         auto expected = release_value(L"elf_sha256");
         if (release_value(L"schema") != L"1" || release_value(L"target") != L"BCUS98158" ||
             release_value(L"version") != L"03.00" || expected.size() != 64)
@@ -406,11 +455,26 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             catch (const Failure&) {} catch (const fs::filesystem_error&) {}
         }
         if (!valid) {
-            if (quiet || env(L"GT5P_LAUNCHER_SETUP") == L"0") fail(L"Setup is missing or no longer valid. Run GT5P.exe --setup.");
+            if (quiet || env(L"GT5P_LAUNCHER_SETUP") == L"0") fail(L"Setup is missing or no longer valid. Run tourline-prologue.exe --setup.");
             if (!setup(expected)) { CoUninitialize(); return 0; }
             disc = game_folder(profile(data/L"setup.ini", L"game", L"directory"));
         }
         if (quiet) { CoUninitialize(); return 0; }
+        if (prepare) {
+            auto helper=install/L"preparation"/L"GT5P-Prepare.exe";
+            if (!fs::is_regular_file(helper) || hash(helper)!=release_value(L"prepare_sha256"))
+                fail(L"The preparation helper is missing or does not match this release. Re-extract the full ZIP.");
+            if (prepare_assets.empty()) MessageBoxW(nullptr,L"Experimental preparation covers known menu/HSR/Daytona pipelines, not the whole game.\n\nSelect your own GT.VOL unpacked with GTToolsSharp. This is separate from the extracted disc folder used for play. Preparation may take several minutes and stores local shader/driver files. No consistent stutter reduction is established. You can cancel and resume, or close this and launch Project Tourline Prologue normally.",L"Project Tourline Prologue - optional preparation",MB_OK|MB_ICONINFORMATION);
+            auto assets=prepare_assets.empty()?pick(true,L"Choose your unpacked GT.VOL asset folder"):prepare_assets;
+            if (assets.empty()) { CoUninitialize();return 0; }
+            fs::remove(data/L"prepare.cancel");
+            std::ofstream(data/L"prepare-status.txt") << "Starting preparation...";
+            DWORD result=run(helper,L"--install "+quote(install)+L" --storage "+quote(data)+L" --assets "+quote(assets)+L" --launcher-pid "+std::to_wstring(GetCurrentProcessId()),data,L"prepare",true);
+            if (result==2) { CoUninitialize();return 0; }
+            if (result) fail(L"Preparation did not finish. Normal play is still available. Logs are in:\n\n"+(data/L"logs").wstring());
+            if (prepare_assets.empty()) MessageBoxW(nullptr,L"Known pipelines prepared. Launch tourline-prologue.exe to play. Uncovered pipelines and different settings use normal demand compilation.",L"Project Tourline Prologue",MB_OK|MB_ICONINFORMATION);
+            CoUninitialize();return 0;
+        }
         // Keep all mutable state outside the ZIP/install directory. Assets are
         // small, distributable glyph art; this never copies the game dump.
         if (!fs::is_directory(install/L"assets")) fail(L"The release assets folder is missing.");
@@ -422,11 +486,20 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             f << "# First-run preset. Change this in the game's F1 settings.\n[video]\nresolution = \"720p\"\naspect = \"16:9\"\nmsaa = 2\nshader_precompile = true\npipeline_async = true\n";
             if (!f) fail(L"Could not write initial video settings.");
         }
+        setenv(L"PS3_TITLE", L"Project Tourline Prologue");
         setenv(L"GT5P_ROOT", data.wstring());
         setenv(L"PS3_VFS_ROOT", data.wstring());
         setenv(L"PS3_GAMEDATA_ROOT", (data/L"gamedata").wstring());
         setenv(L"GT5P_SETTINGS", settings.wstring());
         setenv(L"GT5P_GAME_DIR", disc.wstring()+L"/");
+        auto prepared=utf8_file(data/L"prepared-cache.txt");
+        if (no_prepared) setenv(L"RSX_SHADER_CACHE",(data/L"shadercache").wstring());
+        else if (!prepared.empty()) {
+            auto cache=fs::weakly_canonical(data/fs::path(prepared));
+            if (!within(cache,fs::weakly_canonical(data/L"preparation")) || !fs::is_directory(cache))
+                fail(L"The prepared cache selection is invalid. Remove prepared-cache.txt to use the ordinary cache; keep the cache directories.");
+            setenv(L"RSX_SHADER_CACHE",cache.wstring());
+        }
         if (env(L"PS3_VERBOSE").empty()) setenv(L"PS3_VERBOSE", L"0");
         DWORD code = run(game, quote(data/L"input"/L"EMAIN.ELF"), data, L"play");
         if (code) fail(L"The game exited with code " + std::to_wstring(code) + L". Logs are in:\n\n" + (data/L"logs").wstring());
@@ -434,7 +507,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     } catch (const Failure& e) {
         report(e.message);
     } catch (const std::exception&) {
-        report(L"A file operation failed. Check free space and folder access, then run GT5P.exe --setup again.");
+        report(L"A file operation failed. Check free space and folder access, then run tourline-prologue.exe --setup again.");
     }
     if (SUCCEEDED(com)) CoUninitialize();
     return 1;

@@ -254,6 +254,12 @@ def export(trace, cache, compat):
 
 def locate(records, catalog, elf, asset_map=None, assets=None):
     """One bounded, read-only container pass, no address-space polling."""
+    if catalog is None:
+        from pipeline_asset_map import read as read_map,resolve
+        if asset_map is None or assets is None:raise ValueError('Asset-only lookup requires a verified location map and original assets')
+        wanted={(s,r[s]['sha256'],r[s]['size']) for r in records for s in ('vp','fp')}
+        vertices,fragments,stats=resolve(read_map(asset_map),assets,elf,wanted)
+        return vertices,fragments,dict(asset_map=stats,vertex_found=len(vertices),fragment_found=len(fragments))
     index = json.loads(bounded_read(catalog / 'index.json', 64 * 1024 * 1024))
     wanted_fp = {r['fp']['sha256'] for r in records}
     wanted_vp = {r['vp']['size'] for r in records}
@@ -331,9 +337,9 @@ def cached_shaders(document,cache):
     return found
 
 
-def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False, asset_map=None, assets=None, fragment_mode='batch', resume=False):
+def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_fallback=False, asset_map=None, assets=None, fragment_mode='batch', resume=False, output_validator=isolated, progress=None):
     idle()
-    output = isolated(output)
+    output = output_validator(output)
     if output.exists() and not resume:
         raise ValueError('Use a fresh ignored output or --resume; existing caches are preserved')
     try:
@@ -361,7 +367,7 @@ def prepare(template, catalog, elf, engine, decoder, game_root, output, demand_f
                   asset_map=map_id)
     from preparation_checkpoint import Checkpoint
     started=time.perf_counter()
-    with Checkpoint(output,contract,resume) as checkpoint:
+    with Checkpoint(output,contract,resume,progress=progress) as checkpoint:
         checkpoint.stage('checking-cache')
         checked=time.perf_counter()
         reused=cached_shaders(document,output/'shadercache') if resume else {}
@@ -389,6 +395,7 @@ def prepare_document(document,template,catalog,elf,engine,decoder,game_root,outp
     vs_bytes=0
     checkpoint.stage('vertex',completed=0,total=len(document['records']))
     for number, r in enumerate(document['records'],1):
+        if checkpoint.progress:checkpoint.progress('vertex',dict(completed=number-1,total=len(document['records'])))
         if number % 128 == 0:
             print(f"Vertex/state validation {number}/{len(document['records'])}; unique vertex variants {len(vs_cache)}",flush=True)
             checkpoint.stage('vertex',completed=number-1,total=len(document['records']))
@@ -412,7 +419,7 @@ def prepare_document(document,template,catalog,elf,engine,decoder,game_root,outp
                 vs_cache[identity]=(source_id,code_id,code)
             source_id,code_id,code = vs_cache[identity]
             if code_id != r['vs'] or source_id != r['vp_source']:
-                raise ValueError('Rebuilt vertex identifier differs')
+                raise ValueError(f'Rebuilt vertex identifier differs: source={source_id}, bytecode={code_id}')
             save_code(cache / (r['vp_source'] + '.dxbc'), code)
             job_id = sha(r['key'].encode())
             job = dict(id=job_id, fragment=f, fragment_sha256=sha(f), state=r['state'], used=fp_identity(f)['textures'])

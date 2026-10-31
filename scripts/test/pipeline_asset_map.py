@@ -1,5 +1,6 @@
 """Verify local-asset map generation, portable lookup and fail-closed checks."""
 import copy
+import json
 from pathlib import Path
 import struct
 import sys
@@ -42,6 +43,10 @@ with tempfile.TemporaryDirectory() as temporary:
     v,f,lookup=resolve(doc,assets,elf,wanted)
     assert v=={identity('vp',vp):vp} and f=={identity('fp',fp):fp}
     assert lookup['containers_matched']==1
+    from pipeline_template import locate
+    map_path=root/'map.json';map_path.write_text(json.dumps(doc))
+    vv,ff,summary=locate([record],None,elf,map_path,assets)
+    assert vv==v and ff==f and summary['asset_map']['programs_found']==2
     empty,stats=build([record],trace,assets,elf,wanted)
     assert not empty['records'] and stats['requested']==0
     bad=copy.deepcopy(doc);bad['records'][0]['offset']=0

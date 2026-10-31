@@ -10,6 +10,13 @@ pipeline state, and preparation reconstructs/verifies both shaders and native
 pipelines from the user's own assets. Remaining work is breadth, performance and
 player integration; retained-route coverage is not whole-game coverage.
 
+The v0.2 candidate adds an optional standalone player entry point. See
+[player setup](player-setup.md#optional-shader-preparation-in-v02) and
+[release notes](release-v0.2.md). It uses a complete hash/offset map for this
+starter, rather than requiring a developer SHDS catalogue. Users currently need
+their own unpacked GT.VOL directory. Broader coverage, settings/GPU validation
+and a consistent live stutter benefit remain separate requirements.
+
 1. **Broaden representative coverage.** Merge templates from other tracks,
    dealerships, menus, cars and cameras. Report each session's additional and
    shared programs/state so further collection targets useful gaps rather than
@@ -33,6 +40,9 @@ player integration; retained-route coverage is not whole-game coverage.
 6. **Integrate the launcher.** Detect game/version and supported settings, show
    progress, support cancellation/resume, and handle cache compatibility. Ship
    metadata only; shader contents and GPU-specific binaries remain local.
+   Phase 173 implements an optional standalone player path with manual unpacked
+   asset selection; automatic extraction, wider settings support and broader
+   acceptance remain open.
 7. **Validate the complete player path.** Exercise fresh caches, multiple GPUs,
    settings changes and representative routes. Measure loading time, memory,
    actual preparation hits and hitches; inspect rendering before enabling any
@@ -78,7 +88,7 @@ Phase 160 adds [named shared-pass selection and isolated state checks](shader-re
 This is developer reconstruction work. CPU inputs and one conditional shared-pass
 rule are now independently constructed; other shared resource/pass contexts remain open.
 
-## Identifier-only templates (Phase 172; optional developer path)
+## Identifier-only templates (Phase 173; optional preparation path)
 
 This adapts the hash/numeric-state design in [Project Pyrrhus's template patch](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2071-pipeline-template-prewarm.patch),
 [context/key correction](https://github.com/undecuple/project-pyrrhus/blob/main/port/patches/2077-pso-key-vp-start-template-default.patch)

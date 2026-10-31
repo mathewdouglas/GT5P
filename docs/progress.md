@@ -9,6 +9,109 @@ wrong far more often than the measurements under them. Before a conclusion goes
 in here, run the one command that would falsify it; label anything untested as a
 hypothesis in the text itself.
 
+## Phase 173 - Optional v0.2 player preparation candidate (2026-10-31)
+
+The user requested the release preparation steps: fix packaging, expose optional
+preparation, validate a packaged build, and author accurate release notes.
+VERSION is now 0.2, with a local candidate and feature-branch implementation;
+this phase does not merge main, tag or publish a release. Normal launching and
+the live asynchronous draw policy remain available.
+
+`Prepare shaders.cmd` invokes native launcher `--prepare`; `--prepare-assets`
+accepts an explicit unpacked GT.VOL directory. The existing verified disc/ELF
+setup is reused. A PyInstaller 6.16.0 standalone helper includes Python/tool
+code, renderer contract text, licenses and a production VP decoder built from
+the selected isolated runtime. Players need no Python/compiler install, but
+currently need their own assets unpacked with GTToolsSharp. No unpacker or game
+assets are bundled. The UI explains this extra requirement and partial coverage.
+
+`build_program_map.py` verifies original catalogue source slices and SHDS VP
+records, supplementing them with the existing verified map. Its player map
+contains only container/program hashes, sizes, offsets and byte order. All 976
+starter identities (293 VP/683 FP) are located directly without a player-side
+developer catalogue. The existing smaller developer supplement is retained.
+No observed pipeline record, expected native key, runtime source contract or
+renderer setting changes. This extends lookup, not whole-game coverage.
+
+The native progress/cancel dialog uses the existing launcher job ownership.
+Only its actual verified launcher parent is eligible for exclusion from the helper's game
+process check. The initial integration shared the GT5P.exe image name; the
+branded public launcher is now tourline-prologue.exe. Other
+sessions are rejected and never stopped. Each offline child is owned, timed and
+checked for no guest entry. Checkpoints pin metadata and engine/decoder identity;
+resume verifies original assets and cached bytecode and revalidates native PSOs.
+Successful preparation atomically selects a storage-relative cache path. Failed
+or cancelled new preparation preserves the previous selection. Ordinary/older
+caches remain intact. `--no-prepared` selects the ordinary cache for a launch;
+storage relocation preserves the relative preparation selection.
+
+The first frozen-tool test safely rejects every vertex result: PyInstaller
+bundled an SDK D3D compiler with different output. NativeCompiler now loads the
+Windows system compiler by absolute path, matching the game's compiler lookup.
+No verification is relaxed. Initial failing evidence remains in
+`scratch/player-v02-validation`; it is not accepted as a successful preparation.
+
+A corrected ZIP is extracted to a new install and fresh storage. A real helper
+run is cancelled after one vertex result, then resumed through the launcher.
+All 2,334 records pass shader identifiers, native keys/creation and persisted
+cache verification. Resume reuses one VP and compiles the other 295 variants;
+1,990 exact fragment requests compile in two processes, with zero rejected jobs.
+Preparation reports 443.604 s including lookup through cache verification;
+the launcher/test wrapper measures 451.714 s. Asset lookup reads 105 candidate
+containers (1,058,112,104 bytes), matches 102 and locates all programs in 1.705 s.
+OS/driver caches remain warm; this is interrupted fresh application preparation,
+not a universal first-run time. Evidence:
+`scratch/player-v02-acceptance/{validation.json,attempt2-report.json}`.
+
+The final candidate passes setup check and another full resume with PATH limited
+to Windows System32. It starts zero shader compiler processes and all 2,334
+native driver calls use cached blobs. This verifies standalone execution without
+Python/compiler tools on PATH. Its evidence is
+`scratch/player-v02-acceptance/{final-candidate-validation.json,attempt3-report.json}`.
+Engine/helper/ZIP hashes are recorded there. Candidate binaries and metadata
+remain local; only identifier/numeric metadata and authored code are tracked.
+
+Native launcher tests pass prepared-cache selection, ordinary-cache rollback,
+real progress-dialog cancellation with an owned stand-in helper, duplicate
+launch/shutdown ownership, settings preservation and storage relocation. Package
+tests reject changed helper payloads and manifest traversal, and exclude an
+unlisted synthetic private cache. Template/map/checkpoint/batch/reconstruction
+checks and actionlint pass. CI builds the standalone helper and uses authored
+version-specific release notes when a future trusted release tag is published.
+
+The packaged launcher is exercised on the same scripted HSR route with the
+prepared cache and `--no-prepared`, recording menu/introduction/race screenshots
+under `scratch/player-v02-acceptance/route`. The prepared run draws track, cars,
+crowd, shadows, HUD and rear-view image in the inspected frames. The fresh
+ordinary-cache run initially omits scene draws during async preparation (for
+example intro18), then renders the scene by its final shot. Both runs present
+frames and reach the race, but their game clocks/cameras differ, so they are not
+pixel-aligned or evidence of a repeatable frame-time benefit. The prepared run
+still logs a slow demand driver build (`pso-hitch`); that counter alone does not
+measure a presented-frame hitch. Existing private fixture gamedata is mounted
+in the test storage to avoid another 4 GB game install copy; the original
+checkout/build inputs are read only and its processes/caches are untouched.
+
+Limitations: partial observed coverage/default settings, manual GT.VOL extraction,
+single GPU acceptance and no consistent stutter claim. Cancellation/termination
+can leave partial artifacts that fail verification and need inspection; no
+automatic cache deletion/repair is added. Preparing pipelines on disk does not
+establish menu/race preload ownership or remove every driver creation on demand.
+Release notes and START-HERE make preparation experimental and optional.
+
+Follow-up branding request: the player entry point and package shortcuts now use
+`tourline-prologue.exe`; the launcher sets existing `PS3_TITLE` to
+`Project Tourline Prologue`. Storage/compatibility namespaces remain compatible
+with v0.1. The helper verifies the renamed parent, and the checked native window
+title is exactly `Project Tourline Prologue` before frame statistics are added.
+The game binary/decoder and pipeline keys do not change for branding. A tool-only
+re-freeze reuses the verified decoder, and the branded candidate again passes
+all 2,334 native cached-blob checks with zero shader compiler processes under a
+clean PATH. Evidence:
+`scratch/player-v02-acceptance/{tourline-candidate-validation.json,attempt4-report.json,tourline-window/report.json}`.
+The local ZIP is `scratch/tourline-prologue-v0.2-candidate.zip`, SHA-256
+`c381f43d4113fdb8064cf92cf7bd583e0b2fd5d6788a01c5db12874c8ce15e98`.
+
 ## Phase 172 - Default batching and verified template resume (2026-10-31)
 
 At the user's request, exact fragment batching is now the default in template,

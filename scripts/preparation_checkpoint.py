@@ -26,12 +26,13 @@ def preflight_tree(root):
 
 
 class Checkpoint:
-    def __init__(self,output,contract,resume=False):
+    def __init__(self,output,contract,resume=False,progress=None):
         self.output=output
         self.contract=contract
         self.resume=resume
         self.stream=None
         self.state=None
+        self.progress=progress
 
     def __enter__(self):
         if self.resume:
@@ -75,6 +76,7 @@ class Checkpoint:
             raise
 
     def stage(self,phase,**progress):
+        if self.progress:self.progress(phase,progress)
         self.state.update(phase=phase,progress=progress)
         self.state.pop('error',None)
         save_report(self.output/'preparation-state.json',self.state)

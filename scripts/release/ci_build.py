@@ -148,15 +148,19 @@ def main():
         tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode('utf-8').split('\0')
         cache.save([name for name in tracked if name])
     launcher = ROOT/'out/launcher'
+    preparer=ROOT/'out/preparer'
+    run(sys.executable,'scripts/release/build_preparer.py','--runtime',runtime,'--output',preparer,'--clang-cl',clang)
+    run(preparer/'dist/GT5P-Prepare/GT5P-Prepare.exe','--help')
     # No interpolated command text; the batch file receives a controlled path.
     run('cmd.exe', '/d', '/c', 'scripts\\release\\build_launcher.cmd', launcher)
     run('cl', '/nologo', '/std:c++17', '/O2', '/W4', '/MT', '/EHsc',
         '/Fo'+str(launcher/'probe.obj'), '/Fe'+str(launcher/'probe.exe'), 'scripts/test/launcher_probe.cpp')
-    run(sys.executable, 'scripts/test/launcher_native.py', '--launcher', launcher/'GT5P.exe', '--probe', launcher/'probe.exe')
+    run(sys.executable, 'scripts/test/launcher_native.py', '--launcher', launcher/'tourline-prologue.exe', '--probe', launcher/'probe.exe')
     run(sys.executable, 'scripts/test/player_package.py')
-    output = ROOT/'out/ci-player'/f'GT5P-v{version}-windows-x64-{sha}.zip'
+    output = ROOT/'out/ci-player'/f'tourline-prologue-v{version}-windows-x64-{sha}.zip'
     run(sys.executable, 'scripts/release/package_player.py', '--build-dir', ROOT/'build',
-        '--launcher-exe', launcher/'GT5P.exe', '--elf', ROOT/'input/EMAIN.ELF',
+        '--launcher-exe', launcher/'tourline-prologue.exe', '--elf', ROOT/'input/EMAIN.ELF',
+        '--preparer-dir',preparer/'dist/GT5P-Prepare',
         '--vc-runtime-dir', paths['vc_runtime_dir'], '--notices-dir', paths['notices_dir'], '--output', output)
     print(f'Player ZIP ready for artifact upload: {output.name}')
     if os.environ.get('GITHUB_OUTPUT'):

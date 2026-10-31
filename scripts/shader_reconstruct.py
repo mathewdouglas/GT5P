@@ -108,7 +108,12 @@ class NativeCompiler:
             function = getattr(self.decoder, name)
             function.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32]
             function.restype = ctypes.c_int
-        self.compiler = ctypes.WinDLL('d3dcompiler_47.dll')
+        # A frozen helper's DLL search directory may contain an SDK compiler
+        # with different output. Match the game's system D3D compiler explicitly.
+        system = ctypes.create_unicode_buffer(32768)
+        count = ctypes.windll.kernel32.GetSystemDirectoryW(system,len(system))
+        if not 0 < count < len(system):raise ValueError('Windows system directory unavailable')
+        self.compiler = ctypes.WinDLL(str(Path(system.value)/'d3dcompiler_47.dll'))
         self.compiler.D3DCompile.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p,
                                             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p,
                                             ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint,

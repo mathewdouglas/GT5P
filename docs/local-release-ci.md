@@ -1,7 +1,22 @@
 # Building a player ZIP on this PC after pushes to main
 
-Port release version: **v0.1**, from `VERSION`. Artifact/ZIP names include that
+Next port release candidate: **v0.2**, from `VERSION`. Artifact/ZIP names include that
 version and the triggering commit, while the game-data version stays 03.00.
+
+v0.2 builds the optional standalone preparation helper with pinned PyInstaller
+6.16.0 (`python -m pip install pyinstaller==6.16.0` in the external CI venv).
+`scripts/release/build_preparer.py` freezes only tool code/renderer contract text,
+builds the production VP decoder from the selected isolated runtime, and emits
+a hash manifest and Python/PyInstaller licenses. The packager requires
+`--preparer-dir <build-output>/dist/GT5P-Prepare` and verifies its listed files.
+It independently validates bundled template shards and complete player program
+locations. No private catalogue, shader/cache bytes or unpacked assets enter CI
+artifacts. Maintainer-only `--engine-exe` can select an isolated incrementally
+relinked engine while reading target/build-type/dependency inputs from a
+completed build; normal CI continues using its own build/gt5p.exe.
+For a tool-only re-freeze, `build_preparer.py --decoder <verified decoder.dll>`
+reuses the unchanged production decoder rather than needlessly changing its
+checkpoint identity. CI builds it from the pinned runtime by default.
 
 The dedicated local runner is provisioned and validated. The first cold build
 took 17m21s; a cached build including checks, packaging and upload took 1m10s.

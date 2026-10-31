@@ -1,7 +1,7 @@
-GT5P Recomp - player setup
+Project Tourline Prologue - player setup
 
 1. Extract the ENTIRE release ZIP to a folder. Do not run it inside the ZIP.
-2. Run GT5P.exe. Choose where to store saves, settings, shaders and the verified
+2. Run tourline-prologue.exe. Choose where to store saves, settings, shaders and the verified
    executable (the default folder or an empty folder on your external SSD).
    Then select your extracted GT5P disc dump or its PS3_GAME folder.
    Supported: BCUS98158, US disc, v03.00. Other builds and ISO files are not
@@ -10,11 +10,23 @@ GT5P Recomp - player setup
    offered, or select a decrypted EMAIN.ELF made from your own EMAIN.SELF.
    RPCS3/firmware/keys are not included. Decryption uses a temporary copy and
    does not modify the original dump.
-4. Use GT5P.exe for every launch. Setup is remembered. The internal
+4. Use tourline-prologue.exe for every launch. Setup is remembered. The internal
    runtime/gt5p.exe is the game engine, not the player launch entry point.
 
 The initial preset is 720p with 2x MSAA. Press F1 for game settings.
 Do not move/delete the selected dump while using the port.
+
+Optional experimental shader preparation (v0.2):
+After setup, close the game and run Prepare shaders.cmd. Select your own GT.VOL
+asset folder unpacked with GTToolsSharp (not the extracted PS3_GAME folder).
+The unpacker and game assets are not included. No Python or compiler install is
+needed. Known menu/High Speed Ring/Daytona shaders and pipelines are reconstructed
+on your PC. This can take several minutes and uses additional local cache space.
+Cancel keeps completed work; run the same option again to resume. Successful
+preparation is selected on later launches. Normal launching remains available
+without preparation. Whole-game coverage and consistent stutter reduction have
+not been established; other draws/settings still compile on demand.
+Run tourline-prologue.exe --no-prepared to use the ordinary cache without deleting either cache.
 
 Settings, saves, shaders and logs are in your selected storage folder.
 The default is %LOCALAPPDATA%\GT5PRecomp.
@@ -27,13 +39,14 @@ Close the game and double-click Change storage.cmd to change storage later.
 Existing data is copied and verified; the original remains as a backup.
 The chosen location is remembered. Reconnect an external drive before launch.
 
-Run GT5P.exe --setup to change the dump folder.
-Run GT5P.exe --open-data to open saves/settings/logs in Explorer.
-GT5P.exe --check validates setup without launching the game or opening dialogs.
+Run tourline-prologue.exe --setup to change the dump folder.
+Run tourline-prologue.exe --open-data to open saves/settings/logs in Explorer.
+tourline-prologue.exe --check validates setup without launching the game or opening dialogs.
 
 For an update, close the game, then extract the new ZIP into its own folder.
 User data is retained. If an update targets a different game executable,
 setup will request the matching game file again.
 
 No game data, saves, firmware, keys or RPCS3 are supplied in this download.
-The shader cache starts empty. First visits may compile shaders.
+All shader contents and driver binaries are generated locally. First visits may
+still compile shaders even after optional preparation.

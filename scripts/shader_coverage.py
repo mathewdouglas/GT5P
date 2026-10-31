@@ -13,8 +13,9 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(sys._MEIPASS) if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]
 MAX_FP = 32768
 MAX_CODE = 4 * 1024 * 1024
 MAGIC = 0x31574D5241503547

@@ -4,6 +4,7 @@ No real executable, DLL, game dump, key or decrypted game data is used. Run
 after the active development/testing session is finished, as documented.
 """
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
@@ -22,6 +23,8 @@ def put(path, content):
 
 
 def main():
+    reviewed=package.template_files()
+    assert any(n.endswith('/player-map.json') for n in reviewed)
     with tempfile.TemporaryDirectory(prefix='gt5p-package-fixture-') as temp:
         root = Path(temp)
         package.ROOT = root / 'repo'
@@ -43,6 +46,12 @@ def main():
         put(package.ROOT / 'LICENSE', b'Synthetic license fixture\n')
         put(package.ROOT / 'launcher/START-HERE.txt', b'Synthetic instructions\n')
         put(package.ROOT / 'launcher/Change storage.cmd', b'@echo off\n')
+        put(package.ROOT / 'launcher/Prepare shaders.cmd', b'@echo off\n')
+        helper=root/'helper'
+        payloads={'GT5P-Prepare.exe':pe,'decoder.dll':pe,'licenses/Python-LICENSE.txt':b'Synthetic license',
+                  'licenses/PyInstaller-COPYING.txt':b'Synthetic license'}
+        for name,content in payloads.items():put(helper/name,content)
+        put(helper/'files.json',json.dumps(dict(schema=1,files={n:package.sha(helper/n) for n in payloads})).encode())
         put(package.ROOT / 'assets/glyphs/textures.txt', b'# Synthetic metadata\n')
         put(package.ROOT / 'assets/glyphs/kenney/License.txt', b'Synthetic license\n')
         # These deliberately sit near the build input and must never leak.
@@ -53,10 +62,10 @@ def main():
         out = root / 'player.zip'
         argv = ['package_player.py', '--build-dir', str(build), '--launcher-exe', str(root/'launcher.exe'),
                 '--elf', str(root/'EMAIN.ELF'), '--vc-runtime-dir', str(root/'crt'),
-                '--notices-dir', str(root/'notices'), '--output', str(out)]
+                '--notices-dir', str(root/'notices'), '--preparer-dir',str(helper),'--output', str(out)]
 
         def call():
-            with patch.object(sys, 'argv', argv):
+            with patch.object(sys, 'argv', argv),patch.object(package,'template_files',return_value={}):
                 package.main()
 
         def refused(label):
@@ -86,11 +95,23 @@ def main():
         put(png, b'not a PNG')
         refused('disguised asset')
         png.unlink()
+        put(helper/'decoder.dll',b'MZ altered helper')
+        refused('altered helper distribution')
+        put(helper/'decoder.dll',pe)
+        manifest=json.loads((helper/'files.json').read_text())
+        changed=json.loads((helper/'files.json').read_text())
+        changed['files']['../escaped.txt']='0'*64
+        put(helper/'files.json',json.dumps(changed).encode())
+        refused('preparer manifest traversal')
+        put(helper/'files.json',json.dumps(manifest).encode())
+        put(helper/'shadercache/private.dxbc',b'private cache sentinel')
         call()
         with zipfile.ZipFile(out) as z:
             names = set(z.namelist())
             assert 'release.ini' in names and 'runtime/gt5p.exe' in names
+            assert 'tourline-prologue.exe' in names and 'GT5P.exe' not in names
             assert 'Change storage.cmd' in names
+            assert 'Prepare shaders.cmd' in names and 'preparation/GT5P-Prepare.exe' in names
             assert not any(n.startswith(('input/', 'gamedata/', 'shadercache/')) for n in names)
             assert not any(n.lower().endswith(('.elf', '.self', '.toml')) for n in names)
             assert all(b'sentinel' not in z.read(n) for n in names)

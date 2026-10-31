@@ -36,13 +36,25 @@ boot milestone upstream reaches.
 Treat every statement about BCUS98158 as a hypothesis unless it appears under
 "Measured on the disc build" below.
 
-## Start here: state of play (2026-10-31, Phase 172)
+## Start here: state of play (2026-10-31, Phase 173)
 
 Read this section first when picking the work up in a new session on this
 machine. Everything below it is the long record; [docs/progress.md](docs/progress.md)
-has the evidence, newest phase first (Phase 172 is the latest).
+has the evidence, newest phase first (Phase 173 is the latest).
 
 ### What works now
+
+- **Optional v0.2 player preparation (Phase 173):** standalone helper and native
+  launcher progress/cancel/resume flow are implemented. Strict packaging accepts
+  validated template metadata and manifest-listed helper dependencies/licenses.
+  The player map locates all 976 starter programs from the user's own unpacked
+  GT.VOL/ELF without a developer catalogue. Fresh-storage cancellation/resume
+  prepares all 2,334 records; a clean-PATH final candidate reuses every shader
+  and all native driver blobs. Packaged HSR/menu screenshots and rollback are
+  checked; fresh ordinary-cache async draws initially remain incomplete, then
+  recover. No consistent stutter or whole-game claim. VERSION is 0.2 candidate;
+  no main merge, tag or publication. See docs/release-v0.2.md and progress evidence.
+  Player entry: tourline-prologue.exe; game title: Project Tourline Prologue.
 
 - **Default batching and template resume (Phase 172):** exact batching is now
   the developer preparation default; --fragment-mode legacy rolls back.

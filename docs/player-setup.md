@@ -1,21 +1,52 @@
 # Player ZIP and first-run setup
 
-The port release is **v0.1**, recorded in the root `VERSION` file. Player ZIPs
-include `port_version=0.1` in `release.ini`; its separate `version=03.00` field
+The next port release candidate is **v0.2**, recorded in the root `VERSION` file. Player ZIPs
+include `port_version=0.2` in `release.ini`; its separate `version=03.00` field
 identifies the supported disc build. ps3recomp v0.18.0 is the runtime dependency,
-not the port release version. CI names ZIPs `GT5P-v0.1-windows-x64-<commit>.zip`.
+not the port release version. CI names ZIPs `tourline-prologue-v0.2-windows-x64-<commit>.zip`.
+
+## Optional shader preparation in v0.2
+
+Complete ordinary setup, close the game, then run **Prepare shaders.cmd**
+(`tourline-prologue.exe --prepare`). Select an original GT.VOL asset directory unpacked with
+GTToolsSharp. This additional extraction is currently required for preparation;
+normal play still uses the original disc selection. The helper is self-contained
+and requires no player Python/compiler installation. See [v0.2 notes](release-v0.2.md).
+
+Progress and cancellation appear in a native dialog. Repeat the option to resume
+the same metadata/helper generation. Original assets are reverified, completed
+shader bytecode is checked, and native pipelines are recreated/checked locally.
+The launcher owns the helper and its child processes in its existing Windows
+job; cancellation stops only owned preparation work. Successful completion
+atomically selects `prepared-cache.txt`, a storage-relative pointer to
+`preparation/<generation>/shadercache`. Existing ordinary and older generation
+caches remain intact. Storage relocation preserves this relative selection.
+
+The next launch uses that cache, retaining demand compilation for missing keys.
+`tourline-prologue.exe --no-prepared` uses the ordinary cache for that launch without deleting
+anything. Failure/cancellation leaves any prior selection intact. Logs are
+`logs/prepare.out` and `logs/prepare.err`; phase/checkpoint reports are inside the
+generation directory. Preparation is experimental, partial and optional; no
+consistent stutter benefit or whole-game coverage is claimed.
+
+The package also contains `preparation/GT5P-Prepare.exe`, its Python runtime and
+licenses, the production vertex decoder, and validated template/location JSON.
+The frozen tool loads the system D3D compiler explicitly, matching the game's
+compiler search rather than accepting a freezer-selected SDK DLL. Metadata is
+validated before packaging; only build-manifest-listed standalone tool files
+are included. No game-derived cache is distributed.
 
 Implementation branch: `feature/player-setup`, based on the v0.18.0 upgrade.
 Worktree: `../GT5P-player-setup`. The shared working tree, runtime checkouts,
 generated sources and existing build were left alone. Initial implementation
 was written while Claude was active. With Claude paused, the launcher was
-compiled and tested on 2026-10-29 as recorded below. Interactive and real-game
-acceptance checks remain before distributing a player ZIP. No release asset
-has been uploaded.
+compiled and tested on 2026-10-29 as recorded below. Those original implementation
+notes predate the v0.1 release; v0.2 candidate acceptance is recorded in the
+latest progress phase.
 
 ## Player experience
 
-1. Extract the entire ZIP and launch **GT5P.exe**.
+1. Extract the entire ZIP and launch **tourline-prologue.exe**.
 2. Choose the default storage folder or an empty folder on another drive,
    including an external SSD. Then select the extracted disc dump, or its
    `PS3_GAME` directory. The launcher
@@ -31,13 +62,13 @@ has been uploaded.
 4. The ELF must match the release's SHA-256. A verified private copy and the
    selected dump path are saved. Later launches skip setup while they remain
    valid. A missing/moved/wrong-version dump reopens setup.
-5. Continue using **GT5P.exe**. It starts `runtime/gt5p.exe` internally. Players
+5. Continue using **tourline-prologue.exe**. It starts `runtime/gt5p.exe` internally. Players
    do not need Python, a compiler, the repository, junctions or developer batch
    files. The initial preset is 720p, 16:9, 2x MSAA with async shader/pipeline
    compilation; existing settings are not overwritten. F1 changes game options.
 
 This is one visible launch entry point with two executables internally. A
-separate setup-only executable adds no benefit: `GT5P.exe --setup` changes the
+separate setup-only executable adds no benefit: `tourline-prologue.exe --setup` changes the
 installation path without duplicating startup logic. The engine EXE alone is
 still a developer entry point and does not load the launcher's saved selection.
 
@@ -46,7 +77,7 @@ still a developer entry point and does not load the launcher's saved selection.
 The release contains only these selected files:
 
 ```text
-GT5P.exe                 native /MT launcher, no managed runtime required
+tourline-prologue.exe                 native /MT launcher, no managed runtime required
 release.ini              schema, target, ELF digest and engine digest
 START-HERE.txt
 Change storage.cmd       reopen the storage chooser with the game closed
@@ -65,7 +96,8 @@ It excludes the ELF/SELF, PARAM.SFO, ROM volumes, savedata, gamedata, existing
 settings, shadercache, logs, firmware, keys, and RPCS3. The ELF's digest is
 metadata, not the file. The package script never recursively copies a build or
 third_party directory. ZIP inputs are explicit; assets are limited to PNG/text
-and checked for expected content. EXEs/DLLs must be native Windows x64 PE files.
+and checked for expected content; v0.2 additionally permits schema/checksum-checked
+template metadata. EXEs/DLLs must be native Windows x64 PE files.
 
 Mutable files live in the user-selected storage folder, initially defaulting
 to `%LOCALAPPDATA%\GT5PRecomp`:
@@ -91,7 +123,7 @@ empty storage folder on that drive during first setup. Original disc files
 remain in their selected location. Existing configured profiles keep their
 location until the user chooses to change it.
 
-Double-click `Change storage.cmd` (or run `GT5P.exe --choose-storage`) with the
+Double-click `Change storage.cmd` (or run `tourline-prologue.exe --choose-storage`) with the
 game closed to change storage. Saves/settings/cache/imports are copied and
 SHA-256 verified before atomically changing the remembered location. The
 original profile is retained as a backup. Nonempty and nested destinations
@@ -172,13 +204,17 @@ dependencies before publishing; the script checks presence, not their legal
 or version correctness. It performs no dependency downloads.
 
 ```powershell
+python scripts/release/build_preparer.py `
+  --runtime C:/path/to/pinned-patched-runtime `
+  --output C:/GT5P-release/preparer
 python scripts/release/package_player.py `
   --build-dir C:/path/to/completed/build `
-  --launcher-exe C:/GT5P-release/launcher/GT5P.exe `
+  --launcher-exe C:/GT5P-release/launcher/tourline-prologue.exe `
+  --preparer-dir C:/GT5P-release/preparer/dist/GT5P-Prepare `
   --elf C:/path/to/matching/EMAIN.ELF `
   --vc-runtime-dir C:/path/to/VC/Redist/MSVC/version/x64/Microsoft.VC143.CRT `
   --notices-dir C:/GT5P-release/notices `
-  --output C:/GT5P-release/GT5P-windows-x64.zip
+  --output C:/GT5P-release/tourline-prologue-windows-x64.zip
 ```
 
 Python is needed by the maintainer only. The packager refuses overwrite,
@@ -195,7 +231,7 @@ warnings; both are fixed. Option parsing now precedes path initialization,
 so `--check` also suppresses error dialogs for early initialization failures
 and unknown options, regardless of option order.
 
-Local binary: `../GT5P/scratch/launcher-validation-20261029/build/GT5P.exe`.
+Local binary (historical v0.1 name): `../GT5P/scratch/launcher-validation-20261029/build/GT5P.exe`.
 `dumpbin /dependents` lists only Windows DLLs (USER32, SHELL32, ole32,
 bcrypt, COMCTL32, KERNEL32); no MSVC redistributable is required by the
 launcher itself. The engine's DLL requirements are unchanged.
@@ -223,7 +259,7 @@ To reproduce from an x64 VS Developer Command Prompt after building the launcher
 
 ```bat
 cl /nologo /std:c++17 /O2 /W4 /MT /EHsc /Fo"C:\GT5P-release\launcher\probe.obj" /Fe"C:\GT5P-release\launcher\probe.exe" scripts\test\launcher_probe.cpp
-python scripts\test\launcher_native.py --launcher C:\GT5P-release\launcher\GT5P.exe --probe C:\GT5P-release\launcher\probe.exe
+python scripts\test\launcher_native.py --launcher C:\GT5P-release\launcher\tourline-prologue.exe --probe C:\GT5P-release\launcher\probe.exe
 python scripts\test\player_package.py
 ```
 
@@ -242,7 +278,7 @@ that those UI paths passed.
 The standalone compiler output is **not a runnable player installation**.
 Launching it without its siblings produces the missing `release.ini` error.
 Use the complete local test folder instead:
-`../GT5P/scratch/launcher-validation-20261029/player/GT5P.exe`.
+`../GT5P/scratch/launcher-validation-20261029/player/GT5P.exe` (historical v0.1 name).
 It includes the hash-bound `release.ini`, engine, SDL/FFmpeg/MSVC DLLs and
 glyph assets. Keep the folder together. No game data is bundled in it.
 This is a local test assembly, not a public release ZIP with reviewed notices.
